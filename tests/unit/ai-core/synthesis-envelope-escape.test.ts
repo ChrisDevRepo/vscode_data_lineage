@@ -3,10 +3,10 @@
  * untrusted-JSON treatment `visualPreviewNode` gives `<discovery_preview_source>`.
  *
  * @remarks
- * `synthesisNode` (`src/ai/agent/graph.ts`) previously sent `JSON.stringify(envelope)` as a bare
- * user-role message: no escaping, no untrusted-content banner, on the turn's largest DDL-derived
- * payload (captured formulas and SQL inside `detail_slots[].sections[].text`). These tests pin
- * `buildSynthesisEnvelopeMessage`, the extracted pure wrapper `synthesisNode` now calls.
+ * `synthesisNode` (`src/ai/agent/graph.ts`) calls `buildSynthesisEnvelopeMessage`, a pure wrapper
+ * these tests pin. A bare `JSON.stringify(envelope)` user-role message would carry no escaping and
+ * no untrusted-content banner on the turn's largest DDL-derived payload (captured formulas and SQL
+ * inside `detail_slots[].sections[].text`).
  */
 import { describe, expect, it } from 'vitest';
 import { buildSynthesisEnvelopeMessage } from '../../../src/ai/agent/graph';

@@ -26,22 +26,22 @@ import {
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
 import {
+  cancelledError,
   isHostCancellationError,
+  isRecord,
   messageProviderParts,
   ModelPortError,
   PROVIDER_PARTS_KEY,
   type ModelPortErrorCode,
 } from './modelPort';
-import { systemPromptHash, type WireEvent, type WirePart } from '../observability/wireLog';
+import { systemPromptHash, type TokenUsage, type WireEvent, type WirePart } from '../observability/wireLog';
 import { toWireMessage, toWirePart } from '../observability/vscodeWireLog';
 import { sanitizeProviderError } from '../support/text';
 import { STRUCTURED_OUTPUT_TOOL_DESCRIPTION } from '../providers/structuredOutput';
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
 export interface VscodeBridgeToolDefinition {
-  /** Tool name the model addresses the call by. */
   readonly name: string;
-  /** Natural-language tool description shown to the model. */
   readonly description: string;
   /** JSON Schema object describing the tool's input. */
   readonly inputSchema: Record<string, unknown>;
@@ -51,7 +51,10 @@ export interface VscodeBridgeToolDefinition {
 export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
   /** Tool definitions bound onto this request and passed to `vscode.lm.sendRequest`. */
   readonly tools?: readonly VscodeBridgeToolDefinition[];
-  /** `'auto'`, `'any'` (a tool call is required), `'none'`, or the name of the one tool the model must call. */
+  /**
+   * `'auto'`, `'any'` (a tool call is required), `'none'`, or the name of the one tool the model
+   * must call.
+   */
   readonly tool_choice?: string;
 }
 
@@ -93,7 +96,6 @@ export class VscodeLangChainBridge extends BaseChatModel<
     this.wire = fields.wire;
   }
 
-  /** LangChain serialization name for this bridge class. */
   static lc_name(): string {
     return 'VscodeLangChainBridge';
   }
@@ -103,9 +105,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     return 'vscode-request-model';
   }
 
-  /**
-   * Binds model-facing tool metadata. Execution remains graph/dispatcher-owned.
-   */
+  /** Binds model-facing tool metadata. Execution remains graph/dispatcher-owned. */
   bindTools(
     tools: VscodeBridgeToolDefinition[],
     kwargs: Partial<VscodeLangChainCallOptions> = {},
@@ -113,7 +113,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     return this.withConfig({ tools, ...kwargs });
   }
 
-  /** Binds one tool, described by its model-facing JSON Schema, forced via `tool_choice`, guaranteeing that exact call. */
+  /** Binds one tool by its model-facing JSON Schema, forced via `tool_choice`. */
   bindStructuredOutputTool(inputSchema: Record<string, unknown>, functionName: string): VscodeBridgeRunnable {
     return this.bindTools(
       [{ name: functionName, description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION, inputSchema }],
@@ -121,7 +121,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     );
   }
 
-  /** True once either the bridge's own cancellation token or the LangChain call's abort signal fires. */
+  /** True once the bridge's cancellation token or the LangChain call's abort signal fires. */
   private isCancelled(options: this['ParsedCallOptions']): boolean {
     return this.token.isCancellationRequested || Boolean(options.signal?.aborted);
   }
@@ -165,8 +165,12 @@ export class VscodeLangChainBridge extends BaseChatModel<
         }
       : undefined;
     const providerParts: unknown[] = [];
+    let replyReceived = false;
     try {
       const nativeMessages = messages.map(toVscodeMessage);
+      if (isCopilotAuto(this.model) && ToolMessage.isInstance(messages.at(-1))) {
+        nativeMessages.push(vscode.LanguageModelChatMessage.User(COPILOT_AUTO_ROUTING_TEXT));
+      }
       this.wire?.({
         type: 'wire-request',
         messages: nativeMessages.map(toWireMessage),
@@ -215,6 +219,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
           break;
         }
         const part = next.value;
+        replyReceived ||= !(part instanceof vscode.LanguageModelTextPart) || part.value.length > 0;
         if (part instanceof vscode.LanguageModelTextPart) {
           if (capture) capture.text += part.value;
           const message = new AIMessageChunk({ content: part.value });
@@ -230,13 +235,22 @@ export class VscodeLangChainBridge extends BaseChatModel<
             tool_call_chunks: [{
               id: part.callId,
               name: part.name,
-              args: JSON.stringify(asRecord(part.input)),
+              args: JSON.stringify(part.input),
               index: toolIndex++,
               type: 'tool_call_chunk',
             }],
           });
           yield new ChatGenerationChunk({ text: '', message });
           continue;
+        }
+        if (isUsagePart(part)) {
+          // Arrival means the provider ended the stream itself; the payload feeds the trace only.
+          const providerUsage = parseUsageData(part.data);
+          const message = new AIMessageChunk({
+            content: '',
+            response_metadata: { usageParts: 1, ...(providerUsage ? { providerUsage } : {}) },
+          });
+          yield new ChatGenerationChunk({ text: '', message });
         }
         providerParts.push(part);
         capture?.otherParts.push(toWirePart(part));
@@ -250,7 +264,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
         throw cancelledError();
       }
     } catch (error) {
-      throw normalizeBridgeError(error, this.token, options.signal);
+      throw normalizeBridgeError(error, this.token, options.signal, replyReceived);
     } finally {
       if (iterator?.return && !reachedEof) {
         try {
@@ -273,6 +287,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
  * A `ToolMessage`'s `status` is not projected: `vscode.LanguageModelToolResultPart` has no error
  * flag, and the bridge adds no prose. A failed call reaches the model through its content alone,
  * which for every rejection or dispatch error is the shared error envelope naming its code.
+ * @internal
  */
 export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {
@@ -289,11 +304,7 @@ export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatM
             'Assistant tool call requires a non-empty call ID.',
           );
         }
-        return new vscode.LanguageModelToolCallPart(
-          call.id,
-          call.name,
-          asRecord(call.args),
-        );
+        return new vscode.LanguageModelToolCallPart(call.id, call.name, call.args);
       }),
     ];
     return vscode.LanguageModelChatMessage.Assistant(parts, message.name);
@@ -310,6 +321,51 @@ export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatM
     'invalid_request',
     `Unsupported LangChain message type: ${message.getType()}.`,
   );
+}
+
+/**
+ * Copilot "Auto" routes on the text of the last User message and fails a follow-up that ends in tool results
+ * ("Auto mode needs a prompt or a command to route a request."): https://github.com/microsoft/vscode/issues/340675,
+ * workaround from github-copilot-api-vscode#178. Remove once Auto routes a request whose last message carries only
+ * tool results.
+ */
+const COPILOT_AUTO_ROUTING_TEXT = 'Continue.';
+
+function isCopilotAuto(model: vscode.LanguageModelChat): boolean {
+  return model.vendor === 'copilot' && model.id === 'auto';
+}
+
+/** The data part VS Code's built-in providers stream for token usage. */
+function isUsagePart(part: unknown): part is { mimeType: 'usage'; data: unknown } {
+  return !!part && typeof part === 'object' && (part as { mimeType?: unknown }).mimeType === 'usage';
+}
+
+/** Token usage from a usage part's UTF-8 JSON (OpenAI chat-completions names); undefined if bad. */
+function parseUsageData(data: unknown): TokenUsage | undefined {
+  if (!(data instanceof Uint8Array)) return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(new TextDecoder().decode(data));
+  } catch {
+    return undefined;
+  }
+  if (!raw || typeof raw !== 'object') return undefined;
+  const u = raw as Record<string, unknown>;
+  const count = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+  const nested = (key: string, field: string): number | undefined => {
+    const group = u[key];
+    return group && typeof group === 'object' ? count((group as Record<string, unknown>)[field]) : undefined;
+  };
+  const usage: TokenUsage = {
+    inputTokens: count(u.prompt_tokens),
+    outputTokens: count(u.completion_tokens),
+    totalTokens: count(u.total_tokens),
+    reasoningTokens: nested('completion_tokens_details', 'reasoning_tokens'),
+    cachedTokens: nested('prompt_tokens_details', 'cached_tokens'),
+  };
+  const present = Object.entries(usage).filter(([, value]) => value !== undefined);
+  return present.length > 0 ? (Object.fromEntries(present) as TokenUsage) : undefined;
 }
 
 /** Character size of a stream part's string or string-array `value`; 0 for any other shape. */
@@ -379,8 +435,11 @@ function normalizeBridgeError(
   error: unknown,
   token: vscode.CancellationToken,
   signal?: AbortSignal,
+  replyReceived = false,
 ): ModelPortError {
-  if (error instanceof ModelPortError) return error;
+  if (error instanceof ModelPortError) {
+    return new ModelPortError(error.code, error.message, error.cause, replyReceived || error.replyReceived);
+  }
   if (token.isCancellationRequested || signal?.aborted || isHostCancellationError(error)) {
     return cancelledError();
   }
@@ -391,7 +450,7 @@ function normalizeBridgeError(
     NotFound: 'model_not_found',
   };
   const code = mapped[rawCode] ?? 'provider_error';
-  return new ModelPortError(code, providerFailureMessage(error, code), error);
+  return new ModelPortError(code, providerFailureMessage(error, code), error, replyReceived);
 }
 
 /** Redacted, length-capped provider message, falling back to the neutral code line when empty. */
@@ -404,22 +463,4 @@ function rawErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (isRecord(error)) return typeof error.message === 'string' ? error.message : '';
   return error === null || error === undefined ? '' : String(error);
-}
-
-function cancelledError(): ModelPortError {
-  return new ModelPortError('cancelled', 'Language model request was cancelled.');
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new ModelPortError(
-      'unsupported_response',
-      'Language model returned non-object tool input.',
-    );
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

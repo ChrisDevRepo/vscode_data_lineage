@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Root walked for `.ts`/`.tsx` sources. */
 const SRC_ROOT = 'src';
-/** Default known-offenders list; only ever shrinks. */
-const DEFAULT_BASELINE = 'tests/tools/output-truncation-baseline.json';
 /** Lines of continuation scanned after a cut call for an ellipsis in the same expression. */
 const EXPRESSION_LOOKAHEAD = 2;
 
@@ -18,12 +16,13 @@ const TRUNC_DEFINITION = /\bfunction\s+trunc(?:AtWordBoundary)?\(/;
 const LOG_CALL = /\.(?:debug|info|warn|error|trace|log)\(|\b(?:log|debugLog|onDebugLog|debugLogger)\??\(/;
 
 /**
- * Visible elisions the PM ruled, plus the log helper file. One entry per line: file, a substring
- * that must appear in the offending line, and the reason. Never widened without a register row.
+ * Visible elisions accepted as intentional, plus the log helper file. One entry per line: file, a
+ * substring that must appear in the offending line, and the reason. Never widened without a
+ * register row.
  */
 export const ALLOWLIST = [
   { file: 'src/ai/prompting/scopeSummaryRenderer.ts', symbol: 'CARD_OBJECT_TYPE_LIMIT', reason: 'card-summary-view: visible "…" line, full list in the full view' },
-  { file: 'src/ai/agent/graph.ts', symbol: "const display = truncAtWordBoundary(committedFinding.value.summary.replace(/\\s+/g, ' ').trim(), 135);", reason: 'chat-preview-display-exception: PM ruling; display only, complete summary stays in memory and model context' },
+  { file: 'src/ai/agent/graph.ts', symbol: "const display = truncAtWordBoundary(committedFinding.value.summary.replace(/\\s+/g, ' ').trim(), 135);", reason: 'chat-preview-display-exception: display only, complete summary stays in memory and model context' },
   { file: 'src/ai/support/text.ts', symbol: 'PROVIDER_ERROR_MAX', reason: 'provider error shown with visible "…", full text in the log' },
   { file: 'src/ai/support/text.ts', symbol: 'slice(0, max - 1)', reason: 'trunc definition; call sites are policed here' },
   { file: 'src/ai/support/text.ts', symbol: 'slice(0, max - 3)', reason: 'hop-thinking-trim: status preview reserves three visible ellipsis characters; call sites are policed here' },
@@ -66,6 +65,31 @@ function listSourceFiles(dir) {
 }
 
 /**
+ * Maps each line to the statement it opens or continues: a call whose parentheses span several
+ * lines reads as one line, so wrapping it does not change the verdict.
+ *
+ * @param {string[]} lines - Source lines.
+ * @returns {{start: number, joined: string}[]} Per line: the index of the statement's first line and the statement as one line.
+ */
+function statements(lines) {
+  const out = [];
+  let start = 0;
+  let depth = 0;
+  lines.forEach((raw, i) => {
+    if (depth === 0) start = i;
+    const code = raw.replace(/\\./g, '').replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
+    depth = Math.max(0, depth + (code.match(/\(/g) ?? []).length - (code.match(/\)/g) ?? []).length);
+    out.push({ start, joined: '' });
+    if (depth === 0) {
+      const joined = lines.slice(start, i + 1).map((l, k) => (k ? l.trim() : l)).join(' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')');
+      for (let k = start; k <= i; k++) out[k].joined = joined;
+    }
+  });
+  for (let k = out.length - 1; k >= 0 && !out[k].joined; k--) out[k].joined = lines.slice(out[k].start).join(' ');
+  return out;
+}
+
+/**
  * Finds cut sites in one source text.
  *
  * @param {string} file - Repo-relative path, used for the allowlist and the report.
@@ -75,35 +99,23 @@ function listSourceFiles(dir) {
 export function findSites(file, text) {
   if (file.startsWith('src/components/')) return [];
   const lines = text.split('\n');
+  const owner = statements(lines);
   const sites = [];
   lines.forEach((raw, i) => {
     const line = raw.trim();
     if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) return;
-    let hit = CUT_MARKERS.test(line) && !/^(?:async\s+)?function\s/.test(line);
-    if (!hit && CUT_CALL.test(line)) {
-      const expr = lines.slice(i, i + 1 + EXPRESSION_LOOKAHEAD).join('\n').split(';')[0];
-      hit = ELLIPSIS.test(expr);
+    const { start, joined } = owner[i];
+    const marker = CUT_MARKERS.test(line) && !/^(?:async\s+)?function\s/.test(line);
+    let statementHit = false;
+    if (start === i) {
+      const expr = [joined, ...lines.slice(i + 1, i + 1 + EXPRESSION_LOOKAHEAD)].join('\n').split(';')[0];
+      statementHit = (CUT_CALL.test(joined) && ELLIPSIS.test(expr))
+        || (TRUNC_CALL.test(joined) && !TRUNC_DEFINITION.test(joined) && !/^import\s/.test(joined) && !LOG_CALL.test(joined));
     }
-    if (!hit && TRUNC_CALL.test(line) && !TRUNC_DEFINITION.test(line) && !/^import\s/.test(line) && !LOG_CALL.test(line)) {
-      hit = true;
-    }
-    if (!hit) return;
-    if (ALLOWLIST.some((a) => a.file === file && raw.includes(a.symbol))) return;
-    sites.push({ file, line: i + 1, text: line });
+    const allowed = (where) => ALLOWLIST.some((a) => a.file === file && where.includes(a.symbol));
+    if ((marker && !allowed(raw)) || (statementHit && !allowed(joined))) sites.push({ file, line: i + 1, text: line });
   });
   return sites;
-}
-
-/**
- * @param {{file: string, line: number, text: string}[]} sites - Sites found.
- * @param {{file: string, text: string}[]} baseline - Known offenders.
- * @returns {{fresh: {file: string, line: number, text: string}[], stale: {file: string, text: string}[]}} Sites absent from the baseline, and baseline entries no site matches.
- */
-export function compare(sites, baseline) {
-  const key = (e) => `${e.file}\u0000${e.text}`;
-  const known = new Set(baseline.map(key));
-  const seen = new Set(sites.map(key));
-  return { fresh: sites.filter((s) => !known.has(key(s))), stale: baseline.filter((b) => !seen.has(key(b))) };
 }
 
 /** Scans the whole source tree. */
@@ -112,21 +124,10 @@ export function scanTree() {
 }
 
 function main() {
-  const args = process.argv.slice(2);
-  const bi = args.indexOf('--baseline');
-  const baselinePath = bi >= 0 ? args[bi + 1] : DEFAULT_BASELINE;
   const sites = scanTree();
-  if (args.includes('--write-baseline')) {
-    const entries = [...new Map(sites.map((s) => [`${s.file}\u0000${s.text}`, { file: s.file, text: s.text }])).values()];
-    writeFileSync(baselinePath, JSON.stringify(entries, null, 2) + '\n');
-    console.log(`wrote ${entries.length} baseline entries to ${baselinePath}`);
-    return;
-  }
-  const { fresh, stale } = compare(sites, JSON.parse(readFileSync(baselinePath, 'utf8')));
-  for (const s of fresh) console.error(`FAIL  ${s.file}:${s.line}  new output truncation: ${s.text}`);
-  for (const s of stale) console.error(`FAIL  ${s.file}  stale baseline entry, remove: ${s.text}`);
-  if (fresh.length > 0 || stale.length > 0) process.exit(1);
-  console.log(`PASS  no new user- or model-facing truncation in src/ (${sites.length} known offender site(s) in the baseline).`);
+  for (const s of sites) console.error(`FAIL  ${s.file}:${s.line}  new output truncation: ${s.text}`);
+  if (sites.length > 0) process.exit(1);
+  console.log('PASS  no output truncation sites in src/ outside the allowlist.');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

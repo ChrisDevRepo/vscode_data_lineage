@@ -1,30 +1,22 @@
 import { createContext, useContext, ReactNode } from 'react';
 
 /**
- * Context providing access to the VS Code Webview API.
- *
- * @remarks
- * The `VsCodeAPI` type is globally declared in `src/types/global.d.ts`, so the API handed down here
- * is the same typed handle `acquireVsCodeApi()` returns: `postMessage` accepts only the bridge's
- * outbound message union. This context allows nested components to post messages to the extension
- * host and persist state across webview reloads without prop drilling.
+ * Context giving nested components the VS Code Webview API, to post messages to the extension host
+ * and persist state across reloads without prop drilling. `VsCodeAPI` is declared globally in
+ * `src/types/global.d.ts`, so this is the handle `acquireVsCodeApi()` returns: `postMessage`
+ * accepts only the bridge's outbound message union.
  */
 const VsCodeContext = createContext<VsCodeAPI | null>(null);
 
-/**
- * Provider component for the VS Code Webview API context.
- *
- * @param props.api - The acquired VS Code API instance (or null in external browsers/tests).
- */
+/** Provides the VS Code Webview API; `api` is null in external browsers and tests. */
 export const VsCodeProvider = ({ children, api }: { children: ReactNode; api: VsCodeAPI | null }) => {
   return <VsCodeContext.Provider value={api}>{children}</VsCodeContext.Provider>;
 };
 
 /**
- * Hook to access the VS Code Webview API from within the React tree.
+ * Reads the VS Code Webview API, whose `postMessage` is typed to the outbound union.
  *
- * @throws If called from a component not wrapped in a `VsCodeProvider`.
- * @returns The active `VsCodeAPI` instance, whose `postMessage` is typed to the outbound union.
+ * @throws If called outside a `VsCodeProvider`.
  */
 export const useVsCode = (): VsCodeAPI => {
   const context = useContext(VsCodeContext);

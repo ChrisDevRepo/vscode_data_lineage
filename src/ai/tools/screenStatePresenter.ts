@@ -1,12 +1,10 @@
 /**
- * Projection of the user's current screen into the `lineage_get_screen_state` payload.
- *
- * @remarks
- * Pure and VS Code-free. The bridge validates `uiState` and `render-state` against their
- * `bridgeContract` schemas, but the session buffers can also be seeded by non-bridge writers, so
- * every read here stays defensive: a missing, malformed, or foreign-shaped field omits its section
- * instead of throwing. The payload answers "what is on screen", never "what is in the
- * model" — the catalog, statistics, and filters stay with `lineage_get_context`.
+ * Projection of the user's current screen into the `lineage_get_screen_state` payload. Pure and VS
+ * Code-free. The bridge validates `uiState` and `render-state`, but the session buffers can be
+ * seeded by non-bridge writers, so every read stays defensive: a missing, malformed or
+ * foreign-shaped field omits its section instead of throwing. The payload answers "what is on
+ * screen", never "what is in the model" (catalog, statistics and filters stay with
+ * `lineage_get_context`).
  */
 import {
   SCREEN_STATE_MAX_IDS,
@@ -27,14 +25,15 @@ export interface ScreenStateInput {
   readonly uiState: unknown;
   /** Latest `render-state` buffer. */
   readonly renderState: unknown;
-  /** Current graph rendering mode. */
   readonly graphMode: 'full' | 'overview';
-  /** Node count after all active filters. */
-  readonly filteredCount: number;
+  /** Objects the user filter shows, derived from the model (the count the host prompt states). */
+  readonly visibleNodes: number;
   /** Node count of the loaded model. */
   readonly totalNodes: number;
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
   readonly getStoredRun?: StoredRunReader;
+  /** The session's completed run, shown as `ai_run` when no AI bookmark is applied. */
+  readonly liveRun?: StoredAiRun;
   /** Resolver for an object's current DDL text; drives the staleness comparison. */
   readonly getDdl?: (id: string) => string | undefined;
   /** Zero-based offset of the id-list page to serve; `0` (default) is the first page. */
@@ -102,14 +101,7 @@ function pageOf<T>(page: ListPage, items: readonly T[]): T[] {
   return items.slice(page.offset, end);
 }
 
-/**
- * Emits one page of an id list as `<key>`.
- *
- * @param page - The shared page; marked as continuing when this list has more ids.
- * @param key - The payload field name carrying the ids.
- * @param ids - The full id list.
- * @returns A spreadable fragment holding the page's ids.
- */
+/** Emits one page of an id list as `<key>`; `page` is marked as continuing when more ids follow. */
 function spreadPaged(page: ListPage, key: string, ids: readonly string[]): Record<string, unknown> {
   return { [key]: pageOf(page, ids) };
 }
@@ -120,11 +112,9 @@ function asLevel(value: unknown): number | 'all' | null {
 }
 
 /**
- * Renders a rendered-trace depth, decoding the unbounded sentinel the trace controls encode.
- *
- * @remarks
- * `TRACE_ALL_LEVELS` is finite, so `asCount` would pass it through as a literal depth and report
- * nine quadrillion levels where the banner shows "All".
+ * Renders a rendered-trace depth, decoding the unbounded sentinel: `TRACE_ALL_LEVELS` is finite, so
+ * `asCount` would pass it through as a literal depth and report nine quadrillion levels where the
+ * banner shows "All".
  */
 function asTraceLevel(value: unknown): number | 'all' {
   const level = asCount(value);
@@ -132,13 +122,11 @@ function asTraceLevel(value: unknown): number | 'all' {
 }
 
 /**
- * Reports a stored run's depth per side as the run bound it.
- *
- * @remarks
- * `depthIntent` is the per-side `{levels, exactness}` record (`explorationDepthContract.ts`). A
- * finite `levels` is reported only when the persisted `depthLimits` ceiling for that side actually
- * bound the run; a `null` ceiling means the count never became a border (an approximate side, or a
- * legacy checkpoint's seeded default read back as exact), so it reads back as the unstated `null`.
+ * Reports a stored run's depth per side as the run bound it. `depthIntent` is the per-side
+ * `{levels, exactness}` record (`explorationDepthContract.ts`). A finite `levels` is reported only
+ * when the persisted `depthLimits` ceiling for that side bound the run; a `null` ceiling means the
+ * count never became a border (an approximate side, or a legacy checkpoint's seeded default read
+ * back as exact), so it reads back as the unstated `null`.
  */
 function presentDepth(
   init: Record<string, unknown> | null,
@@ -235,34 +223,23 @@ function presentAnalysis(page: ListPage, analytics: ScreenStateExtras['analytics
   };
 }
 
-function presentBookmark(
-  page: ListPage,
-  bookmark: ScreenStateExtras['bookmark'],
-  getStoredRun: StoredRunReader | undefined,
-  getDdl: ((id: string) => string | undefined) | undefined,
-): Record<string, unknown> | null {
+function presentBookmark(page: ListPage, bookmark: ScreenStateExtras['bookmark']): Record<string, unknown> | null {
   const entry = asRecord(bookmark);
   const name = asString(entry?.name);
   if (!entry || name === null) return null;
-  const source = asString(entry.source);
-  const id = asString(entry.id);
-  const run = source === 'ai' && id !== null ? getStoredRun?.(id) : undefined;
   const nodeIds = asStringList(entry.allowlistNodeIds);
   return {
     name,
-    source,
+    source: asString(entry.source),
     nodes: nodeIds.length,
     ...spreadPaged(page, 'node_ids', nodeIds),
-    ai_run: presentAiRun(page, run, getDdl),
   };
 }
 
 /**
- * Renders what the user currently sees: the active trace, graph analysis, applied bookmark, and
- * view level.
- *
- * @param input - Session-owned screen buffers and counts.
- * @returns The model-facing screen payload with its token estimate; absent sections render `null`.
+ * Renders what the user currently sees: the active trace, graph analysis, applied bookmark, the AI
+ * run behind the graph (the applied AI bookmark's, else the session's completed one) and view
+ * level; absent sections render `null`. Returns the payload with its token estimate.
  */
 export function presentScreenState(input: ScreenStateInput): {
   screen: Record<string, unknown>;
@@ -278,15 +255,11 @@ export function presentScreenState(input: ScreenStateInput): {
       asRecord(renderState?.traceScope) as RenderStateSnapshot['traceScope'],
     ),
     analysis: presentAnalysis(page, asRecord(extras?.analytics) as ScreenStateExtras['analytics']),
-    bookmark: presentBookmark(
-      page,
-      asRecord(extras?.bookmark) as ScreenStateExtras['bookmark'],
-      input.getStoredRun,
-      input.getDdl,
-    ),
+    bookmark: presentBookmark(page, asRecord(extras?.bookmark) as ScreenStateExtras['bookmark']),
+    ai_run: presentAiRun(page, resolveAppliedRun(input), input.getDdl),
     view: {
       level: input.graphMode === 'overview' ? 'overview' : 'object',
-      visible_nodes: asCount(input.filteredCount),
+      visible_nodes: asCount(input.visibleNodes),
       total_nodes: asCount(input.totalNodes),
     },
     ...(page.more ? { next_cursor: String(page.offset + SCREEN_STATE_MAX_IDS) } : {}),
@@ -319,7 +292,7 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function resolveAppliedRun(input: RunRecallInput): StoredAiRun | undefined {
+function resolveAppliedRun(input: Pick<RunRecallInput, 'uiState' | 'getStoredRun' | 'liveRun'>): StoredAiRun | undefined {
   const entry = asRecord(screenStateParts(input.uiState).extras?.bookmark);
   const id = asString(entry?.id);
   const bookmarked = entry && id !== null && asString(entry.source) === 'ai' ? input.getStoredRun?.(id) : undefined;
@@ -337,11 +310,9 @@ function nodeStatesOf(run: StoredAiRun): Record<string, unknown>[] {
 }
 
 /**
- * The objects the stored run analysed, as a count plus the id list — one page on the screen card, whole on a scoped recall.
- *
- * @remarks
- * Carried by the screen card and by every scoped recall alike, so a read narrowed to one class or
- * to a few ids still states the run's full analysed set instead of reading as the whole run.
+ * The objects the stored run analysed, as a count plus the id list (one page on the screen card,
+ * whole on a scoped recall). Carried by the card and every scoped recall alike, so a read narrowed
+ * to one class or a few ids still states the run's full analysed set.
  */
 function presentAnalyzedSet(run: StoredAiRun, page?: ListPage): Record<string, unknown> {
   const analyzed = nodeStatesOf(run)
@@ -395,11 +366,9 @@ function recallPruned(run: StoredAiRun): Record<string, unknown>[] {
 }
 
 /**
- * Unresolved leads of the run, each marked with whether its object is already on the graph.
- *
- * @remarks
- * A lead on an object the graph already shows is a deeper look, not an addition; `on_graph` lets
- * the answer tell the two apart. Resolved, scheduled and dismissed leads are history, not open.
+ * Unresolved leads of the run, each marked with whether its object is already on the graph: a lead
+ * on an object the graph shows is a deeper look, not an addition, and `on_graph` lets the answer
+ * tell the two apart. Resolved, scheduled and dismissed leads are history.
  */
 function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
   const snapshot = asRecord(run.snapshot);
@@ -440,15 +409,11 @@ function overBudgetHint(input: RunRecallInput, chars: number, tokenBudget: numbe
 }
 
 /**
- * Answers one recall query against the run stored with the applied bookmark.
- *
- * @remarks
- * Over-budget responses hard-reject with the discovery over-budget envelope and a narrowing hint;
- * nothing is truncated. An applied AI bookmark's run wins; without one the session's completed run
- * answers, and only when neither exists does the call answer `no_run_memory`.
- *
- * @param input - The resolved query and the session's read-only resolvers.
- * @returns The recall payload, or a rejection envelope, with its token estimate.
+ * Answers one recall query against the run stored with the applied bookmark. Over-budget responses
+ * hard-reject with the discovery over-budget envelope and a narrowing hint; nothing is truncated.
+ * An applied AI bookmark's run wins, then the session's completed run; only when neither exists
+ * does the call answer `no_run_memory`. Returns the payload or rejection envelope with its token
+ * estimate.
  */
 export function presentRunRecall(input: RunRecallInput): Record<string, unknown> | ToolRejection {
   const run = resolveAppliedRun(input);
@@ -475,16 +440,14 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
 }
 
 /**
- * Summarises what is on screen in one prompt-context phrase.
- *
- * @remarks
- * Grounds the stage prompts so a bare "explain this" can reach `lineage_get_screen_state`. The
- * phrase names each surface present with its identity — the trace origin and levels, the analysis
- * type and selected group label, the applied bookmark's name — never its contents (objects,
- * findings), which stay behind the tool call.
+ * Summarises what is on screen in one prompt-context phrase, so a bare "explain this" can reach
+ * `lineage_get_screen_state`. Names each surface present with its identity (trace origin and
+ * levels, analysis type and selected group label, applied bookmark name), never its contents, which
+ * stay behind the tool call.
  *
  * @param uiState - Latest `filter-changed` ui-state buffer, read defensively.
- * @returns The raw phrase — the prompt slot builder escapes it — or `null` when no trace, analysis, or bookmark is applied.
+ * @returns The raw phrase (the prompt slot builder escapes it), or `null` when no trace, analysis
+ *   or bookmark is applied.
  */
 export function describeScreen(uiState: unknown): string | null {
   const { ui, extras } = screenStateParts(uiState);

@@ -3,15 +3,11 @@ import { highlightText } from './highlight';
 import { Tooltip } from './ui/Tooltip';
 
 interface ForeignKeysSectionProps {
-  /** Array of foreign key information objects to be displayed. */
   fks: ForeignKeyInfo[];
-  /** Optional search query for highlighting matching text in the table. */
   findQuery?: string;
 }
 
-/**
- * Renders foreign-key constraints with source columns, referenced tables, and delete rules.
- */
+/** Renders foreign-key constraints with source columns, referenced tables, and delete rules. */
 export function ForeignKeysSection({ fks, findQuery }: ForeignKeysSectionProps) {
   return (
     <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>

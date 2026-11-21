@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse Dedicated SQL Pool databases",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "pricing": "Free",
@@ -184,7 +184,7 @@
             "default": 2000,
             "minimum": 10,
             "maximum": 5000,
-            "markdownDescription": "Maximum database objects loaded into the graph (10–5000). A selection over the limit is refused; select fewer schemas or raise this setting.",
+            "markdownDescription": "Maximum objects (10–5000) loaded into the graph, external references included. A larger selection is refused; select fewer schemas or raise this limit.",
             "scope": "resource"
           },
           "dataLineageViz.renderLimit": {
@@ -192,7 +192,7 @@
             "default": 750,
             "minimum": 100,
             "maximum": 1500,
-            "markdownDescription": "Maximum rendered nodes before showing a warning instead of the graph. Prevents browser performance issues with very large visualizations.",
+            "markdownDescription": "Maximum nodes drawn at once; above it the graph shows a notice instead.",
             "scope": "resource"
           },
           "dataLineageViz.excludePatterns": {
@@ -201,19 +201,19 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Regex patterns that exclude objects from the graph when a source is opened (e.g. `_TEST$`, `^staging\\\\.`). Matched against `schema.object`; `%` is accepted as a wildcard. Requires reloading the data source.",
+            "markdownDescription": "Case-insensitive regular expressions for objects to hide on every load, matched against `schema.name`; `%` matches any text. Reload the data source to apply. [Details](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)",
             "scope": "resource"
           },
           "dataLineageViz.externalRefs.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Detect external references (OPENROWSET file paths, cross-database 3-part names). When disabled, no virtual external nodes are created. External Tables are unaffected. Requires reloading the data source to take effect.",
+            "markdownDescription": "Show OPENROWSET paths and cross-database names as virtual external nodes. Reload the data source to apply.",
             "scope": "resource"
           },
           "dataLineageViz.overview.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Enable Schema View. When a loaded graph exceeds `overview.threshold` nodes it starts in schema-level cluster nodes; otherwise in Object View.",
+            "markdownDescription": "Allow Schema View. When off, graphs always open in Object View.",
             "scope": "resource"
           },
           "dataLineageViz.overview.threshold": {
@@ -221,7 +221,7 @@
             "default": 150,
             "minimum": 10,
             "maximum": 1000,
-            "markdownDescription": "Node count above which the graph starts in Schema View; at or below it starts in Object View. Evaluated on initial load and Refresh View.",
+            "markdownDescription": "Object count above which a graph opens in Schema View instead of Object View; the effective value is capped at `renderLimit`. [Details](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)",
             "scope": "resource"
           },
           "dataLineageViz.overview.schemaDoubleClickBehavior": {
@@ -231,17 +231,17 @@
               "expandOnly"
             ],
             "enumDescriptions": [
-              "Double-clicking a schema adds it to Expanded Schema View.",
-              "Double-clicking a schema makes it the only expanded schema."
+              "Add the schema to Expanded Schema View.",
+              "Make the schema the only one expanded."
             ],
             "default": "expandOnly",
-            "markdownDescription": "Controls what double-clicking a schema node does in Schema View. `expand` adds the schema to Expanded Schema View; `expandOnly` makes the clicked schema the only expanded schema.",
+            "markdownDescription": "What double-clicking a schema node does in Schema View.",
             "scope": "resource"
           },
           "dataLineageViz.parseRulesFile": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Path to a custom parse rules YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md)",
+            "markdownDescription": "Path to a custom parse rules YAML file; empty uses the built-in rules. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md)",
             "scope": "resource"
           }
         }
@@ -254,34 +254,20 @@
             "default": 120,
             "minimum": 10,
             "maximum": 600,
-            "markdownDescription": "Timeout (seconds) per DMV query. Increase for large databases.",
+            "markdownDescription": "Timeout in seconds per metadata query. Raise it for large databases.",
             "scope": "resource"
           },
           "dataLineageViz.dmvQueriesFile": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Path to a custom DMV queries YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md)",
+            "markdownDescription": "Path to a custom DMV queries YAML file; empty uses the built-in queries. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md)",
             "scope": "resource"
-          },
-          "dataLineageViz.database.connectionProvider": {
-            "type": "string",
-            "enum": [
-              "mssqlExtension",
-              "builtIn"
-            ],
-            "default": "mssqlExtension",
-            "enumDescriptions": [
-              "Use connections saved in the SQL Server (mssql) extension. Microsoft is retiring this API.",
-              "Connect directly with Data Lineage's own connections (SQL login or Microsoft Entra ID). Passwords stay in the VS Code secret store."
-            ],
-            "markdownDescription": "Where database connections come from. With `builtIn`, add connections with **Data Lineage: Add Database Connection**.",
-            "scope": "application"
           },
           "dataLineageViz.database.connections": {
             "type": "array",
             "default": [],
             "scope": "application",
-            "markdownDescription": "Built-in database connections. Passwords are kept in VS Code secure storage.\n\n**Manage:** [Add](command:dataLineageViz.addDatabaseConnection) · [Edit](command:dataLineageViz.editDatabaseConnection) · [Update Password](command:dataLineageViz.updateDatabasePassword) · [Remove](command:dataLineageViz.removeDatabaseConnection)",
+            "markdownDescription": "Saved database connections; passwords stay in VS Code secure storage.\n\n**Manage:** [Add](command:dataLineageViz.addDatabaseConnection) · [Edit](command:dataLineageViz.editDatabaseConnection) · [Update Password](command:dataLineageViz.updateDatabasePassword) · [Remove](command:dataLineageViz.removeDatabaseConnection)",
             "items": {
               "type": "object",
               "additionalProperties": false,
@@ -362,19 +348,19 @@
           "dataLineageViz.tableStatistics.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Show column statistics and row counts in the table design viewer (database import only).",
+            "markdownDescription": "Show column statistics and row counts in the table details panel (live database only).",
             "scope": "resource"
           },
           "dataLineageViz.tableStatistics.standardModeEnabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Allow **Standard** profiling mode (adds MIN/MAX, string length range, AVG, STDEV, zero/empty counts). When `false`, only Quick mode is available — lighter queries.",
+            "markdownDescription": "Offer Standard profiling mode (more statistics, heavier queries). Off leaves only Quick mode.",
             "scope": "resource"
           },
           "dataLineageViz.tableStatistics.excludeExternalTables": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Skip profiling for external tables. External tables query remote data sources (S3, Blob, other databases) — profiling can be slow and expensive.",
+            "markdownDescription": "Skip statistics for external tables, whose queries may read slow or costly remote data sources.",
             "scope": "resource"
           },
           "dataLineageViz.tableStatistics.queryTimeout": {
@@ -382,7 +368,7 @@
             "default": 60,
             "minimum": 10,
             "maximum": 600,
-            "markdownDescription": "Timeout (seconds) per profiling query.",
+            "markdownDescription": "Timeout in seconds per profiling query.",
             "scope": "resource"
           },
           "dataLineageViz.tableStatistics.sampleThreshold": {
@@ -390,7 +376,7 @@
             "default": 100000,
             "minimum": 0,
             "maximum": 999999999,
-            "markdownDescription": "Advanced: Tables above this row count use sampling instead of a full scan. Set to `0` to always sample.",
+            "markdownDescription": "Row count above which a table is sampled instead of fully scanned; `0` samples every non-empty table.",
             "scope": "resource"
           },
           "dataLineageViz.tableStatistics.sampleSize": {
@@ -398,13 +384,13 @@
             "default": 10000,
             "minimum": 100,
             "maximum": 1000000,
-            "markdownDescription": "Advanced: Number of rows to sample when profiling large tables.",
+            "markdownDescription": "Approximate number of rows sampled from a table above the sample threshold.",
             "scope": "resource"
           },
           "dataLineageViz.tableStatistics.useApproxDistinct": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Advanced: Use `APPROX_COUNT_DISTINCT` instead of exact `COUNT(DISTINCT)`. Much faster with ~2% margin. Requires SQL Server 2019+.",
+            "markdownDescription": "Count distinct values with `APPROX_COUNT_DISTINCT` (faster, about 2% error). Needs SQL Server 2019 or later; turn off on older versions.",
             "scope": "resource"
           },
           "dataLineageViz.tableStatistics.maxColumns": {
@@ -412,7 +398,7 @@
             "default": 50,
             "minimum": 1,
             "maximum": 500,
-            "markdownDescription": "Advanced: Maximum number of columns to profile per table. Columns beyond this cap are skipped. Prevents massive queries on wide tables.",
+            "markdownDescription": "Maximum columns profiled per table; the rest are skipped.",
             "scope": "resource"
           }
         }
@@ -428,10 +414,10 @@
             ],
             "default": "LR",
             "enumDescriptions": [
-              "Top to Bottom",
-              "Left to Right (default)"
+              "Top to bottom",
+              "Left to right"
             ],
-            "markdownDescription": "Direction of the dependency graph layout.",
+            "markdownDescription": "Direction of the graph layout.",
             "scope": "resource"
           },
           "dataLineageViz.layout.edgeStyle": {
@@ -444,30 +430,30 @@
             ],
             "default": "default",
             "enumDescriptions": [
-              "Smooth bezier curves",
-              "Smooth step edges with rounded corners",
-              "Step edges with sharp corners",
+              "Curves",
+              "Rounded steps",
+              "Sharp steps",
               "Straight lines"
             ],
-            "markdownDescription": "Visual style for dependency edges.",
+            "markdownDescription": "Line style of dependency edges.",
             "scope": "resource"
           },
           "dataLineageViz.layout.edgeAnimation": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Animate edges when running a trace.",
+            "markdownDescription": "Animate edges while a trace runs.",
             "scope": "resource"
           },
           "dataLineageViz.layout.highlightAnimation": {
             "type": "boolean",
             "default": false,
-            "markdownDescription": "Animate edges when clicking a node.",
+            "markdownDescription": "Animate edges when you click a node.",
             "scope": "resource"
           },
           "dataLineageViz.layout.minimapEnabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Show the graph minimap for navigation.",
+            "markdownDescription": "Show the graph minimap.",
             "scope": "resource"
           },
           "dataLineageViz.layout.rankSeparation": {
@@ -475,7 +461,7 @@
             "default": 120,
             "minimum": 20,
             "maximum": 300,
-            "markdownDescription": "Advanced: Horizontal spacing between dependency layers (pixels).",
+            "markdownDescription": "Gap between dependency layers, in pixels.",
             "scope": "resource"
           },
           "dataLineageViz.layout.nodeSeparation": {
@@ -483,7 +469,7 @@
             "default": 30,
             "minimum": 10,
             "maximum": 200,
-            "markdownDescription": "Advanced: Vertical spacing between nodes in the same layer (pixels).",
+            "markdownDescription": "Gap between nodes within a layer, in pixels.",
             "scope": "resource"
           }
         }
@@ -496,7 +482,7 @@
             "default": 3,
             "minimum": 0,
             "maximum": 99,
-            "markdownDescription": "How many levels upstream (inputs) to trace by default.",
+            "markdownDescription": "Upstream (input) levels a trace starts with.",
             "scope": "resource"
           },
           "dataLineageViz.trace.defaultDownstreamLevels": {
@@ -504,7 +490,7 @@
             "default": 3,
             "minimum": 0,
             "maximum": 99,
-            "markdownDescription": "How many levels downstream (outputs) to trace by default.",
+            "markdownDescription": "Downstream (output) levels a trace starts with.",
             "scope": "resource"
           }
         }
@@ -517,7 +503,7 @@
             "default": 8,
             "minimum": 1,
             "maximum": 50,
-            "markdownDescription": "Minimum number of connections for an object to appear in the hub list.",
+            "markdownDescription": "Minimum connections for an object to count as a hub.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.islandMaxSize": {
@@ -525,7 +511,7 @@
             "default": 500,
             "minimum": 2,
             "maximum": 1000,
-            "markdownDescription": "Max connected component size to qualify as an island. Higher values include larger disconnected subgraphs; set lower (e.g. 5) to focus on small isolated pairs/groups only.",
+            "markdownDescription": "Largest connected group reported as an island; lower it to list only small groups.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.longestPathMinNodes": {
@@ -533,7 +519,7 @@
             "default": 5,
             "minimum": 2,
             "maximum": 50,
-            "markdownDescription": "Minimum number of objects in a dependency chain for longest-path analysis.",
+            "markdownDescription": "Minimum objects a chain needs to appear in longest-path analysis.",
             "scope": "resource"
           }
         }
@@ -544,39 +530,39 @@
           "dataLineageViz.ai.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Enable the @lineage chat participant and AI lineage tools. Disable for users who do not use VS Code Copilot or want to remove AI features entirely."
+            "description": "Turn the @lineage chat participant and its AI tools on or off. Reload the window after changing."
           },
           "dataLineageViz.ai.maxRounds": {
             "type": "integer",
             "default": 50,
             "minimum": 5,
             "maximum": 100,
-            "markdownDescription": "Maximum rounds per `@lineage` deep analysis. Each procedure, view or function it reads takes one round. Read on every request."
+            "markdownDescription": "Maximum rounds per `@lineage` deep analysis; each procedure, view or function it reads takes one round."
           },
           "dataLineageViz.ai.maxTraceColumns": {
             "type": "integer",
             "default": 10,
             "minimum": 1,
-            "markdownDescription": "Maximum starting columns one `@lineage` column trace may follow. Read on every request."
+            "markdownDescription": "Maximum starting columns one `@lineage` column trace may follow."
           },
           "dataLineageViz.ai.discoveryNodeCap": {
             "type": "integer",
             "default": 10,
             "minimum": 1,
             "maximum": 30,
-            "markdownDescription": "Maximum scope nodes the AI may pull in a single discovery-phase catalog request before it escalates to a deep analysis that needs your approval."
+            "markdownDescription": "Maximum scope objects in one `@lineage` catalog request; above it, a deep analysis is offered for your approval."
           },
           "dataLineageViz.ai.discoveryTokenBudget": {
             "type": "integer",
             "default": 10000,
             "minimum": 1000,
             "maximum": 32000,
-            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request, further capped at one eighth of the selected model's input window. Exceeding it escalates to a deep analysis that needs your approval."
+            "markdownDescription": "Estimated DDL token limit for one `@lineage` catalog request, capped at one eighth of the model's input window; above it, a deep analysis is offered for your approval. [Details](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)"
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Path to custom AI output templates YAML. Controls how `@lineage` formats summary, description, badges, highlights, and notes. Leave empty for built-in defaults. Use Command Palette → *Create AI Output Templates* to scaffold. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md)\n\nAll settings are described in the [settings reference](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)."
+            "markdownDescription": "Path to a custom AI output templates YAML file; empty uses the built-in templates. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md)"
           }
         }
       }
@@ -639,7 +625,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name or column.",
-        "modelDescription": "Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.",
+        "modelDescription": "Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` `{status: unique|ambiguous, ids}` for an exact name.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -655,7 +641,7 @@
               "description": "In substring mode: any part of an object or column name, without a schema prefix like '[dbo].'. In regex mode: the pattern, used verbatim. May be empty ONLY together with schemas[] to list everything in those schemas."
             },
             "types": {
-              "description": "Optional object-type filter.",
+              "description": "Object-type filter.",
               "type": "array",
               "items": {
                 "type": "string",
@@ -669,14 +655,14 @@
               }
             },
             "schemas": {
-              "description": "Optional schema-name filter; combine with a zero-length query to list objects in those schemas.",
+              "description": "Schema-name filter.",
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "mode": {
-              "description": "Name matching strategy: \"substring\" (default) or \"regex\" (case-insensitive, matched against name and schema.name).",
+              "description": "\"substring\" (default) or \"regex\" (case-insensitive, matched against name and schema.name).",
               "type": "string",
               "enum": [
                 "substring",
@@ -700,7 +686,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls.",
+        "modelDescription": "Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors).",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -845,7 +831,7 @@
         "toolReferenceName": "lineageView",
         "displayName": "Get Screen State",
         "userDescription": "Shows what is currently on screen: active trace, analysis, or applied bookmark.",
-        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. Optional `ids` recall objects from a stored AI run; optional `filter` lists pruned, open_leads, or stale. `ids` and `filter` need a stored run; without one they answer `no_run_memory`. Omit input for the screen card.",
+        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall the stored run.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -857,7 +843,7 @@
           "type": "object",
           "properties": {
             "ids": {
-              "description": "Canonical object ids to recall from the stored run, taken from the screen card's node_ids. Use without filter.",
+              "description": "Canonical object ids to recall, taken from the screen card's ai_run.analyzed_ids or node_ids.",
               "minItems": 1,
               "maxItems": 20,
               "type": "array",
@@ -866,7 +852,7 @@
               }
             },
             "filter": {
-              "description": "One class of the stored run to list: pruned, open_leads, or stale. Use without ids.",
+              "description": "Class of the stored run to list.",
               "type": "string",
               "enum": [
                 "pruned",
@@ -895,10 +881,11 @@
     "watch:ext": "node esbuild.config.mjs --watch",
     "test": "node tests/tools/run-vitest.mjs run",
     "test:core": "node tests/tools/run-vitest.mjs run tests/unit/parser tests/unit/engine tests/unit/webview",
-    "test:runtime": "node tests/tools/run-vitest.mjs run tests/unit/ai-core tests/unit/sm",
+    "test:runtime": "node tests/tools/run-vitest.mjs run tests/unit/ai-core",
     "test:parser": "node tests/tools/run-vitest.mjs run tests/unit/parser",
     "test:bfs": "node tests/tools/run-vitest.mjs run tests/unit/engine",
     "coverage:core": "node tests/tools/run-vitest.mjs run --coverage tests/unit/parser tests/unit/engine tests/unit/webview",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tests/unit/tsconfig.json --noEmit",
     "generate:tool-manifest": "node scripts/generate-tool-manifest.mjs",
@@ -907,7 +894,6 @@
     "test:edh": "vscode-test",
     "test:bare-environment": "vscode-test --label bare-environment",
     "test:tools": "vscode-test --label tools",
-    "test:participant-turn": "vscode-test --label participant-turn",
     "test:ai:smoke": "npm run pretest:integration && vscode-test --config .vscode-test.ai.mjs",
     "test:gui:host": "node tests/tools/gui-test-host.mjs",
     "test:gui:smoke": "node tests/tools/playwright-smoke.mjs",
@@ -919,7 +905,7 @@
     "test:db:smoke": "node tests/tools/run-headless.mjs db"
   },
   "dependencies": {
-    "@dagrejs/dagre": "3.1.1",
+    "@dagrejs/dagre": "3.1.3",
     "@floating-ui/react": "0.27.20",
     "@langchain/core": "1.2.3",
     "@langchain/langgraph": "1.4.10",
@@ -927,54 +913,60 @@
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "12.11.6",
     "comlink": "4.4.2",
-    "dompurify": "3.4.16",
-    "fast-xml-parser": "5.11.1",
+    "dompurify": "3.4.18",
+    "fast-xml-parser": "5.12.1",
     "graphology": "0.26.0",
     "graphology-components": "1.5.4",
     "graphology-shortest-path": "2.1.0",
     "graphology-traversal": "0.3.1",
-    "js-yaml": "5.4.2",
+    "js-yaml": "5.5.0",
     "jszip": "3.10.2",
     "katex": "0.18.2",
-    "marked": "18.0.14",
-    "monaco-editor": "0.56.0",
-    "react": "19.3.0",
+    "marked": "18.2.1",
+    "monaco-editor": "0.57.0",
+    "react": "19.3.1",
     "react-arborist": "3.16.0",
-    "react-dom": "19.3.0",
-    "tedious": "20.0.0",
-    "zod": "4.6.5"
+    "react-dom": "19.3.1",
+    "tedious": "20.3.9",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
+    "@tailwindcss/vite": "^4.3.5",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^22.20.4",
+    "@types/node": "^22.20.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/vscode": "1.101.0",
     "@vitejs/plugin-react": "^4.3.0",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "^0.28.2",
-    "jsdom": "^30.1.1",
+    "eslint": "10.15.0",
+    "eslint-plugin-tsdoc": "0.5.4",
+    "jsdom": "^30.1.3",
     "mocha": "^11.8.0",
-    "playwright-core": "^1.63.0",
-    "tailwindcss": "^4.3.3",
+    "playwright-core": "^1.65.1",
+    "tailwindcss": "^4.3.5",
     "typescript": "^5.7.0",
-    "vite": "^6.4.2",
-    "vitest": "^4.1.11"
+    "typescript-eslint": "8.73.0",
+    "undici": "^7.30.2",
+    "vite": "^6.4.4",
+    "vitest": "^4.1.12"
   },
   "overrides": {
     "langsmith": "file:./stubs/langsmith",
     "esbuild": "^0.28.2",
     "dompurify": "$dompurify",
-    "serialize-javascript": "^7.0.5",
+    "serialize-javascript": "^7.1.3",
     "diff": "^8.0.3",
     "js-yaml@4": "4.3.2",
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "browserslist": "4.28.8",
-    "baseline-browser-mapping": "2.11.21"
+    "baseline-browser-mapping": "2.11.21",
+    "minimatch": "^11.0.3",
+    "glob": "^14.0.3"
   },
   "allowScripts": {
     "esbuild@0.28.2": true

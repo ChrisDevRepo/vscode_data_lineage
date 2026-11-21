@@ -4,11 +4,11 @@ import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
 import { buildGraph, buildGraphNoLayout, getGraphMetrics, hasCachedLayout, layoutCacheKey, objectLayoutInputForGraph, seedLayoutCache } from '../engine/graphBuilder';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
-import { filterBySchemas } from '../engine/dacpacExtractor';
-import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
+import { filterBySchemas, applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter, externalRefAdmits } from '../engine/modelFilters';
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 import { createLayoutWorkerClient } from '../utils/layoutWorkerClient';
 import LayoutWorker from '../utils/layout.worker?worker&inline';
+import { errorMessage } from '../utils/errorMessage';
 
 const logPrewarmSkipped = (reason: string): void => {
   window.vscode?.postMessage({ type: 'log', text: `[Filter] Layout prewarm skipped (${reason})`, level: 'debug' });
@@ -17,9 +17,9 @@ const logPrewarmSkipped = (reason: string): void => {
 const layoutWorker = createLayoutWorkerClient(() => new LayoutWorker(), logPrewarmSkipped);
 
 /**
- * Lays out the Object View graph in a worker and seeds the layout cache, so the later
- * Schema View → Object View switch finds its positions without running Dagre on the UI thread.
- * Without a usable worker the switch simply lays out on the main thread as before.
+ * Lays out the Object View graph in a worker and seeds the layout cache, so the later Schema View →
+ * Object View switch finds its positions without running Dagre on the UI thread. Without a usable
+ * worker the switch lays out on the main thread.
  */
 function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
   if (typeof Worker === 'undefined') return;
@@ -34,9 +34,7 @@ function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
   );
 }
 
-/**
- * Return type for the useGraphology hook, encapsulating graph data and builders.
- */
+/** Return type for the useGraphology hook, encapsulating graph data and builders. */
 interface UseGraphologyReturn {
   /** The list of nodes formatted for React Flow rendering. */
   flowNodes: FlowNode<CustomNodeData>[];
@@ -53,31 +51,28 @@ interface UseGraphologyReturn {
   /** Unique schema names found in the filtered node set, used for the legend. */
   renderedSchemas: string[];
   /**
-   * Rebuilds the graph from the database model based on the current filter and configuration.
+   * Rebuilds the graph from the model for the current filter and configuration. Returns the node
+   * count, or `-1` when the schema selection's object count exceeds `dataLineageViz.maxNodes`:
+   * nothing is built and the prior render state stays.
    *
-   * @param skipLayout - Whether to skip full Dagre layout because the caller is rendering Schema View.
-   * @param annotatedNodeIds - Ids carrying an AI badge or footnote, so Dagre reserves the
-   *   vertical band those overlays need; see `AI_BADGE_BAND`/`AI_NOTE_BAND` in `graphBuilder.ts`.
-   * @returns The total number of nodes in the resulting graph, or `-1` when the schema selection's
-   *   object count exceeds `dataLineageViz.maxNodes` — nothing is built and the prior render state
-   *   is left untouched.
+   * @param skipLayout - Skip the full Dagre layout because the caller renders Schema View.
+   * @param annotatedNodeIds - Ids with an AI badge or footnote, so Dagre reserves their band
+   *   (`AI_BADGE_BAND`/`AI_NOTE_BAND` in `graphBuilder.ts`).
    */
   buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, skipLayout?: boolean, annotatedNodeIds?: readonly string[]) => number;
   /**
-   * Runs the same maxNodes admission check `buildFromModel` starts with, without building. Returns
-   * `true` and posts the refusal warning when the build would be refused, so a caller that defers the
-   * build into a transition, or vets a candidate schema selection, learns about the refusal
-   * synchronously. Only the filter's schema selection decides admission.
+   * Runs the maxNodes admission check `buildFromModel` starts with, without building: returns
+   * `true` and posts the refusal warning when the build would be refused, so a caller that defers
+   * the build or vets a candidate schema selection learns of it synchronously. Only the filter's
+   * schema selection decides.
    */
   refusesBuild: (model: DatabaseModel, filter: Pick<FilterState, 'schemas'>, config?: ExtensionConfig) => boolean;
 }
 
 /**
- * Manages graph filtering, render limits, layout, and React Flow projection.
- *
- * @remarks
- * Filters run in schema, type, exclusion, isolation, then allowlist order. Object layout is
- * skipped for Schema View and entirely withheld when the render limit is exceeded.
+ * Manages graph filtering, render limits, layout and React Flow projection. Filters run in schema,
+ * type, exclusion, isolation, then allowlist order; object layout is skipped for Schema View and
+ * withheld when the render limit is exceeded.
  */
 export function useGraphology(): UseGraphologyReturn {
   const [flowNodes, setFlowNodes] = useState<FlowNode<CustomNodeData>[]>([]);
@@ -96,23 +91,15 @@ export function useGraphology(): UseGraphologyReturn {
     const filtered = filterBySchemas(model, filter.schemas);
     if (refuseOverObjectLimit(filtered, config.maxNodes, 'Filter') !== null) return -1;
 
-    const isVirtual = (n: { externalType?: string }) =>
-      n.externalType === 'file' || n.externalType === 'db';
-    const allExtRefsVisible = filter.showExternalRefs && filter.externalRefTypes.has('file') && filter.externalRefTypes.has('db');
-
-    const fusedNodes = filtered.nodes.filter((n) => {
-      if (!filter.types.has(n.type)) return false;
-      if (allExtRefsVisible || !isVirtual(n)) return true;
-      if (!filter.showExternalRefs) return false;
-      return filter.externalRefTypes.has(n.externalType as 'file' | 'db');
-    });
+    const externalAdmits = externalRefAdmits(filter.showExternalRefs, filter.externalRefTypes);
+    const fusedNodes = filtered.nodes.filter((n) => filter.types.has(n.type) && externalAdmits(n));
     const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
     const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
 
     const exclusionFiltered = applyExclusionFilter(
       { ...filtered, nodes: fusedNodes, edges: fusedEdges },
       filter.exclusionPatterns,
-      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`, 'debug'),
+      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${errorMessage(err)}`, 'debug'),
     );
     const isolationFiltered = applyIsolationFilter(exclusionFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);

@@ -3,9 +3,9 @@ import { schemaKey } from '../utils/sql';
 import { getSchemaColor, type SchemaColorMap } from '../utils/schemaColors';
 
 /**
- * Minimal structural shape of a rendered graph node consumed by the legend
- * derivations. Both overview schema clusters ({@link SchemaNodeData}) and object
- * nodes ({@link CustomNodeData}) satisfy it, so callers pass `localNodes` directly.
+ * Minimal structural shape of a rendered node the legend derivations read. Overview schema clusters
+ * ({@link SchemaNodeData}) and object nodes ({@link CustomNodeData}) both satisfy it, so callers
+ * pass `localNodes` directly.
  */
 export interface LegendNode {
   /** React Flow node type — `'schemaNode'` for overview clusters, object type otherwise. */
@@ -15,18 +15,13 @@ export interface LegendNode {
 }
 
 /**
- * Derives the schema names shown in the colorful schema legend.
+ * Derives the schema names shown in the schema legend. External objects are excluded in lockstep
+ * with {@link deriveLegendColorMap} (they use the fixed external color), keeping
+ * `deriveLegendSchemas ⊆ keys(deriveLegendColorMap)`, which the {@link Legend} relies on to resolve
+ * each listed schema's color.
  *
- * @remarks
- * External objects are never palette schemas (they render with the fixed external
- * color), so they are excluded here in lockstep with {@link deriveLegendColorMap},
- * which skips external object nodes. This keeps `deriveLegendSchemas ⊆
- * keys(deriveLegendColorMap)` — the invariant the {@link Legend} relies on when it
- * resolves each listed schema's color.
- *
- * @param nodes - Currently rendered nodes (`localNodes`).
- * @param graphMode - Active graph mode; overview reads schema clusters + object nodes.
- * @param traceMode - Current trace mode, used to widen the set during active traces.
+ * @param graphMode - Overview reads schema clusters + object nodes.
+ * @param traceMode - Widens the set during active traces.
  * @param renderedSchemas - Schemas the parent reports as rendered (non-trace, non-overview).
  * @returns Sorted, de-duplicated schema names with at least one non-external object.
  */
@@ -72,14 +67,10 @@ export function deriveLegendSchemas(
 }
 
 /**
- * Builds the schema → color map backing the legend swatches.
+ * Builds the schema → color map behind the legend swatches. Schema clusters carry a pre-computed
+ * color; object nodes contribute their schema's, except external ones (not palette schemas). The
+ * key set is a superset of {@link deriveLegendSchemas}'s output.
  *
- * @remarks
- * Schema clusters carry a pre-computed color; object nodes contribute their schema's
- * color, but external object nodes are skipped (they are not palette schemas). The
- * resulting key set is a superset of {@link deriveLegendSchemas}'s output.
- *
- * @param nodes - Currently rendered nodes (`localNodes`).
  * @param identifierCaseSensitive - Checked source policy for schema map identity.
  * @returns Map keyed by normalized schema name.
  */

@@ -105,10 +105,11 @@ describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
 describe('overlay example in docs/AI_PROMPTS.md', () => {
   it('parses as an overlay and carries a string instruction under each key it sets', () => {
     const doc = readFileSync(rootPath('docs/AI_PROMPTS.md'), 'utf-8');
-    const example = /Example — guidance for a junior DBA[\s\S]*?```yaml\n([\s\S]*?)```/.exec(doc)?.[1];
+    const example = /Guidance for a junior DBA[\s\S]*?```yaml\n([\s\S]*?)```/.exec(doc)?.[1];
     expect(example, 'the junior-DBA overlay example is present').toBeDefined();
 
-    const parsed = parseAiOutputTemplatesYaml(`schemaVersion: ${AI_TEMPLATE_SCHEMA_VERSION}\n${example}`) as Record<string, { instruction?: unknown }>;
+    const parsed = parseAiOutputTemplatesYaml(example!) as Record<string, { instruction?: unknown }>;
+    expect(parsed.schemaVersion, 'the example keeps the scaffolded schemaVersion').toBe(AI_TEMPLATE_SCHEMA_VERSION);
     const keys = Object.keys(parsed).filter((key) => key !== 'schemaVersion');
 
     expect(keys.length).toBeGreaterThan(0);

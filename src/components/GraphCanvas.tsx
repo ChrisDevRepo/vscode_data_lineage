@@ -85,17 +85,15 @@ import { normalizeColName, schemaKey } from '../utils/sql';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
 import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
+import { errorMessage } from '../utils/errorMessage';
 
 /**
- * Mapping of custom node types for React Flow.
- *
- * IMPORTANT: nodeTypes must be defined at module level — not inside the component.
- * If defined inside, React Flow remounts all nodes on every render, causing
- * severe performance degradation and loss of state.
+ * Custom node types for React Flow. Must stay at module level: defined inside the component, React
+ * Flow remounts every node on each render, losing state and performance.
  */
 const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode, columnTraceNode: ColumnTraceNode } satisfies NodeTypes;
 
-/** Mapping of custom edge types for React Flow; module-level for the same reason as {@link nodeTypes}. */
+/** Custom edge types for React Flow; module-level for the same reason as {@link nodeTypes}. */
 const edgeTypes = { columnTraceEdge: ColumnTraceEdge } satisfies EdgeTypes;
 
 const AiDescriptionOverlay = lazy(async () => {
@@ -107,15 +105,18 @@ const AiDescriptionOverlay = lazy(async () => {
 const AI_PANEL_DEFAULT_WIDTH = 'min(440px, 55vw)';
 const AI_PANEL_DEFAULT_HEIGHT = 'min(360px, 45vh)';
 
-/** `window.vscode` state key the dock position is persisted under, merged in alongside other keys. */
+/** `window.vscode` state key the dock position is persisted under, beside other keys. */
 const AI_DOCK_STATE_KEY = 'aiDockPosition';
 
-/** Reverse of `aiSections`' per-section `nodeIds`: every section that badged `nodeId`, in order. */
+/** Reverse of `aiSections`' per-section `nodeIds`: every section that badged `nodeId`, in order. @internal */
 export function sectionsForNode(sections: readonly AiReportSection[], nodeId: string): number[] {
   return sections.filter(s => s.nodeIds.includes(nodeId)).map(s => s.n);
 }
 
-/** Cache key for the AI pane's open state + pinned section — origin id ('preview' with none) + view name. */
+/**
+ * Cache key of the AI pane's open state and pinned section: origin id ('preview' if none) + view.
+ * @internal
+ */
 export function aiLayoutCacheKey(originId: string | undefined, viewName: string): string {
   return `${originId ?? 'preview'}::${viewName}`;
 }
@@ -128,29 +129,29 @@ type FitViewPadding = NonNullable<FitViewOptions['padding']>;
 /** React Flow's mount-time `fitViewOptions`; module-level so the prop keeps one identity. */
 const INITIAL_FIT_VIEW_OPTIONS: FitViewOptions = { padding: FIT_VIEW_PADDING };
 
-/** Fit padding while the trace navigator card covers the canvas's left edge: its width plus a gap. */
+/** Fit padding while the trace navigator card covers the left edge: its width plus a gap. */
 const TRACE_NAVIGATOR_FIT_PADDING: FitViewPadding = { x: FIT_VIEW_PADDING, y: FIT_VIEW_PADDING, left: `${TRACE_NAVIGATOR_WIDTH + 40}px` };
 
 /** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
 
 /**
- * Delay in ms before the AI panel's dock/open change triggers a re-fit — one frame budget past the
- * panel's CSS width/height transition, so the fit reads the settled canvas box, not the mid-animation
- * one.
+ * Delay in ms before an AI panel dock/open change re-fits: one frame past the panel's CSS size
+ * transition, so the fit reads the settled canvas box.
  */
 const AI_PANEL_REFIT_DELAY = 80;
 
 /**
  * Arms `fire` through `schedule` (`requestAnimationFrame`/`setTimeout`), claiming the next value of
- * `generationRef` as this fit's generation; `fire` runs only if `generationRef` still holds that
- * generation when `schedule` fires — a later user gesture or fit bumps it past that point and this
- * one becomes a no-op instead of running.
+ * `generationRef`; `fire` runs only if `generationRef` still holds it, since a later user gesture
+ * or fit bumps it and this one becomes a no-op.
  *
- * @param ready - Whether the intended graph has arrived and is measured; false defers another frame.
- * @param maxDeferredFrames - Frame budget for `ready()`. Once spent, the fit stops without calling
- * `fire`, so an unmeasured graph is not framed.
+ * @param ready - Whether the intended graph has arrived and is measured; false defers another
+ *   frame.
+ * @param maxDeferredFrames - Frame budget for `ready()`; once spent the fit stops without calling
+ *   `fire`, so an unmeasured graph is not framed.
  * @returns A cancel that clears the latest scheduled callback (effect cleanup / unmount).
+ * @internal
  */
 export function scheduleFit(
   generationRef: { current: number },
@@ -179,8 +180,9 @@ export function scheduleFit(
 }
 
 /**
- * Resumes a graph fit blocked by rebuilding only while its generation still owns the camera.
- * @returns A fit scheduler whose cleanup also cancels a resumed fit.
+ * Resumes a graph fit blocked by rebuilding, only while its generation still owns the camera. The
+ * returned scheduler's cleanup also cancels a resumed fit.
+ * @internal
  */
 export function useRebuildResumableFit(
   isRebuilding: boolean,
@@ -216,7 +218,7 @@ export function useRebuildResumableFit(
   }, [armFit, generationRef]);
 }
 
-/** Reframes pane size changes unless a saved camera restore owns the view; user gestures still win. */
+/** Reframes pane size changes unless a saved camera restore owns the view; user gestures win. @internal */
 export function useCanvasResizeFit(width: number, height: number, fitGraph: () => () => void, restoringViewport = false): void {
   const previousSize = useRef({ width, height });
   useEffect(() => {
@@ -228,7 +230,7 @@ export function useCanvasResizeFit(width: number, height: number, fitGraph: () =
   }, [width, height, fitGraph, restoringViewport]);
 }
 
-/** Whether React Flow has received and measured the graph a pending fit will frame. */
+/** Whether React Flow has received and measured the graph a pending fit will frame. @internal */
 export function graphReadyForFit(
   expectedNodes: readonly FlowNode[], expectedEdges: readonly FlowEdge[],
   renderedNodes: readonly FlowNode[], renderedEdges: readonly FlowEdge[],
@@ -249,7 +251,7 @@ export function graphReadyForFit(
   });
 }
 
-/** Skip fits until the graph-data update paired with a saved viewport arrives. */
+/** Skip fits until the graph-data update paired with a saved viewport arrives. @internal */
 export function skipFitForPendingViewport(
   preserveVersion: number, consumedVersion: { current: number }, nodeDataChanged: boolean,
 ): boolean {
@@ -264,11 +266,9 @@ const MAX_CANVAS_ZOOM = 2;
 /**
  * The canvas `minZoom`: {@link MIN_CANVAS_ZOOM}, lowered to the zoom a fit of every visible node
  * needs in a `paneWidth` × `paneHeight` pane at `padding`, so a fit is never clamped short of the
- * laid-out graph and leaves nodes outside the pane.
- *
- * @remarks
- * Bounds come from React Flow's `getNodesBounds` (measured size, else declared, else zero), so a
- * node not yet measured still contributes its position.
+ * graph. Bounds come from `getNodesBounds` (measured, else declared, else zero size), so an
+ * unmeasured node still contributes its position.
+ * @internal
  */
 export function canvasMinZoom(
   nodes: readonly FlowNode[],
@@ -284,20 +284,19 @@ export function canvasMinZoom(
 }
 
 /**
- * Whether a `ReactFlow` `onMoveStart` event is a user gesture — React Flow fires it with a real
- * `event` for a user pan/zoom and `null` for a programmatic `fitView`/`setViewport`/`setCenter`.
+ * Whether a `ReactFlow` `onMoveStart` event is a user gesture: a real `event` for user pan/zoom,
+ * `null` for programmatic `fitView`/`setViewport`/`setCenter`.
+ * @internal
  */
 export function isUserMoveEvent(event: MouseEvent | TouchEvent | null): boolean {
   return event !== null;
 }
 
 /**
- * Applies a viewport armed at `armedGeneration` only if {@link fitGenerationRef} still holds that
- * generation — a user pan/zoom (or a newer fit) landing in the gap between the viewport being armed
- * and the graph data (deferred through `startTransition`) catching up bumps the generation, same as
- * it would a pending fit, so the stale viewport no-ops instead of overriding the newer camera.
- *
- * @returns Whether the viewport was applied.
+ * Applies a viewport armed at `armedGeneration` only if {@link fitGenerationRef} still holds it. A
+ * user pan/zoom or newer fit in the gap before the graph data (deferred via `startTransition`)
+ * catches up bumps the generation, so the stale viewport no-ops. Returns whether it was applied.
+ * @internal
  */
 export function applyPendingViewport(
   pending: { x: number; y: number; zoom: number },
@@ -320,25 +319,18 @@ const NOTES_ZOOM_IN = 0.28;
 const COLUMN_EDGE_MARKER_SIZE = 14;
 
 
-/**
- * Max time (ms) to wait for a pending zoom target to appear in flowNodes before
- * giving up and showing a warning.
- */
+/** Max time (ms) to wait for a pending zoom target to appear in flowNodes before warning. */
 const PENDING_ZOOM_TIMEOUT_MS = 5000;
 
 /**
- * Class toggled on the React Flow root while object view has an active node selection.
- *
- * @remarks
- * Pairs with `LIT_CLASS_NAME` (`src/engine/nodeDecoration.ts`, `src/engine/edgeDecoration.ts`): the
- * CSS rule in `src/index.css` dims every node/edge that isn't marked lit while this class is
- * present, so the vast majority of the canvas never needs a new object identity just because some
- * other node was clicked. Column view keeps its own independent dim/hover styling and never
- * receives this class.
+ * Class on the React Flow root while object view has an active node selection. With
+ * `LIT_CLASS_NAME` (`src/engine/nodeDecoration.ts`, `src/engine/edgeDecoration.ts`), the CSS rule
+ * in `src/index.css` dims every node/edge not marked lit, so a click gives most of the canvas no
+ * new object identity. Column view keeps its own dim/hover styling and never gets this class.
  */
 const SELECTION_ACTIVE_CLASS_NAME = 'ln-has-selection';
 
-/** Canvas-root class that applies the `--ln-edge-density` fade and thinning to object-view edges. */
+/** Canvas-root class applying the `--ln-edge-density` fade and thinning to object-view edges. */
 const EDGE_DENSITY_CLASS_NAME = 'ln-edge-density';
 
 /** Stable empty route-target list for the navigator outside a focus. */
@@ -348,11 +340,8 @@ const NO_FOCUS_TARGETS: readonly string[] = [];
 const NO_STALE_NAMES: string[] = [];
 
 /**
- * Name of the per-edge CSS custom property carrying its own base stroke width, set once when an
- * edge enters `localEdges`.
- *
- * @remarks
- * The selection-dim/lit CSS rules (`src/index.css`) scale an edge's width off this property.
+ * Per-edge CSS custom property holding its base stroke width, set once when an edge enters
+ * `localEdges`; the selection-dim/lit rules in `src/index.css` scale width off it.
  */
 const EDGE_BASE_WIDTH_VAR = '--ln-edge-w';
 
@@ -369,9 +358,9 @@ function withEdgeBaseWidthVar(edge: FlowEdge): FlowEdge {
 }
 
 /**
- * Merges a freshly rebuilt node list with the local nodes mid-drag: a node in `draggingIds` keeps
- * the position it currently holds in `currentNodes` — where the drag left it — while every field on
- * every node, dragging or not, otherwise comes from `incomingNodes`.
+ * Merges a rebuilt node list with the local nodes mid-drag: a node in `draggingIds` keeps its
+ * position from `currentNodes`, and every other field of every node comes from `incomingNodes`.
+ * @internal
  */
 export function mergeIncomingNodesPreservingDrag(
   incomingNodes: FlowNode[],
@@ -419,17 +408,12 @@ function buildTraceNeighborOptions(
 }
 
 /**
- * Derives an accurate, human-readable reason the prune control is unavailable.
+ * Human-readable reason the prune control is unavailable. Every candidate is visible and a prune
+ * cascade-removes its subtree, so {@link canPruneTraceNode} refuses only the trace origin; the
+ * blocking cases are nothing to remove on this side, or only the origin.
  *
- * @remarks
- * Every candidate here is already visible and a prune cascade-removes the candidate's subtree
- * instead of being refused, so {@link canPruneTraceNode} refuses only the trace origin. The two
- * blocking cases are therefore: nothing in the trace to remove on this side, or the only candidate
- * is the origin.
- *
- * @param pruneChecks - Per visible-neighbor prune-safety verdicts on this side.
  * @param sideLabel - "upstream" or "downstream", for the empty-context message.
- * @returns Empty string when at least one neighbor is prunable, else the reason copy.
+ * @returns Empty string when at least one neighbor is prunable, else the reason.
  */
 function derivePruneDisabledReason(
   pruneChecks: ReadonlyArray<{ check: TracePruneCheck }>,
@@ -489,72 +473,50 @@ function serializeSideAffordance(side: TraceSideControls): TraceAffordanceSideSn
 }
 
 /**
- * Flattens the live {@link TraceNodeControls} (which carry React callbacks) into a
- * plain, postMessage-safe object so the debug dump can report exactly which add/prune
- * buttons the user saw, and why a control was grayed.
+ * Flattens the live {@link TraceNodeControls} (React callbacks) into a postMessage-safe object, so
+ * the debug dump shows which add/prune buttons the user saw and why one was grayed.
  */
 function serializeTraceAffordances(nodeId: string, controls: TraceNodeControls): TraceAffordanceSnapshot {
   return { nodeId, in: serializeSideAffordance(controls.in), out: serializeSideAffordance(controls.out) };
 }
 
 interface GraphCanvasProps {
-  /** Array of nodes formatted for React Flow. */
   flowNodes: FlowNode[];
-  /** Array of edges formatted for React Flow. */
   flowEdges: FlowEdge[];
-  /** Current state of the lineage trace or pathfinding operation. */
   trace: TraceState;
-  /** Current filter settings (schemas, types, search term, etc.). */
   filter: FilterState;
-  /** High-level metrics about the current graph subset. */
   metrics: { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } | null;
-  /** ID of the node currently highlighted/selected by the user. */
   highlightedNodeId?: string | null;
   /** The underlying graphology instance for structural analysis. */
   graph?: Graph | null;
-  /** Extension configuration settings. */
   config: ExtensionConfig;
-  /** Callback fired when a node is clicked. */
   onNodeClick: (nodeId: string, findQuery?: string) => void;
   /** Callback that drops the node selection — the canvas's click-away reset. */
   onClearSelection?: () => void;
-  /** Callback fired when a schema cluster is selected. */
   onSchemaNodeSelect?: (nodeId: string) => void;
-  /** Callback fired when a node is right-clicked. */
   onNodeContextMenu: (node: FlowNode, x: number, y: number) => void;
-  /** Callback fired when an object node is double-clicked — opens the same detail view as the context menu's Show Details. */
+  /**
+   * Fired on object-node double-click; opens the detail view like the context menu's Show Details.
+   */
   onShowDetails?: (nodeId: string) => void;
-  /** Callback to start a trace immediately from a node. */
   onStartTraceImmediate: (nodeId: string) => void;
   /** Callback to apply a trace configuration (upstream/downstream levels). */
   onTraceApply: (config: { upstreamLevels: number; downstreamLevels: number }) => void;
-  /** Callback to end the current trace/path mode. */
   onTraceEnd: (onComplete?: () => void) => void;
   /** Callback to reset all filters and traces. */
   onResetAll: () => void;
-  /** Callback to toggle visibility of a specific object type. */
   onToggleType: (type: ObjectType) => void;
   /** Callback to toggle 'Isolated Nodes' filter. */
   onToggleIsolated: () => void;
-  /** Callback to toggle focus on a specific schema. */
   onToggleFocusSchema: (schema: string) => void;
-  /** Callback to toggle visibility of a specific schema. */
   onToggleSchema?: (schema: string) => void;
-  /** Callback to select all schemas in the filter. */
   onSelectAllSchemas?: (schemas: string[]) => void;
-  /** Callback to deselect all schemas in the filter. */
   onSelectNoneSchemas?: (schemas: string[]) => void;
-  /** Callback to toggle visibility of external references. */
   onToggleExternalRefs?: () => void;
-  /** Callback to toggle a specific external reference sub-type. */
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
-  /** Array of active exclusion patterns. */
   exclusionPatterns?: string[];
-  /** Callback to add a new exclusion pattern. */
   onAddExclusionPattern?: (pattern: string) => void;
-  /** Callback to remove an existing exclusion pattern. */
   onRemoveExclusionPattern?: (pattern: string) => void;
-  /** List of all schemas available in the model. */
   availableSchemas?: string[];
   /** Schemas with at least one node after all filters — for legend display. */
   renderedSchemas?: string[];
@@ -566,17 +528,12 @@ interface GraphCanvasProps {
   onRefresh: () => void;
   /** Callback to trigger a full graph rebuild (e.g. after filter change). */
   onRebuild?: () => void;
-  /** Callback to navigate back to the previous screen. */
   onBack: () => void;
-  /** Callback to open the DDL viewer for the selected object. */
   onOpenDdlViewer?: () => void;
-  /** Whether the detailed search sidebar is currently open. */
   isDetailSearchOpen?: boolean;
-  /** Callback to toggle the detailed search sidebar. */
   onToggleDetailSearch?: () => void;
   /** Whether the trace navigator is collapsed to its reopen button. */
   isTraceTreeCollapsed?: boolean;
-  /** Callback to toggle the trace navigator. */
   onToggleTraceTreeCollapsed?: () => void;
   /** Traversal graph over the trace scope, shared by tree path lighting and focus paths. */
   traceScopeGraph?: Graph | null;
@@ -596,48 +553,36 @@ interface GraphCanvasProps {
   onResetTrace?: () => void;
   /** Loads one level from the given grow candidates. */
   onAddTraceNeighbors?: (candidateIds: string[]) => void;
-  /** The full database model (catalog and graph). */
   model?: DatabaseModel | null;
-  /** ID of the node currently shown in the info bar. */
   infoBarNodeId?: string | null;
-  /** Callback to close the info bar. */
   onCloseInfoBar?: () => void;
   /** Current state of the graph analysis (SCC, Hubs, etc.). */
   analysisMode?: AnalysisMode | null;
-  /** Callback to start a specific analysis. */
   onOpenAnalysis?: (type: AnalysisType) => void;
-  /** Callback to exit analysis mode. */
   onCloseAnalysis?: () => void;
-  /** Callback to focus a specific group within the analysis results. */
   onSelectAnalysisGroup?: (groupId: string) => void;
-  /** Callback to clear the active analysis group focus. */
   onClearAnalysisGroup?: () => void;
   /** Callback to find and apply a path between two nodes. */
   onApplyPath?: (targetNodeId: string) => boolean;
-  /** Whether the graph is currently being rebuilt. */
   isRebuilding?: boolean;
-  /** Estimates the node count a trace at the given upstream/downstream depth would render, before it runs. */
+  /** Node count a trace at the given upstream/downstream depth would render, before it runs. */
   estimateTraceSize?: (upstreamLevels: number, downstreamLevels: number) => number;
   /** Display name of the active source (e.g. dacpac filename). */
   sourceName?: string;
   /** List of saved filter profiles (bookmarks). */
   filterProfiles?: FilterProfile[];
-  /** ID of the active project. */
   activeProjectId?: string | null;
-  /** ID of the active saved view. */
   activeViewId?: string | null;
   /** Whether the current view has unsaved changes. */
   isViewModified?: boolean;
-  /** Callback to save the current view. */
   onSaveView?: (name: string) => void;
-  /** Callback to apply a saved filter profile. */
   onApplyView?: (profile: FilterProfile) => void;
-  /** Callback to delete a saved view. */
   onDeleteView?: (profileId: string) => void;
-  /** Callback to update an existing saved view. */
   onUpdateView?: (profileId: string) => void;
   /** Whether any filters have changed relative to the default or last saved state. */
   isFilterDirty?: boolean;
+  /** Increments when the extension asks to go back; passed to the toolbar. */
+  backRequest?: number;
   /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
   /** Whether the current scoped view supports removing individual nodes via the node X. */
@@ -650,40 +595,27 @@ interface GraphCanvasProps {
   canSwitchGraphMode?: boolean;
   /** The current graph abstraction level (full object graph or overview schema graph). */
   graphMode?: GraphMode;
-  /** Callback to switch between Object View and Schema View. */
   onGraphModeChange?: (mode: GraphMode) => void;
   /**
-   * Set once on initial load/reset — `true` when the loaded model is below the overview threshold.
-   * Disables the Schema View button; never re-derived from filter changes.
+   * Set on initial load/reset: `true` when the model is below the overview threshold. Disables the
+   * Schema View button; never re-derived from filter changes.
    */
   schemaViewSoftDisabled?: boolean;
   /**
-   * Object-level node IDs that passed all filters (from useGraphology flowNodes).
-   * In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth.
+   * Object-level node IDs that passed all filters (from useGraphology flowNodes). In overview mode
+   * flowNodes are schema aggregates; this keeps the object-level truth.
    */
   filteredObjectIds?: Set<string>;
   /** Called when user saves a trace/path result as an advanced bookmark. */
-  onSaveTraceBookmark?: (
-    name: string,
-    nodeIds: string[],
-    source: 'trace' | 'path',
-    positions?: Record<string, { x: number; y: number }>,
-  ) => void;
+  onSaveTraceBookmark?: (name: string, nodeIds: string[]) => void;
   /** Called when user saves an analysis result as an advanced bookmark. */
   onSaveAnalysisBookmark?: (
     name: string,
     nodeIds: string[],
-    positions?: Record<string, { x: number; y: number }>,
   ) => void;
   /** Transient AI preview — shown before user decides to save. */
   aiPreview?: { name: string; nodeIds: Set<string>; aiMetadata: AIViewMetadata } | null;
-  /** Called when user saves an AI preview as a bookmark. */
-  onSaveAiBookmark?: (
-    name: string,
-    withPositions: boolean,
-    positions?: Record<string, { x: number; y: number }>,
-  ) => void;
-  /** Called when user discards the AI preview. */
+  onSaveAiBookmark?: (name: string) => void;
   onDiscardAiPreview?: () => void;
   /** Called when user clicks the "×" remove-from-view button (advanced bookmark mode). */
   onRemoveFromView?: (nodeId: string) => void;
@@ -693,12 +625,8 @@ interface GraphCanvasProps {
   bookmarkStaleNames?: string[];
   /** Called when user clicks "Exit View" in the bookmark banner. */
   onExitAdvancedBookmark?: () => void;
-  /** Saved node positions from a bookmark — applied once after the next rebuild. */
-  pendingPositions?: Record<string, { x: number; y: number }>;
   /** Incremented when the next graph-data update should keep the current viewport. */
   viewportPreserveVersion?: number;
-  /** Called after pendingPositions have been applied so the parent can clear them. */
-  onPendingPositionsApplied?: () => void;
   /** Reports the live viewport on every change, for the parent to capture into a view snapshot. */
   onCameraChange?: (viewport: { x: number; y: number; zoom: number }) => void;
   /** A viewport to apply once after the next graph-data update, then cleared. */
@@ -711,13 +639,12 @@ interface GraphCanvasProps {
   onToggleFullModel?: () => void;
   /** Number of trace nodes hidden by the active filter. */
   filteredOutCount?: number;
-  /** Adds a direct neighbor to the current trace scope. */
   onTraceAddNeighbor?: (nodeId: string) => void;
   /** Prunes one safe node from the current trace scope. */
   onTracePruneNode?: (nodeId: string) => void;
   /** Opens expanded schema view for a node's schema without changing the schema filter. */
   onOpenExpandedSchemaViewForNode?: (nodeId: string) => void;
-  /** Expands a collapsed schema cluster into individual objects without changing the schema filter. */
+  /** Expands a collapsed schema cluster into objects without changing the schema filter. */
   onExpandExpandedSchemaViewSchema?: (schemaName: string) => void;
   /** Replaces the expanded-schema-view expansion set with this single schema. */
   onCenterExpandedSchemaViewSchema?: (schemaName: string) => void;
@@ -731,22 +658,20 @@ interface GraphCanvasProps {
   showExpandedSchemaClusters?: boolean;
   /** Toggles the visual-only rendering of collapsed schema clusters in Expanded Schema View. */
   onToggleExpandedSchemaClusters?: () => void;
-  /** Number of schemas currently expanded in expanded schema view; shown in compact control tooltips. */
+  /** Schemas currently expanded in expanded schema view; shown in compact control tooltips. */
   expandedSchemaCount?: number;
   /** Expands all schemas at once and enters Expanded Schema View. */
   onExpandAllSchemas?: () => void;
   /**
-   * IDs of nodes in the working set that are collapsed inside a schema cluster.
-   * Passed to the toolbar search for three-state partitioning.
+   * IDs of working-set nodes collapsed inside a schema cluster, passed to the toolbar search for
+   * three-state partitioning.
    */
   collapsedSchemaNodeIds?: Set<string>;
-  /** Render-limit notice, positioned inside the canvas area so it never covers the toolbar or banners. */
+  /** Render-limit notice, placed inside the canvas so it never covers the toolbar or banners. */
   renderLimitNotice?: ReactNode;
 }
 
-/**
- * Renders the lineage graph and coordinates viewport, selection, filtering, and graph modes.
- */
+/** Renders the lineage graph and coordinates viewport, selection, filtering and graph modes. */
 export function GraphCanvas({
   flowNodes,
   flowEdges,
@@ -818,6 +743,7 @@ export function GraphCanvas({
   onDeleteView,
   onUpdateView,
   isFilterDirty,
+  backRequest,
   isModeLocked = false,
   canRemoveNodeFromScopedView = false,
   canEditTraceScope = false,
@@ -836,9 +762,7 @@ export function GraphCanvas({
   activeAdvancedProfile,
   bookmarkStaleNames,
   onExitAdvancedBookmark,
-  pendingPositions,
   viewportPreserveVersion = 0,
-  onPendingPositionsApplied,
   onCameraChange,
   pendingViewport,
   onPendingViewportApplied,
@@ -869,14 +793,14 @@ export function GraphCanvas({
   const displayedGraphRef = useRef({ nodes: flowNodes, edges: flowEdges, sourceNodes: flowNodes, sourceEdges: flowEdges });
   const vscodeApi = useVsCode();
 
-  /** Schema colours of the current graph, collision-resolved across its schemas as the object nodes carry them. */
+  /** Schema colours of the current graph, collision-resolved across its schemas. */
   const graphSchemaColors = useMemo(
     () => deriveLegendColorMap(flowNodes, model?.identifierCaseSensitive),
     [flowNodes, model?.identifierCaseSensitive],
   );
   /**
-   * A node's canvas colour: the external colour, or its schema's colour in the current graph. A
-   * schema outside the graph (a listed but filtered trace node) falls back to the per-schema hash.
+   * A node's canvas colour: the external colour, else its schema's colour in the current graph; a
+   * schema outside the graph (a filtered trace node) falls back to the per-schema hash.
    */
   const resolveNodeColor = useCallback((schema: string, objectType?: string): string => {
     if (objectType === 'external') return getExternalNodeColor();
@@ -913,10 +837,9 @@ export function GraphCanvas({
   const aiSectionsRef = useRef<AiReportSection[]>([]);
 
   /**
-   * Generation for every pending programmatic camera fit (AI-panel refit timer, section-focus fit,
-   * column-view toggle fit, AI description fit, graph-change fit): each fit claims the next value on
-   * scheduling, and a user pan/zoom (`onMoveStart` firing with a real event) bumps it so any fit still
-   * in flight no-ops instead of running.
+   * Generation of every pending programmatic camera fit (AI-panel refit, section-focus, column-view
+   * toggle, AI description and graph-change fits). Each fit claims the next value on scheduling; a
+   * user pan/zoom (`onMoveStart` with a real event) bumps it so fits in flight no-op.
    */
   const fitGenerationRef = useRef(0);
   /** `ReactFlow`'s `onMoveStart` — bumps the fit generation only for a real user gesture. */
@@ -925,11 +848,9 @@ export function GraphCanvas({
   }, []);
 
   /**
-   * The report navigated to a section: it lights that section's labels and frames its objects.
-   *
-   * @remarks
-   * Only this path frames — a node click also sets the active section, and moving the graph under
-   * a click the user just made would take the node out from under the pointer.
+   * The report navigated to a section: lights its labels and frames its objects. Only this path
+   * frames, because a node click also sets the active section and moving the graph under that click
+   * would take the node from under the pointer.
    */
   const handleFocusSection = useCallback((n: number | null) => {
     setActiveSection(n);
@@ -977,10 +898,8 @@ export function GraphCanvas({
 
   /**
    * Column-level rendering of the active trace; null when the run recorded no column findings.
-   *
-   * @remarks
-   * Derived above the `ErrorBoundary` that wraps the React Flow subtree, so a throw here would
-   * escape to the root boundary and reload the whole webview; degrades to `null` instead.
+   * Derived above the `ErrorBoundary` around the React Flow subtree, so a throw would reload the
+   * whole webview; it degrades to `null` instead.
    */
   const columnTraceView = useMemo(() => {
     const relations = activeAiMetadata?.columnAspect?.edges;
@@ -1024,7 +943,7 @@ export function GraphCanvas({
       vscodeApi.postMessage({
         type: 'log',
         level: 'warn',
-        text: `[Graph] Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        text: `[Graph] Column view unavailable: ${errorMessage(err)}`,
       });
       return null;
     }
@@ -1034,18 +953,15 @@ export function GraphCanvas({
   const columnViewActive = columnView && !!columnTraceView;
 
   /**
-   * Node positions in object space, for the callbacks that persist or export them.
-   *
-   * @remarks
-   * React Flow's `getNodes()` yields column-trace nodes while the column view is active — the same
-   * ids in a different coordinate space. Bookmarks and exports are object-view artifacts, so they
-   * read `localNodes` instead, which `onColumnNodesChange` deliberately leaves untouched.
+   * Node positions in object space, for the draw.io export. `getNodes()` yields column-trace nodes
+   * (same ids, other coordinate space) while the column view is active, so this reads `localNodes`,
+   * which `onColumnNodesChange` leaves untouched.
    */
   const objectNodes = useCallback(() => (columnViewActive ? localNodes : getNodes()), [columnViewActive, localNodes, getNodes]);
 
   const pendingZoomRef = useRef<string | null>(null);
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
-  /** Timestamp when pendingZoomRef was set — used to expire stale refs after PENDING_ZOOM_TIMEOUT_MS. */
+  /** When pendingZoomRef was set; stale refs expire after PENDING_ZOOM_TIMEOUT_MS. */
   const pendingZoomSetAt = useRef<number>(0);
   /** Active timer — guarantees the pendingZoom warning fires even if flowNodes stops changing. */
   const pendingZoomTimerRef = useRef<number | null>(null);
@@ -1057,14 +973,11 @@ export function GraphCanvas({
   useEffect(() => clearPendingZoomTimer, [clearPendingZoomTimer]);
 
   /**
-   * Arms a zoom for a node the expanded schema view has yet to reveal.
+   * Arms a zoom for a node the expanded schema view has yet to reveal; `searchTerm` is highlighted
+   * in the detail panel by the deferred click.
    *
-   * @param nodeId - The node to zoom and click once it lands in `flowNodes`.
-   * @param searchTerm - Term the deferred click highlights in the detail panel.
-   *
-   * @remarks
    * The graph-change effect expires a pending zoom against {@link pendingZoomSetAt}; not stamping
-   * it here would leave a stale timestamp and expire the zoom before the expanded graph arrives.
+   * it here would expire the zoom before the expanded graph arrives.
    */
   const armPendingZoom = useCallback((nodeId: string, searchTerm?: string) => {
     pendingZoomRef.current = nodeId;
@@ -1149,23 +1062,12 @@ export function GraphCanvas({
     void fitView({ padding: fitPaddingRef.current, duration: FIT_VIEW_DURATION });
   }, [fitView]);
 
-  const handleSaveTraceAsBookmark = useCallback((name: string, withPositions: boolean) => {
+  const handleSaveTraceAsBookmark = useCallback((name: string) => {
     if (!onSaveTraceBookmark) return;
-    const nodeIds = Array.from(trace.tracedNodeIds);
-    if (withPositions) {
-      const nodeIdSet = new Set(nodeIds);
-      const nodes = objectNodes();
-      const pos: Record<string, { x: number; y: number }> = {};
-      for (const n of nodes) {
-        if (nodeIdSet.has(n.id)) pos[n.id] = n.position;
-      }
-      onSaveTraceBookmark(name, nodeIds, 'trace', pos);
-    } else {
-      onSaveTraceBookmark(name, nodeIds, 'trace');
-    }
-  }, [onSaveTraceBookmark, trace.tracedNodeIds, objectNodes]);
+    onSaveTraceBookmark(name, Array.from(trace.tracedNodeIds));
+  }, [onSaveTraceBookmark, trace.tracedNodeIds]);
 
-  const handleSaveAnalysisAsBookmark = useCallback((name: string, withPositions: boolean) => {
+  const handleSaveAnalysisAsBookmark = useCallback((name: string) => {
     if (!onSaveAnalysisBookmark || !analysisMode) return;
     const activeGroup = analysisMode.activeGroupId
       ? analysisMode.result.groups.find(g => g.id === analysisMode.activeGroupId)
@@ -1173,27 +1075,12 @@ export function GraphCanvas({
     const nodeIds = activeGroup
       ? activeGroup.nodeIds
       : analysisMode.result.groups.flatMap(g => g.nodeIds);
-    if (withPositions) {
-      const nodes = objectNodes();
-      const pos: Record<string, { x: number; y: number }> = {};
-      for (const n of nodes) pos[n.id] = n.position;
-      onSaveAnalysisBookmark(name, nodeIds, pos);
-    } else {
-      onSaveAnalysisBookmark(name, nodeIds);
-    }
-  }, [onSaveAnalysisBookmark, analysisMode, objectNodes]);
+    onSaveAnalysisBookmark(name, nodeIds);
+  }, [onSaveAnalysisBookmark, analysisMode]);
 
-  const handleSaveAiAsBookmark = useCallback((name: string, withPositions: boolean) => {
-    if (!onSaveAiBookmark) return;
-    if (withPositions) {
-      const nodes = objectNodes();
-      const pos: Record<string, { x: number; y: number }> = {};
-      for (const n of nodes) pos[n.id] = n.position;
-      onSaveAiBookmark(name, withPositions, pos);
-    } else {
-      onSaveAiBookmark(name, withPositions);
-    }
-  }, [onSaveAiBookmark, objectNodes]);
+  const handleSaveAiAsBookmark = useCallback((name: string) => {
+    onSaveAiBookmark?.(name);
+  }, [onSaveAiBookmark]);
 
   useKeyboardShortcut(SHORTCUT_KEYS.fitView, handleFitView);
 
@@ -1222,7 +1109,10 @@ export function GraphCanvas({
     []
   );
 
-  /** Pending {@link zoomToNode} frame, cancelled by the next call or on unmount so a fast repeat search never queues competing `setCenter` calls. */
+  /**
+   * Pending {@link zoomToNode} frame, cancelled by the next call or unmount so repeat searches
+   * never queue competing `setCenter` calls.
+   */
   const zoomToNodeFrameRef = useRef<number | null>(null);
   useEffect(() => () => {
     if (zoomToNodeFrameRef.current !== null) cancelAnimationFrame(zoomToNodeFrameRef.current);
@@ -1259,8 +1149,8 @@ export function GraphCanvas({
 
   /**
    * Selects a tree row's node on the canvas once. A row click focuses (react-arborist `onFocus`)
-   * and then activates the row in the same event, so the ref — not the render's
-   * `highlightedNodeId` — keeps the second call from selecting it again.
+   * then activates in the same event, so this ref, not the render's `highlightedNodeId`, stops the
+   * second call selecting again.
    */
   const treeSelectionRef = useRef(highlightedNodeId);
   treeSelectionRef.current = highlightedNodeId;
@@ -1271,10 +1161,10 @@ export function GraphCanvas({
   }, [onNodeClick]);
 
   /**
-   * Tree-row activation: existing canvas selection, plus lighting of every
-   * origin↔node connecting path with the camera autofit on the route. The origin needs no
-   * override — the trace-origin rule already keeps it lit. While routes are shown the click only
-   * selects: every shown route stays lit and the camera keeps framing their union.
+   * Tree-row activation: canvas selection, plus lighting of every origin↔node connecting path with
+   * the camera fitted to the route. The origin needs no override (the trace-origin rule keeps it
+   * lit). While routes are shown a click only selects: every route stays lit and the camera keeps
+   * framing their union.
    */
   const handleTreeRowSelect = useCallback((nodeId: string) => {
     selectTreeNode(nodeId);
@@ -1359,7 +1249,7 @@ export function GraphCanvas({
     }
   }, [armPendingZoom, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
 
-  /** Host `focus-object` requests (the Search Objects quick pick) take the same path as Quick Jump. */
+  /** Host `focus-object` requests (the Search Objects quick pick) take the Quick Jump path. */
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if ((e.data as { type?: unknown } | null)?.type !== 'focus-object') return;
@@ -1393,13 +1283,11 @@ export function GraphCanvas({
   }, [objectNodes, columnViewActive, localEdges, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi, model?.identifierCaseSensitive]);
 
   /**
-   * The one auto-fit: frames every node once the displayed graph is ready, at the padding and duration every
-   * caller shares; a later user pan/zoom bumps {@link fitGenerationRef} so it no-ops instead of
-   * running.
+   * The one auto-fit: frames every node once the displayed graph is ready, with the shared padding
+   * and duration; a later user pan/zoom bumps {@link fitGenerationRef} so it no-ops.
    *
-   * @remarks
-   * Waits until React Flow has the requested node positions, measured bounds and edges. A view
-   * arriving before measurement must not frame stale bounds from the previous graph.
+   * Waits until React Flow has the requested node positions, measured bounds and edges, so a view
+   * arriving before measurement never frames the previous graph's bounds.
    *
    * @returns A cancel to return directly as an effect's cleanup.
    */
@@ -1420,10 +1308,10 @@ export function GraphCanvas({
   const shownTraceMode = ['applied', 'filtered', 'path-applied', 'analysis'].includes(trace.mode) ? trace.mode : null;
 
   /**
-   * Fits graph changes and newly shown AI, trace and analytics views, including repeated shows
-   * whose node membership is unchanged. A stored viewport restoration still takes precedence. A manual add/prune trace-scope
-   * edit is the one graph change this owner does not reframe for, since the edited node is already
-   * on screen and a fit there would move the view out from under the click that caused it.
+   * Fits graph changes and newly shown AI, trace and analytics views, including repeated shows with
+   * unchanged node membership; a stored viewport restoration takes precedence. A manual add/prune
+   * trace-scope edit is not reframed, since the edited node is on screen and a fit would move the
+   * view from under the click.
    */
   useEffect(() => {
     const nodeDataChanged = nodesAtLastFitEffectRef.current !== flowNodes;
@@ -1432,7 +1320,6 @@ export function GraphCanvas({
     const currentTrace = currentTraceRef.current;
     traceAtLastGraphChangeRef.current = currentTrace;
 
-    if (pendingPositions && Object.keys(pendingPositions).length > 0) return;
     const zoomTarget = pendingZoomRef.current;
     const clickTarget = pendingClickRef.current;
     if (zoomTarget) {
@@ -1462,7 +1349,8 @@ export function GraphCanvas({
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
     return fitGraph();
   }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode, aiPreview, analysisMode,
-    shownTraceMode, trace.tracedNodeIds]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
+    shownTraceMode, trace.tracedNodeIds]);
+  // onNodeClickRef is intentionally excluded from the deps: the effect reads it at run time.
 
   const [notesVisible, setNotesVisible] = useState(true);
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
@@ -1477,19 +1365,12 @@ export function GraphCanvas({
 
   const fittedForColumnViewRef = useRef<boolean | null>(null);
 
-  const pendingPositionsRef = useRef(pendingPositions);
-  pendingPositionsRef.current = pendingPositions;
-  const handleFitViewRef = useRef(handleFitView);
-  handleFitViewRef.current = handleFitView;
-  const onPendingPositionsAppliedRef = useRef(onPendingPositionsApplied);
-  onPendingPositionsAppliedRef.current = onPendingPositionsApplied;
-
   /**
-   * Node ids currently mid-drag, read by the sync effect below so a rebuild landing mid-drag never
-   * resets the dragged node's position out from under the user's pointer.
+   * Node ids mid-drag, read by the sync effect so a rebuild landing mid-drag never resets the
+   * dragged node's position under the pointer.
    */
   const draggingNodeIdsRef = useRef<Set<string> | null>(null);
-  /** The `flowNodes` the sync effect deferred while a drag was in progress; applied on drag stop. */
+  /** The `flowNodes` the sync effect deferred during a drag; applied on drag stop. */
   const deferredFlowNodesRef = useRef<FlowNode[] | null>(null);
 
   useEffect(() => {
@@ -1497,17 +1378,7 @@ export function GraphCanvas({
       deferredFlowNodesRef.current = flowNodes;
       return;
     }
-    const pending = pendingPositionsRef.current;
-    if (pending && Object.keys(pending).length > 0) {
-      setLocalNodes(flowNodes.map(n => {
-        const saved = pending[n.id];
-        return saved ? { ...n, position: { x: saved.x, y: saved.y } } : n;
-      }));
-      requestAnimationFrame(() => handleFitViewRef.current());
-      onPendingPositionsAppliedRef.current?.();
-    } else {
-      setLocalNodes(flowNodes);
-    }
+    setLocalNodes(flowNodes);
     setSyncedGraph(current => ({ ...current, nodes: flowNodes }));
   }, [flowNodes]);
 
@@ -1517,7 +1388,10 @@ export function GraphCanvas({
   }, [flowEdges]);
 
   const pendingViewportRef = useRef(pendingViewport);
-  /** {@link fitGenerationRef} at the render `pendingViewport` first became this (truthy) value — the generation it was armed at. */
+  /**
+   * {@link fitGenerationRef} when `pendingViewport` first became this truthy value: its arming
+   * generation.
+   */
   const pendingViewportGenerationRef = useRef(fitGenerationRef.current);
   if (pendingViewport && pendingViewport !== pendingViewportRef.current) {
     pendingViewportGenerationRef.current = fitGenerationRef.current;
@@ -1529,13 +1403,11 @@ export function GraphCanvas({
   setViewportRef.current = setViewport;
 
   /**
-   * Applies a restored viewport once after the graph-data update it was captured for, then clears it.
-   *
-   * @remarks
-   * Runs after the {@link fitGraph} owner above; the caller pairs a `pendingViewport` with
-   * `preserveViewportOnNextGraphChange` so that owner skips its own fit for this same update. The
-   * graph-data update is often deferred through `startTransition`, so applying is still gated by
-   * {@link applyPendingViewport} — a user pan/zoom landing in that gap must win, not the stale camera.
+   * Applies a restored viewport once after the graph-data update it was captured for, then clears
+   * it. Runs after the {@link fitGraph} owner; the caller pairs a `pendingViewport` with
+   * `preserveViewportOnNextGraphChange` so that owner skips its fit for this update. The update is
+   * often deferred via `startTransition`, so {@link applyPendingViewport} gates it: a user pan/zoom
+   * in that gap must win over the stale camera.
    */
   useEffect(() => {
     const pending = pendingViewportRef.current;
@@ -1550,8 +1422,8 @@ export function GraphCanvas({
   );
 
   /**
-   * Marks a drag live so the `localNodes` sync effect defers a rebuild that lands mid-drag, rather
-   * than deriving drag state from `applyNodeChanges` position events (which arrive one frame late).
+   * Marks a drag live so the `localNodes` sync effect defers a rebuild landing mid-drag, rather
+   * than deriving drag state from `applyNodeChanges` position events (one frame late).
    */
   const handleNodeDragStart: OnNodeDrag = useCallback((_event, node, nodes) => {
     fitGenerationRef.current++;
@@ -1559,9 +1431,8 @@ export function GraphCanvas({
   }, []);
 
   /**
-   * Releases the drag and, if a rebuild landed while it was live, applies the deferred nodes now —
-   * the dragged node(s) keep the position the drag left them at; every other node takes the rebuilt
-   * shape. See {@link mergeIncomingNodesPreservingDrag}.
+   * Releases the drag and applies any rebuild deferred during it: dragged nodes keep their dropped
+   * position, all others take the rebuilt shape. See {@link mergeIncomingNodesPreservingDrag}.
    */
   const handleNodeDragStop: OnNodeDrag = useCallback((_event, node, nodes) => {
     fitGenerationRef.current++;
@@ -1575,11 +1446,9 @@ export function GraphCanvas({
   }, []);
 
   /**
-   * Node changes while the column view is on stage.
-   *
-   * @remarks
-   * Column nodes carry the same ids as the object nodes they replace, so routing their changes
-   * through `onNodesChange` would corrupt the positions a bookmark saves. Only the drag is kept.
+   * Node changes while the column view is on stage. Column nodes share ids with the object nodes
+   * they replace, so routing their changes through `onNodesChange` would corrupt the positions the
+   * Draw.io export reads; only the drag is kept.
    */
   const onColumnNodesChange: OnNodesChange = useCallback((changes) => {
     setColumnPositions((prev) => {
@@ -1602,12 +1471,10 @@ export function GraphCanvas({
   onCameraChangeRef.current = onCameraChange;
 
   /**
-   * Shows or hides AI notes as the canvas crosses the legibility zoom.
-   *
-   * @remarks
-   * The band is deliberately wider than a single threshold, since `notesVisible` feeds every node's
-   * decoration and a gesture resting on one exact zoom value would rebuild the whole node set on
-   * each crossing. Off below {@link NOTES_ZOOM_OUT}, on above {@link NOTES_ZOOM_IN}.
+   * Shows or hides AI notes as the canvas crosses the legibility zoom. The band is wider than one
+   * threshold, since `notesVisible` feeds every node's decoration and a gesture resting on one zoom
+   * value would rebuild the node set on each crossing. Off below {@link NOTES_ZOOM_OUT}, on above
+   * {@link NOTES_ZOOM_IN}.
    */
   const handleViewportChange = useCallback((vp: { x: number; y: number; zoom: number }) => {
     setNotesVisible(prev => {
@@ -1688,8 +1555,8 @@ export function GraphCanvas({
   );
 
   /**
-   * The active row's trace cone — its upstream sources and downstream consumers, never a sibling
-   * input it merely shares an output with. See {@link columnThread}.
+   * The active row's trace cone: upstream sources and downstream consumers, never a sibling input
+   * sharing an output. See {@link columnThread}.
    */
   const hoveredColumnPath = useMemo((): Set<string> | null => {
     const active = pinnedColumn ?? hoveredColumn;
@@ -1749,11 +1616,8 @@ export function GraphCanvas({
   }, []);
 
   /**
-   * Empty canvas clicked — every emphasis the user turned on goes back to normal.
-   *
-   * @remarks
-   * Section focus, node selection and the pinned column thread are separate channels that each dim
-   * something, so the reset clears all three rather than the last one used.
+   * Empty canvas clicked: clears every emphasis. Section focus, node selection and the pinned
+   * column thread each dim something, so all three are cleared, not the last used.
    */
   const handlePaneReset = useCallback(() => {
     setActiveSection(null);
@@ -1795,12 +1659,10 @@ export function GraphCanvas({
   }, [columnTraceView]);
 
   /**
-   * Per-node data for the column view, keyed by node id.
-   *
-   * @remarks
-   * Deliberately excludes `columnPositions` and the hovered thread: React Flow re-measures any node
-   * whose object identity changed, so deriving this from a drag or pointer move would re-measure
-   * the whole canvas instead of one node. Position varies per node in {@link projectColumnNodes}.
+   * Per-node data for the column view, keyed by node id. Excludes `columnPositions` and the hovered
+   * thread: React Flow re-measures any node whose object identity changed, so deriving from a drag
+   * or pointer move would re-measure the whole canvas. Position varies per node in
+   * {@link projectColumnNodes}.
    */
   const columnNodeData = useMemo((): Map<string, ColumnTraceNodeData> => {
     const byNode = new Map<string, ColumnTraceNodeData>();
@@ -1975,7 +1837,9 @@ export function GraphCanvas({
     () => canvasMinZoom(displayNodes, paneWidth, paneHeight, fitPadding),
     [displayNodes, paneWidth, paneHeight, fitPadding],
   );
-  /** Hiding or showing the navigator card changes the free canvas width: the trace is reframed at the new padding. */
+  /**
+   * Hiding or showing the navigator card changes the free canvas width, so the trace is reframed.
+   */
   const traceTreeCollapsedRef = useRef(isTraceTreeCollapsed);
   useEffect(() => {
     if (traceTreeCollapsedRef.current === isTraceTreeCollapsed) return;
@@ -2015,7 +1879,21 @@ export function GraphCanvas({
     [localNodes, model?.identifierCaseSensitive],
   );
 
-  /** Info-card profile for an unsaved AI preview; memoized so the memoized card skips unrelated canvas renders. */
+  /**
+   * Objects in the current view; unlike `localNodes`, still the real count while the render-limit
+   * notice withholds nodes.
+   */
+  const viewObjectCount = filteredObjectIds?.size ?? 0;
+  /**
+   * Info-card scope count: rendered nodes (a trace narrows them), or the view's objects while the
+   * render-limit notice withholds them.
+   */
+  const infoCardObjectCount = renderLimitNotice ? viewObjectCount : localNodes.length;
+
+  /**
+   * Info-card profile for an unsaved AI preview; memoized so the card skips unrelated canvas
+   * renders.
+   */
   const aiPreviewProfile = useMemo((): FilterProfile | null => (aiPreview ? {
     id: '',
     name: aiPreview.name,
@@ -2025,8 +1903,9 @@ export function GraphCanvas({
     aiMetadata: aiPreview.aiMetadata,
   } : null), [aiPreview]);
 
-  useEffect(() => {
-    if (!graphErrorContext) return;
+  /** The `render-state` message for the current inputs; its identity changes only when one does. */
+  const renderStateMessage = useMemo(() => {
+    if (!graphErrorContext) return null;
     const highlighted = highlightedNodeId ?? null;
     const controls = highlighted ? traceControlsByNode.get(highlighted) : undefined;
     const traceScope = trace.mode !== 'none'
@@ -2039,16 +1918,20 @@ export function GraphCanvas({
           tracedNodeIds: Array.from(trace.tracedNodeIds),
         }
       : null;
-    vscodeApi.postMessage({
-      type: 'render-state',
+    return {
+      type: 'render-state' as const,
       renderState: {
         ...graphErrorContext,
         highlightedNodeId: highlighted,
         affordances: highlighted && controls ? serializeTraceAffordances(highlighted, controls) : null,
         traceScope,
       },
-    });
-  }, [graphErrorResetKey, highlightedNodeId, traceControlsByNode, trace.tracedNodeIds.size]);
+    };
+  }, [graphErrorContext, highlightedNodeId, traceControlsByNode, trace]);
+
+  useEffect(() => {
+    if (renderStateMessage) vscodeApi.postMessage(renderStateMessage);
+  }, [renderStateMessage, vscodeApi]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -2100,6 +1983,7 @@ export function GraphCanvas({
         onDeleteView={onDeleteView}
         onUpdateView={onUpdateView}
         isFilterDirty={isFilterDirty}
+        backRequest={backRequest}
         isModeLocked={isModeLocked}
         canStartNewScopedMode={canStartNewScopedMode}
         canSwitchGraphMode={canSwitchGraphMode}
@@ -2205,7 +2089,7 @@ export function GraphCanvas({
       {aiPreview && onDiscardAiPreview && (
         <AiViewBanner
           name={aiPreview.name}
-          nodeCount={aiPreview.nodeIds.size}
+          nodeCount={viewObjectCount}
           onDiscard={onDiscardAiPreview}
           onSaveAsBookmark={onSaveAiBookmark ? handleSaveAiAsBookmark : undefined}
           columnViewAvailable={!!columnTraceView}
@@ -2235,9 +2119,12 @@ export function GraphCanvas({
           </div>
         )}
         {flowNodes.length === 0 && !isRebuilding ? (
-          <div className="flex items-center justify-center h-full text-sm" style={{ color: 'var(--ln-fg-muted)' }}>
-            No objects match current filters. Adjust type toggles or search term.
-          </div>
+          // The render-limit card covers this area and already says why nothing is drawn.
+          !renderLimitNotice && (
+            <div className="flex items-center justify-center h-full text-sm" style={{ color: 'var(--ln-fg-muted)' }}>
+              No objects match current filters. Adjust type toggles or search term.
+            </div>
+          )
         ) : (
           <div
             style={{
@@ -2382,7 +2269,7 @@ export function GraphCanvas({
         {activeAdvancedProfile && isBookmarkMode && (
           <BookmarkInfoCard
             profile={activeAdvancedProfile}
-            nodeCount={localNodes.length}
+            nodeCount={infoCardObjectCount}
             schemaCount={legendSchemas.length}
             staleNodeNames={bookmarkStaleNames ?? []}
           />
@@ -2390,7 +2277,7 @@ export function GraphCanvas({
         {aiPreviewProfile && !activeAdvancedProfile && (
           <BookmarkInfoCard
             profile={aiPreviewProfile}
-            nodeCount={localNodes.length}
+            nodeCount={infoCardObjectCount}
             schemaCount={legendSchemas.length}
             staleNodeNames={NO_STALE_NAMES}
           />

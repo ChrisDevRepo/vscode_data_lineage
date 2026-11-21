@@ -1,14 +1,15 @@
 /**
  * @module BuiltInProvider
- * Built-in SQL Server connection provider on `tedious`: SQL login or Microsoft Entra ID, with
- * results rendered as the mssql extension renders them so the DMV consumers need no provider branch.
+ * Built-in SQL Server connection provider on `tedious` (SQL login or Microsoft Entra ID), rendering
+ * results as the mssql extension does so the DMV consumers need no provider branch.
  */
 
 import * as vscode from 'vscode';
 import type { Connection } from 'tedious';
-import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/mssql';
+import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/database';
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
+import { readDeclaredNumericSetting } from '../../configCore';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
 import { readSavedPassword, savePassword, passwordTooLong, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
 import { redactSecrets } from '../../utils/redact';
@@ -18,9 +19,7 @@ import type { DmvQuery } from '../connectionManager';
 
 /** Everything the provider needs from the extension host. */
 export interface BuiltInEnv {
-  /** Secret store that holds SQL login passwords. */
   secrets: vscode.SecretStorage;
-  /** Output channel for debug and info logging. */
   outputChannel: vscode.LogOutputChannel;
   /** Loads the DMV queries YAML; every statement the built-in connection sends comes from it. */
   loadQueries: () => Promise<DmvQuery[]>;
@@ -42,11 +41,11 @@ const APP_NAME = 'Data Lineage Viz';
 const MS_PER_SECOND = 1000;
 /**
  * Connect retries on the transient errors the driver recognises (the SqlClient list: 4060, 10928,
- * 10929, 40197, 40501, 40613). Microsoft recommends waiting at least five seconds before a retry.
+ * 10929, 40197, 40501, 40613), waiting at least the five seconds Microsoft recommends.
  */
 const CONNECT_RETRY_INTERVAL_MS = 5 * MS_PER_SECOND;
 const CONNECT_MAX_RETRIES = 3;
-/** Login budget of one connect attempt; Microsoft recommends 30 seconds for Azure SQL and Synapse. */
+/** Login budget of one connect attempt; Microsoft recommends 30 s for Azure SQL and Synapse. */
 const CONNECT_TIMEOUT_MS = 30 * MS_PER_SECOND;
 
 /** Engine editions that run in a Microsoft cloud service. */
@@ -78,7 +77,7 @@ function clockTime(d: Date): string {
   return `${pad(d.getUTCHours(), 2)}:${pad(d.getUTCMinutes(), 2)}:${pad(d.getUTCSeconds(), 2)}`;
 }
 
-/** Fractional-second digits of a temporal value, truncated to `digits` (0-7), millisecond precision plus tedious's sub-millisecond delta. */
+/** Fractional-second digits of a temporal value, cut to `digits` (0-7): ms plus sub-ms delta. */
 function fraction(d: Date, digits: number): string {
   if (digits <= 0) return '';
   const delta = (d as Date & { nanosecondsDelta?: number }).nanosecondsDelta ?? 0;
@@ -121,12 +120,9 @@ function renderReal(n: number): string {
 }
 
 /**
- * Renders an exact numeric with its declared scale.
- *
- * @remarks
- * The driver delivers `decimal`, `numeric` and `money` as a double. Beyond the digits a double holds,
- * padding to the scale would print digits the server never sent, so such a value keeps the double's
- * shortest text instead.
+ * Renders an exact numeric with its declared scale. The driver delivers `decimal`, `numeric` and
+ * `money` as a double; beyond the digits a double holds, padding to the scale would print digits
+ * the server never sent, so such a value keeps the double's shortest text.
  */
 function renderScaled(n: number, scale: number): string {
   return Math.abs(n) * 10 ** scale <= Number.MAX_SAFE_INTEGER ? n.toFixed(scale) : String(n);
@@ -153,16 +149,11 @@ function renderNumber(n: number, typeName: string, meta: CellMetadata): string {
 }
 
 /**
- * Renders one `tedious` cell value as the mssql extension's `displayValue`.
- *
- * @remarks
- * `bit` renders `1`/`0`, binary as `0x` hex, decimals with their declared scale, temporal values in
- * UTC with the fraction their type carries, and `NULL` as `isNull` with the text `NULL`.
- *
- * @param value - Value from a `row` event.
- * @param meta - Metadata of the column the value came from.
+ * Renders one `tedious` cell value as the mssql extension's `displayValue`: `bit` as `1`/`0`,
+ * binary as `0x` hex, decimals with their declared scale, temporal values in UTC with the fraction
+ * their type carries, and `NULL` as `isNull` with the text `NULL`.
  */
-export function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
+function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
   if (value === null || value === undefined) return NULL_CELL;
   const typeName = meta.type.name;
   if (value instanceof Date) return { displayValue: renderTemporal(value, typeName, meta), isNull: false };
@@ -282,8 +273,8 @@ class BuiltInSession implements DbSession {
 }
 
 function defaultRequestTimeoutMs(): number {
-  const seconds = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout);
-  return (Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_CONFIG.dmvQueryTimeout) * MS_PER_SECOND;
+  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+  return readDeclaredNumericSetting(cfg, 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * MS_PER_SECOND;
 }
 
 /** Asks for a SQL login password once, and whether to keep it in the secret store. */
@@ -333,20 +324,17 @@ async function resolveAuthentication(
 }
 
 /**
- * Opens a built-in session for a saved connection.
+ * Opens a built-in session for a saved connection. SQL login reads the password from the secret
+ * store and prompts once when none is saved; Entra ID signs in with VS Code's Microsoft account in
+ * the saved directory, or the one {@link acquireSqlToken} chooses. Neither credential is logged or
+ * persisted in a settings file. The connection declares `ApplicationIntent=ReadOnly`, so
+ * availability-group and read scale-out routing may serve it from a readable secondary. The server
+ * may carry a `tcp:` prefix or a `host\instance` name; an explicit port takes precedence over the
+ * instance.
  *
- * @remarks
- * SQL login reads the password from the secret store and prompts once when none is saved; Entra ID
- * signs in with VS Code's Microsoft account in the saved directory, or the one {@link acquireSqlToken} chooses. Neither credential is logged or persisted in a
- * settings file. The connection declares read-only application intent (`ApplicationIntent=ReadOnly`),
- * so availability-group and read scale-out routing may serve it from a readable secondary. The server
- * may carry a `tcp:` prefix or a `host\instance` name; an explicit port takes precedence over the instance.
- *
- * @param connection - The saved connection.
- * @param env - Host services.
  * @param options - Per-open overrides.
  * @returns The open session, or `undefined` when the user cancelled a prompt or the connect.
- * @throws The driver's own error, unchanged, when login or the network fails; a
+ * @throws The driver's own error, unchanged, when login or the network fails;
  *   `MicrosoftSignInError` when Entra sign-in does not complete; an `Error` before any sign-in when
  *   an Entra ID connection sets `encrypt` to `false`.
  */

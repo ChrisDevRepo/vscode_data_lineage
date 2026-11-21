@@ -2,6 +2,7 @@ import { memo, useState, useRef, useCallback, useEffect } from 'react';
 import { FloatingFocusManager, FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
+import { CloseIcon } from './ui/CloseIcon';
 import { disabledControl } from './ui/disabledControl';
 import { useDropdown } from '../hooks/useDropdown';
 import { compileExclusionPattern } from '../utils/sql';
@@ -9,25 +10,17 @@ import { compileExclusionPattern } from '../utils/sql';
 interface ExclusionDropdownProps {
   /** Array of active exclusion patterns (SQL-like or Regex). */
   exclusionPatterns: string[];
-  /** Callback fired when a new pattern is added. */
   onAddPattern: (pattern: string) => void;
-  /** Callback fired when an existing pattern is removed. */
   onRemovePattern: (pattern: string) => void;
   /** When true, the trigger renders disabled and never opens the panel. */
   disabled?: boolean;
-  /** Tooltip text shown on the trigger while {@link disabled}. */
   disabledReason?: string;
 }
 
 /**
- * A dropdown component for managing node exclusion rules.
- *
- * It allows users to enter SQL-like wildcards (e.g., `%tmp%`) or regular expressions
- * to hide matching nodes from the graph. Patterns are validated using
- * {@link compileExclusionPattern} before being added.
- *
- * @param props - The component props.
- * @returns A memoized React component.
+ * Dropdown for node exclusion rules: SQL-like wildcards (e.g. `%tmp%`) or regular expressions hide
+ * matching nodes from the graph. Patterns are validated with {@link compileExclusionPattern} before
+ * being added.
  */
 export const ExclusionDropdown = memo(function ExclusionDropdown({
   exclusionPatterns,
@@ -90,7 +83,6 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
             aria-haspopup="dialog"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
-          {/* no-symbol icon */}
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
           </svg>
@@ -212,9 +204,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                           className="shrink-0 w-4 h-4 flex items-center justify-center rounded-sm transition-colors ln-text-muted hover:opacity-80"
                           aria-label={`Remove exclusion pattern: ${pattern}`}
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                          </svg>
+                          <CloseIcon className="w-3 h-3" strokeWidth={2.5} />
                         </button>
                       </Tooltip>
                     </div>

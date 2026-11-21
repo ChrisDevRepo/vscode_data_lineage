@@ -15,24 +15,21 @@ import { bfsFromNode } from 'graphology-traversal';
 /**
  * Debug/info/warn/error sink shape shared by every optional logger this module accepts — a local
  * alias, not `engine/graphGuards`' `LogFn`, since `columnTracer.ts` isn't on the `src/ai ->
- * src/engine` coupling allowlist `tests/unit/ai-core/rule-gates.test.ts` gates.
+ * src/engine` coupling allowlist.
  */
 type TracerLogFn = (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void;
 
-/**
- * Traces column-level lineage (Column Flow) between database objects.
- */
+/** Traces column-level lineage (Column Flow) between database objects. */
 export class ColumnTracer {
   private aspect: ColumnAspect;
 
   /**
-   * @param targetColumns - Columns requested at the start of the trace.
-   * @param initialAspect - Existing aspect to continue from instead of a fresh one; the engine always starts fresh.
+   * @param initialAspect - Existing aspect to continue from instead of a fresh one; the engine
+   *   always starts fresh.
    *
-   * @remarks
    * `target_columns` and `active_columns` are copied, never aliased: the snapshot invariant is
    * `JSON.stringify(init.targetColumns) === JSON.stringify(columnAspect.target_columns)`, so a
-   * shared array would let an in-place edit silently rewrite the frozen target set and break `toJSON()`.
+   * shared array would let an in-place edit rewrite the frozen target set.
    */
   constructor(targetColumns: string[], initialAspect?: ColumnAspect, private readonly identifierCaseSensitive = false) {
     this.aspect = initialAspect ?? {
@@ -44,28 +41,21 @@ export class ColumnTracer {
 
   private columnKey = (value: string): string => normalizeColName(value, this.identifierCaseSensitive);
 
-  /** Current column-trace state. */
   get state(): ColumnAspect {
     return this.aspect;
   }
 
   /**
-   * The aspect as delivered, minus the edges whose endpoint the render dispositioned away.
-   *
-   * @remarks
-   * A projection for delivery only, never a mutation: {@link state} keeps every committed edge, so
-   * the state dump records the full chain and completeness accounting reads the same edge set it
-   * always did. `target_columns`/`active_columns` carry through untouched. Every
-   * call projects the edges that remain after withholding through {@link columnAttachment} of `roots`:
-   * an edge outside it (one whose path ran through a withheld endpoint) is withheld too and named in one `log` line; no edge is added or rewritten.
+   * The aspect as delivered, minus the edges whose endpoint the render dispositioned away. A
+   * projection for delivery only: {@link state} keeps every committed edge, so the state dump and
+   * completeness accounting see the full chain. An edge outside the {@link columnAttachment} of
+   * `roots` (its path ran through a withheld endpoint) is withheld too and named in one `log` line;
+   * no edge is added or rewritten.
    *
    * @param droppedEndpointIds - Endpoint node ids the render withheld; empty on almost every call.
-   * @param roots - The requested output columns the trace started from.
-   * @param direction - The approved trace direction that defines the closure.
-   * @param log - Optional logger naming the edges withheld by the closure.
    * @param rendered - Node ids of the delivered object result; an edge whose destination or
-   *   authoring hop is outside it is withheld and named in one `log` line. A source may lie outside.
-   * @returns The aspect to deliver — the live state itself when nothing was withheld.
+   *   authoring hop is outside it is withheld. A source may lie outside.
+   * @returns The aspect to deliver; the live state itself when nothing was withheld.
    */
   deliveredState(
     droppedEndpointIds: ReadonlySet<string>,
@@ -106,28 +96,22 @@ export class ColumnTracer {
     return this.aspect.edges;
   }
 
-  /**
-   * Replaces the active column set after a hop commits new edges.
-   *
-   * @param columns - The new set of active columns.
-   */
+  /** Distinct nodes at either end of a committed edge. */
+  committedNodeIds(): ReadonlySet<string> {
+    return new Set(this.aspect.edges.flatMap(edge => [edge.from_node, edge.to_node]));
+  }
+
+  /** Replaces the active column set after a hop commits new edges. */
   setActiveColumns(columns: string[]): void {
     this.aspect.active_columns = columns;
   }
 
   /**
-   * Active tracked columns the AI left unaccounted for in this hop's `column_flow`.
-   *
-   * @remarks
-   * The structural completeness guard for the column chain: every active column must be resolved —
-   * continued (an entry with upstream real columns) or produced here (`upstream_columns: []`). An
-   * UPSTREAM trace accounts via `active_columns − {out_col}`; a DOWNSTREAM trace accounts against
-   * `out_col` UNION every `upstream_columns[].col` named, since the active column there lives on
-   * the PREVIOUS node. A non-empty result is returned on the hop ack as data. The engine does not reject the hop for it.
-   *
-   * @param columnFlow - The column flow entries submitted by the AI.
-   * @param traceDirection - Trace direction of the owning exploration.
-   * @returns An array of active columns that were not accounted for.
+   * Active tracked columns the AI left unaccounted for in this hop's `column_flow`: every active
+   * column must be continued (an entry with upstream real columns) or produced here
+   * (`upstream_columns: []`). UPSTREAM accounts via `active_columns − {out_col}`; DOWNSTREAM
+   * against `out_col` UNION every `upstream_columns[].col`, since the active column lives on the
+   * PREVIOUS node. A non-empty result is returned on the hop ack as data; the hop is not rejected.
    */
   unaccountedActiveColumns(columnFlow: ColumnFlowEntry[], traceDirection: 'upstream' | 'downstream'): string[] {
     const accounted = traceDirection === 'downstream'
@@ -137,23 +121,15 @@ export class ColumnTracer {
   }
 
   /**
-   * Resolves which columns are active for a candidate node, bounded to the traced spine.
+   * Resolves which columns are active for a candidate node, bounded to the traced spine: the
+   * columns flowing *from* it into the tracked chain (staged by the routing hop), plus a non-bodied
+   * carrier it writes, since a carrier is never analysed and its producers owe the column.
+   * Off-spine `entryColumns` are dropped, NORMALIZE-WITH-LOG via `log`. An empty spine (candidate
+   * not yet staged) falls back to `entryColumns` so the node still dispatches.
    *
-   * @remarks
-   * The spine for a candidate is the columns flowing *from* it into the tracked chain (staged by
-   * the routing hop before dispatch); a non-bodied carrier the candidate writes is on the spine
-   * too, since a carrier is never analysed and the column is owed by its producers. Off-spine
-   * `entryColumns` are dropped — NORMALIZE-WITH-LOG via `log`, never silent. An empty spine
-   * (candidate not yet staged) falls back to `entryColumns` so the node still dispatches.
-   *
-   * @param candidateNodeId - The id of the node being considered.
-   * @param entryColumns - The columns declared for entry by the AI.
-   * @param writtenCarrierIds - Non-bodied carriers the candidate writes; empty when it writes none.
-   * @param log - Optional logger; the caller (`smBase.ts`) supplies the one it already holds.
-   * @param traceDirection - Trace direction of the owning exploration. `from_node`/`from_col` name
-   * the supplier side (next node, upstream); `to_node`/`to_col` name the write target (next node,
-   * downstream).
-   * @returns The resolved active columns for the candidate node.
+   * @param log - Optional logger; the caller supplies the one it already holds.
+   * @param traceDirection - `from_node`/`from_col` name the supplier side (next node, upstream);
+   *   `to_node`/`to_col` the write target (next node, downstream).
    */
   determineActiveColumnsForCandidate(
     candidateNodeId: string,
@@ -181,17 +157,11 @@ export class ColumnTracer {
 
   /**
    * The committed endpoints a candidate owns on the traced spine, as qualified identities.
+   * Upstream, the source side of a committed edge on the candidate or on a non-bodied carrier it
+   * writes; downstream, the destination side. Each is an exact recorded (node, column) pair,
+   * deduplicated by identity, never a column name matched on another object.
    *
-   * @remarks
-   * Upstream, an endpoint is the source side of a committed edge that sits on the candidate or on a
-   * non-bodied carrier it writes; downstream, the destination side. Each endpoint is an exact
-   * recorded (node, column) pair, deduplicated by identity — never a column name matched on
-   * another object.
-   *
-   * @param candidateNodeId - Canonical id of the candidate node.
-   * @param writtenCarrierIds - Non-bodied carriers the candidate writes.
-   * @param traceDirection - Which edge side names the candidate's endpoint.
-   * @returns The candidate's qualified spine endpoints in commit order.
+   * @returns Qualified spine endpoints in commit order.
    */
   spineEndpointsFor(
     candidateNodeId: string,
@@ -211,19 +181,13 @@ export class ColumnTracer {
 
   /**
    * Generates chain-continuation questions for the real upstream column edges staged at the given
-   * hop, grouped by the upstream node that must next answer each one. Injected as
-   * `<lineage_questions>` in that node's own `<current_task>` — never a different, unrelated hop.
+   * hop, grouped by the upstream node that must next answer each; injected as `<lineage_questions>`
+   * in that node's own `<current_task>`.
    *
-   * @remarks
-   * Terminal/current-node production (`upstream_columns: []`) stages no edge and spawns no
-   * question. Each question is labelled by `edge.from_col`, not `edge.to_col`, so the wording
-   * matches that hop's own `<column_trace>` active-column label. Writer edges
-   * (`from_node === hop_node`) never spawn one: they attribute the focus's own write, they do not
-   * continue the chain into the focus again.
-   *
-   * @param focusId - The id of the focus node.
-   * @param hopCount - The hop count matching the edges to query.
-   * @returns Continuation questions keyed by the upstream node id that must answer each one.
+   * Terminal production (`upstream_columns: []`) stages no edge and no question. Questions are
+   * labelled by `edge.from_col` so the wording matches that hop's `<column_trace>` active-column
+   * label. Writer edges (`from_node === hop_node`) never spawn one: they attribute the focus's own
+   * write rather than continue the chain.
    */
   getColumnLineageQuestionsByNode(focusId: string, hopCount: number): Map<string, string[]> {
     const hopEdges = this.aspect.edges.filter(
@@ -251,45 +215,37 @@ export class ColumnTracer {
   }
 
   /**
-   * Validates the submitted column flow, verifying existence of output and upstream columns.
+   * Validates the submitted column flow, verifying existence of output and upstream columns. Also
+   * rejects a self-loop entry (an `upstream_columns` contributor equal to the entry's own resolved
+   * `writes_to` target, or the focus when omitted) via {@link InvalidRoute} kind
+   * `self_loop_column`, so no edge is staged for it.
    *
-   * @remarks
-   * Also rejects a degenerate self-loop entry — an `upstream_columns` contributor whose resolved
-   * node+column equals the entry's own resolved `writes_to` target (or the focus node, when
-   * `writes_to` is omitted) — via {@link InvalidRoute} kind `self_loop_column`. A column can never
-   * be its own upstream source, so no edge is staged for that contributor.
-   *
-   * @param focusId - The id of the focus node.
-   * @param finding - The parsed findings submission containing the column_flow.
-   * @param nodeMap - Map of all available lineage nodes.
-   * @param model - The underlying database model.
-   * @param store - Optional column store for checking declared column lists.
    * @param log - Optional logger; a neighbour with zero declared columns cannot be verified, so
-   * only procedure/external fallback is accepted and logged at `debug`; ordinary table/view references require declared columns.
-   * @param removedSet - Node ids already pruned this run (PRUNE-BEFORE-DEMAND). Naming an
-   * already-removed node as an `upstream_columns` supplier is rejected here, at declare time,
-   * rather than staging a demand `enqueueHop` can never dispatch to.
-   * @param traceDirection - Trace direction of the owning exploration; resolves which neighbour
-   * side a continuation may name at a body-less focus (producers for upstream, consumers for
-   * downstream).
-   * @param incomingRefs - Transient qualified endpoints supplied by the task context. When omitted,
-   * committed endpoints anchor validation, or the initial focus columns when no edges are committed.
-   * They select entry sides; attachment is decided by the {@link columnAttachment} of `roots` alone.
-   * @param incomingDownstreamRefs - Separate explicitly arriving downstream obligations at a mixed-side hop.
-   *   The two anchor sets remain separate to preserve their recorded continuation legs.
+   *   only a procedure/external fallback is accepted (logged at `debug`); ordinary table/view
+   *   references require declared columns.
+   * @param removedSet - Node ids already pruned this run (PRUNE-BEFORE-DEMAND); naming one as an
+   *   `upstream_columns` supplier is rejected at declare time, rather than staging a demand
+   *   `enqueueHop` can never dispatch.
+   * @param traceDirection - Resolves which neighbour side a continuation may name at a body-less
+   *   focus (producers upstream, consumers downstream).
+   * @param incomingRefs - Transient qualified endpoints from the task context. Omitted: committed
+   *   endpoints anchor validation, or the initial focus columns when none are committed. They
+   *   select entry sides; attachment is decided by the {@link columnAttachment} of `roots` alone.
+   * @param incomingDownstreamRefs - Explicit downstream obligations at a mixed-side hop, kept
+   *   separate from `incomingRefs` to preserve their recorded continuation legs.
    * @param roots - The requested output columns; with the committed and staged edges they define
    *   {@link columnAttachment} in the hop's direction (both sides at a mixed-side hop).
-   * @param contributorIds - Canonical ids an `upstream_columns` contributor may name besides the
-   *   focus: its object neighbors and the read suppliers of its declared scalar callers. A column the
-   *   object does not declare, a literal, or a carrier continuation at a non-writer is refused wherever
-   *   the object sits; any other contributor is dropped with an `absent_contributor` notice, so no column edge joins an object
-   *   unconnected to the hop; omitted, adjacency is not checked.
-   * @returns Validation result containing any error, invalid routes, successfully staged edges and
-   *   the accepted entry sides when separate downstream obligations were supplied.
+   * @param contributorIds - Canonical ids a contributor may name besides the focus: its object
+   *   neighbors and the read suppliers of its declared scalar callers. A column the object does not
+   *   declare, a literal, or a carrier continuation at a non-writer is refused wherever the object
+   *   sits; any other contributor is dropped with an `absent_contributor` notice. Omitted:
+   *   adjacency is not checked.
+   * @returns Validation result: any error, invalid routes, staged edges and the accepted entry
+   *   sides when separate downstream obligations were supplied.
    */
   validateColumnFlow(
     focusId: string,
-    finding: HopFinding,
+    finding: Pick<HopFinding, 'column_flow'>,
     nodeMap: Map<string, LineageNode>,
     model: DatabaseModel,
     store: ColumnStore | null,
@@ -391,7 +347,7 @@ export class ColumnTracer {
         const verbs = new Set<string>();
         for (const e of model.edges) {
           if (identifierKey(e.source) === focusLower && identifierKey(e.target) === toLower) {
-            verbs.add(edgeApiType(e.type, focusNode.type));
+            verbs.add(edgeApiType(e, focusNode.type));
           }
         }
         if (verbs.size === 0) {
@@ -404,7 +360,7 @@ export class ColumnTracer {
         }
       }
       if (entry.writes_to === null && focusNode.type === 'procedure'
-        && model.edges.some(e => identifierKey(e.source) === identifierKey(focusId) && edgeApiType(e.type, focusNode.type) === 'write')) {
+        && model.edges.some(e => identifierKey(e.source) === identifierKey(focusId) && edgeApiType(e, focusNode.type) === 'write')) {
         log?.('debug', `[CT] writes_to null on writer focus="${focusId}" out_col="${entry.out_col}" — no writer edge staged`);
       }
       const toCol = resolvedTarget?.attributionCol ?? entry.out_col;
@@ -439,7 +395,7 @@ export class ColumnTracer {
           && (edge.target === focusId || (entry.returns_to
             ? edge.target === toNodeForEdge
             : callerTargets.some(target => edge.target === target.node)))
-          && edgeApiType(edge.type, neighbor.type) === 'read')) {
+          && edgeApiType(edge, neighbor.type) === 'read')) {
           invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: 'A caller-context investigation accepts real read contributors of the function or its declared callers, not unrelated loaded objects.' });
           continue;
         }
@@ -509,13 +465,15 @@ export class ColumnTracer {
           }
         }
 
-        // Adjacency is judged last, after the column and the carrier's continuation: a nonexistent column or a literal is refused wherever the object sits, and a non-writer continuation keeps its own refusal.
+        // Adjacency is judged last so a nonexistent column, a literal or a non-writer continuation
+        // keeps its own refusal wherever the object sits.
         if (contributorIds && neighbor.id !== focusId && !contributorIds.has(neighbor.id)) {
           invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" has no dependency edge to ${focusId}; a column contributor is a neighbor of the focus or a read supplier of its declared scalar caller.` });
           continue;
         }
 
-        // Direct lineage only: a column that just joins, filters, groups or orders rows is object lineage — its node is a row-role visit and the hop's sections explain the rule.
+        // Direct lineage only: a column that just joins, filters, groups or orders rows is object
+        // lineage; its node is a row-role visit and the hop's sections explain the rule.
         if (!continuationNeighbors && isIndirectOnly(cont.transforms)) {
           rowRoleOnly.push(`${fromNode}.${cont.col} (${(cont.transforms ?? []).join('+')}${cont.note ? `: ${sanitizeForLog(cont.note)}` : ''})`);
           continue;
@@ -625,8 +583,8 @@ export class ColumnTracer {
   }
 }
 
-/** One directed endpoint pair of a staged or submitted column edge, as keyed by {@link columnEndpointKeyFactory}. */
-export interface ColumnEndpointLink {
+/** One directed endpoint pair of a column edge, keyed by {@link columnEndpointKeyFactory}. */
+interface ColumnEndpointLink {
   /** Canonical source endpoint of the recorded data flow. */
   readonly from: string;
   /** Canonical destination endpoint of the recorded data flow. */
@@ -634,15 +592,10 @@ export interface ColumnEndpointLink {
 }
 
 /**
- * Builds the canonical identity key of one (node, column) endpoint for column-chain
- * reachability.
- *
- * @remarks
- * The node id is resolved against the loaded model and lower-cased when unresolvable; the
- * column name is normalized. One key formula shared by the validator and the downstream carry
- * selection, so an identity the validator accepts is the identity the next hop receives.
- *
- * @param nodeMap - Map of all available lineage nodes, for id resolution.
+ * Builds the canonical identity key of one (node, column) endpoint for column-chain reachability.
+ * The node id is resolved against the loaded model (lower-cased when unresolvable) and the column
+ * name normalized. One formula shared by the validator and the downstream carry selection, so an
+ * identity the validator accepts is the one the next hop receives.
  */
 export function columnEndpointKeyFactory(nodeMap: Map<string, LineageNode>, identifierCaseSensitive = false): (node: string, col: string) => string {
   return (node, col) => JSON.stringify([resolveModelNodeId(node, nodeMap, identifierCaseSensitive) ?? schemaKey(node, identifierCaseSensitive), normalizeColName(col, identifierCaseSensitive)]);
@@ -650,16 +603,10 @@ export function columnEndpointKeyFactory(nodeMap: Map<string, LineageNode>, iden
 
 /**
  * Finds endpoints connected to upstream trace seeds, or downstream of received source endpoints.
- *
- * @remarks
- * Upstream closure follows inbound links; admission also accepts a submitted link from a
- * reached source endpoint. Downstream propagation
- * follows data-flow direction: another input to a tracked output cannot promote that input's
- * unrelated outputs. Seeds remain reachable even when they have no recorded links.
- *
- * @param seeds - Endpoint keys the chain is already known to hold.
- * @param links - Staged or submitted endpoint pairs to close over.
- * @param direction - Whether to validate upstream connectivity or propagate downstream values.
+ * Upstream closure follows inbound links; admission also accepts a submitted link from a reached
+ * source endpoint. Downstream follows data-flow direction: another input to a tracked output cannot
+ * promote that input's unrelated outputs. Seeds stay reachable with no recorded links.
+ * @internal
  */
 export function reachableColumnEndpoints(
   seeds: ReadonlySet<string>,
@@ -694,7 +641,8 @@ export interface ColumnAttachment {
   /**
    * Keys of the endpoints the tracked value flows through: the requested outputs and, when the
    * direction includes downstream, everything they feed. A link out of one is attached; an input of
-   * what they feed (a second contributor) is in {@link endpoints} but not here, so it is never carried on.
+   * what they feed (a second contributor) is in {@link endpoints} but not here, so it is never
+   * carried on.
    */
   readonly flowing: Set<string>;
   /** Whether a committed or staged edge is attached. */
@@ -702,24 +650,20 @@ export interface ColumnAttachment {
 }
 
 /**
- * The one definition of what is attached to the trace — a column island is an endpoint or edge
- * outside it. Admission, carry and delivery all read it.
+ * The one definition of what is attached to the trace; a column island is an endpoint or edge
+ * outside it. Admission, carry and delivery all read it. Library BFS only
+ * ({@link reachableColumnEndpoints}).
  *
- * @remarks
- * Upstream: the requested output columns and everything that feeds them. Downstream: the requested
- * outputs, everything they feed, and every input of what they feed — a second contributor to a
- * reached output is attached, its other outputs are not. Both: the union. An edge is attached when
- * its `to` endpoint is.
+ * Upstream: the requested outputs and everything that feeds them. Downstream: the outputs,
+ * everything they feed, and every input of what they feed (a second contributor to a reached output
+ * is attached, its other outputs are not). Both: the union. An edge is attached when its `to`
+ * endpoint is.
  *
- * The origin's own explicit write of a requested output (an edge from the root out of the origin
- * hop to another node) attaches that one destination when the direction rule does not already hold
- * it, together with what the origin hop itself recorded into it and whatever feeds those inputs. It
- * is not an anchor for another hop: an edge into it authored elsewhere is not attached.
- * Library BFS only ({@link reachableColumnEndpoints}).
+ * The origin's explicit write of a requested output (an edge from the root out of the origin hop to
+ * another node) attaches that destination when the direction rule does not already hold it, with
+ * what the origin hop recorded into it and whatever feeds those inputs. It is not an anchor for
+ * another hop: an edge into it authored elsewhere is not attached.
  *
- * @param roots - The requested output columns on the origin.
- * @param edges - Committed plus staged column edges.
- * @param direction - The approved trace direction.
  * @param endpointKey - Key factory of {@link columnEndpointKeyFactory}.
  */
 export function columnAttachment(
@@ -759,14 +703,7 @@ export function columnAttachment(
   };
 }
 
-/**
- * The attached endpoint keys of {@link columnAttachment}; the carry reads this set.
- *
- * @param roots - The requested output columns on the origin.
- * @param edges - Committed plus staged column edges.
- * @param direction - The approved trace direction.
- * @param endpointKey - Key factory of {@link columnEndpointKeyFactory}.
- */
+/** The attached endpoint keys of {@link columnAttachment}; the carry reads this set. */
 export function columnClosure(
   roots: readonly { node: string; col: string }[],
   edges: ReadonlyArray<ColumnClosureEdge>,
@@ -787,20 +724,14 @@ export interface ColumnFlowTargetResolution {
 }
 
 /**
- * Resolves where one `column_flow` entry's recorded columns land.
+ * Resolves where one `column_flow` entry's recorded columns land. Attribution edges (one per
+ * upstream real column) land on `writes_to.node` when named, else on the focus.
+ * {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier relation keeping the chain
+ * connected to the traced origin; explicit `null` declares no table write, and omission defaults
+ * attribution to the focus without inferring a write target from topology or column names.
  *
- * @remarks
- * Attribution edges (one per upstream real column) land on `writes_to.node` when the entry names
- * it, else on the focus. The {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier
- * relation that keeps the column chain connected to the traced origin: a named `writes_to` states
- * it directly. Explicit `null` declares no table write, and omission defaults attribution to
- * the focus without inferring a write target from topology or matching column names.
- *
- * @param entry - The submitted column-flow entry.
- * @param focusId - Canonical id of the focus node.
- * @param nodeMap - Map of all available lineage nodes.
- * @returns The attribution target and writer edge to stage, or `null` when `writes_to` names a
- * node absent from the loaded model.
+ * @returns The attribution target and writer edge to stage, or `null` when `writes_to` names a node
+ *   absent from the loaded model.
  */
 export function resolveColumnFlowTarget(
   entry: ColumnFlowEntry,

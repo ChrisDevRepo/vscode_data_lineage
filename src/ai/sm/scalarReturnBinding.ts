@@ -6,12 +6,12 @@ import { getNodeColumns } from '../support/graphUtils';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import type { ScalarReturnTarget } from './smTypes';
 
-/** Keeps every qualified part, so a remote reference cannot collapse onto a local scalar identity. */
+/** Keeps every qualified part, so a remote reference cannot collapse onto a local scalar. */
 function referenceKey(name: string, identifierCaseSensitive: boolean): string {
   return JSON.stringify(splitSqlName(name).map(part => schemaKey(stripBrackets(part), identifierCaseSensitive)));
 }
 
-/** Resolves a real caller endpoint only when its column declares this loaded local scalar function. */
+/** Resolves a real caller endpoint only when its column declares this loaded local scalar. */
 export function resolveScalarReturnTarget(
   functionId: string,
   target: ScalarReturnTarget,
@@ -35,13 +35,15 @@ export function uniqueScalarReturnTargets(targets: readonly ScalarReturnTarget[]
   return [...new Map(targets.map(target => [JSON.stringify([schemaKey(target.node, identifierCaseSensitive), normalizeColName(target.col, identifierCaseSensitive)]), { ...target }])).values()];
 }
 
-/** Resolves a declared caller destination structurally, without interpreting its SQL or assigning an edge. */
-export function resolveFunctionCallerTarget(functionId: string, target: ScalarReturnTarget, nodeMap: Parameters<typeof getNodeColumns>[1], model: { readonly identifierCaseSensitive?: boolean; readonly edges: readonly { readonly source: string; readonly target: string; readonly type: Parameters<typeof edgeApiType>[0] }[] }, store?: Parameters<typeof getNodeColumns>[2] | null): ScalarReturnTarget | null {
+/**
+ * Resolves a declared caller destination structurally, without reading its SQL or adding an edge.
+ */
+export function resolveFunctionCallerTarget(functionId: string, target: ScalarReturnTarget, nodeMap: Parameters<typeof getNodeColumns>[1], model: { readonly identifierCaseSensitive?: boolean; readonly edges: readonly ({ readonly source: string; readonly target: string } & Parameters<typeof edgeApiType>[0])[] }, store?: Parameters<typeof getNodeColumns>[2] | null): ScalarReturnTarget | null {
   const identity = (name: string): string => referenceKey(name, model.identifierCaseSensitive === true);
   const fn = nodeMap.get(functionId);
   const callerId = resolveModelNodeId(target.node, nodeMap, model.identifierCaseSensitive);
   if (fn?.type !== 'function' || !callerId || callerId === functionId || identity(target.node) !== identity(callerId)) return null;
-  if (!model.edges.some(edge => edge.source === functionId && edge.target === callerId && edgeApiType(edge.type, fn.type) === 'read')) return null;
+  if (!model.edges.some(edge => edge.source === functionId && edge.target === callerId && edgeApiType(edge, fn.type) === 'read')) return null;
   const column = getNodeColumns(callerId, nodeMap, store ?? undefined)?.find(value => normalizeColName(value.name, model.identifierCaseSensitive) === normalizeColName(target.col, model.identifierCaseSensitive));
   return column ? { node: callerId, col: column.name } : null;
 }

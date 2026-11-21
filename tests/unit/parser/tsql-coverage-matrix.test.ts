@@ -18,7 +18,7 @@ beforeAll(() => { loadParseRules(); });
 type Expect = { s?: string[]; t?: string[]; x?: string[]; xs?: string[]; xt?: string[] };
 
 /** Splits at the first dot only, so a dotted object name such as `[a.b]` stays one part. */
-const key = (name: string) => `[${name.toLowerCase().replace('.', '].[')}]`;
+const key = (name: string) => `[${name.toLowerCase().replace(/]/g, ']]').replace('.', '].[')}]`;
 const sorted = (list: string[]) => [...list].sort();
 
 function expectParsed(sql: string, want: Expect): void {
@@ -284,31 +284,43 @@ describe('case-sensitive catalogs keep identifier case for the fixed constructs'
 
 describe('the ANSI-89 comma-list scan is linear in the size of the body', () => {
   const SIZES_KB = [25, 50, 100, 200];
-  const MAX_RATIO_PER_DOUBLING = 3;
-  const MAX_SECONDS = 20;
-  const RUNS = 3;
+  // doubling the body doubles linear work (ratio 2); a quadratic scan quadruples it
+  const MAX_RATIO_PER_DOUBLING = 2.5;
 
-  /** Fastest of a few runs, in seconds, so a scheduling pause does not decide the ratio. */
-  const seconds = (sql: string): number => Math.min(...Array.from({ length: RUNS }, () => {
-    const start = performance.now();
-    parseSqlBody(sql);
-    return (performance.now() - start) / 1000;
-  }));
+  /**
+   * Characters the regular-expression engine reads while parsing: per `exec`, from where the search
+   * starts (`lastIndex` for a global or sticky pattern, else 0) to where it ends, at least one. It
+   * counts work instead of time, so machine load cannot change it, and it sees a pattern that
+   * rescans the body from the start as well as a call made once per token.
+   */
+  const scanned = (sql: string): number => {
+    const exec = RegExp.prototype.exec;
+    let total = 0;
+    RegExp.prototype.exec = function (this: RegExp, text: string) {
+      const from = this.global || this.sticky ? this.lastIndex : 0;
+      const match = exec.call(this, text);
+      total += Math.max(1, (match ? match.index + match[0].length : this.sticky ? from : text.length) - from);
+      return match;
+    };
+    try {
+      parseSqlBody(sql);
+    } finally {
+      RegExp.prototype.exec = exec;
+    }
+    return total;
+  };
 
   const body = (unit: string, kb: number) => unit.repeat(Math.ceil(kb * 1024 / unit.length));
   const inputs: Array<[string, (kb: number) => string]> = [
     ['repeated FETCH NEXT FROM c', kb => body('FETCH NEXT FROM c INTO @x\n', kb)],
     ['repeated unbalanced [', kb => body('[ x ', kb)],
-    ['repeated unbalanced [', kb => body('[ x ', kb)],
     ['one long comma list', kb => 'SELECT * FROM dbo.A a' + body(', dbo.B b WITH (NOLOCK), dbo.fn(1, 2) f, (SELECT 1 x) d', kb)],
   ];
 
   it.each(inputs)('%s', (_name, build) => {
-    const times = SIZES_KB.map(kb => seconds(build(kb)));
-    expect(Math.max(...times)).toBeLessThan(MAX_SECONDS);
-    times.slice(1).forEach((time, i) => {
-      // a floor keeps a sub-millisecond baseline from turning timer noise into a ratio
-      expect(time / Math.max(times[i], 0.01)).toBeLessThan(MAX_RATIO_PER_DOUBLING);
+    const work = SIZES_KB.map(kb => scanned(build(kb)));
+    work.slice(1).forEach((units, i) => {
+      expect(units / work[i]).toBeLessThan(MAX_RATIO_PER_DOUBLING);
     });
   });
 });

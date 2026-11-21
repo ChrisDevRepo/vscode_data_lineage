@@ -25,7 +25,6 @@ import {
   StoredConnectionInfoSchema,
 } from '../../../src/engine/shared/bridgeContract';
 import { stripSensitiveFields } from '../../../src/engine/connectionManager';
-import type { IConnectionInfo } from '../../../src/types/mssql';
 
 
 const dacpacConn: DacpacConnection = {
@@ -198,7 +197,7 @@ describe('migrateProjectStore', () => {
     expect(s.projects.length, 'project with an unrecognised view field survives').toBe(1);
     const profile = s.projects[0].filterProfiles?.[0];
     expect(profile?.name, 'saved view retained').toBe('AI View');
-    expect(profile?.positions?.['[dbo].[FactSales]'], 'position narrowed to declared fields').toEqual({ x: 1, y: 2 });
+    expect(profile ? 'positions' in profile : true, 'positions is no longer a declared field, dropped on read').toBe(false);
     expect(profile ? 'viewport' in profile : false, 'viewport is no longer a declared field, dropped on read').toBe(false);
     expect(Object.keys(profile?.aiMetadata?.badges[0] ?? {}), 'badge fields stripped').toEqual(['nodeId', 'text']);
     expect(profile?.aiMetadata?.columnAspect?.edges[0].toCol, 'column-trace edge retained').toBe('DateKey');
@@ -287,7 +286,7 @@ describe('stripSensitiveFields → persisted shape', () => {
     connectTimeout: 30,
     persistSecurityInfo: true,
     multipleActiveResultSets: false,
-  } as unknown as IConnectionInfo;
+  } as unknown as Record<string, unknown>;
 
   it('drops secrets', () => {
     const stored = stripSensitiveFields(liveShapedConnection) as Record<string, unknown>;
@@ -336,7 +335,7 @@ describe('stripSensitiveFields → persisted shape', () => {
     const serverScoped = {
       server: 'sql.example.net',
       authenticationType: 'Integrated',
-    } as unknown as IConnectionInfo;
+    } as unknown as Record<string, unknown>;
     expect(() => stripSensitiveFields(serverScoped)).toThrow();
   });
 });
@@ -384,17 +383,23 @@ describe('project bridge contract', () => {
   });
 
   it('rejects save-project messages containing unknown connection fields', () => {
-    const project = createProject('Unsafe', dbConn);
+    const project = createProject('Unsafe', dacpacConn);
     const parsed = MainPanelToExtensionMsgSchema.safeParse({
       type: 'save-project',
-      project: {
-        ...project,
-        connection: {
-          ...project.connection,
-          connectionInfo: { ...dbConn.connectionInfo, password: 'secret' },
-        },
-      },
+      project: { ...project, connection: { ...project.connection, password: 'secret' } },
     });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts a dacpac project in a save-project message', () => {
+    const parsed = MainPanelToExtensionMsgSchema.safeParse({ type: 'save-project', project: createProject('AW', dacpacConn) });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a database connection in a save-project message: the host alone writes connection records', () => {
+    const parsed = MainPanelToExtensionMsgSchema.safeParse({ type: 'save-project', project: createProject('Live', dbConn) });
 
     expect(parsed.success).toBe(false);
   });

@@ -3,23 +3,19 @@ import type { FilterProfile } from '../engine/projectStore';
 import { BOOKMARK_SOURCE_DESCRIPTIONS } from '../engine/shared/bridgeContract';
 
 interface BookmarkInfoCardProps {
-  /** The saved view profile whose information is being displayed. */
   profile: FilterProfile;
   /** Total number of nodes currently present in the model that match this view. */
   nodeCount: number;
   /** Total number of distinct schemas represented in this view. */
   schemaCount: number;
-  /** List of object names that were part of the bookmark but are no longer found in the current model. */
+  /** Object names in the bookmark that the current model no longer contains. */
   staleNodeNames: string[];
 }
 
 /** Local alias; the contract owns the values. */
 const SOURCE_DESCRIPTIONS = BOOKMARK_SOURCE_DESCRIPTIONS;
 
-/**
- * Formats an ISO date string into a localized short date and time format.
- * Example: "Mar 29, 2026, 12:15"
- */
+/** Formats an ISO date string as a localized short date and time, e.g. "Mar 29, 2026, 12:15". */
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: 'short', day: 'numeric', year: 'numeric',
@@ -27,7 +23,6 @@ function formatDate(iso: string): string {
   });
 }
 
-/** A floating information card that provides technical metadata about a saved bookmark. */
 export const BookmarkInfoCard = memo(function BookmarkInfoCard({
   profile,
   nodeCount,

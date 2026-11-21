@@ -2,7 +2,7 @@
  * Schema View and Expanded Schema View construction.
  *
  * @remarks
- * Split out of graphBuilder.test.ts. Covers `projectSchemaQuotient`, `buildSchemaGraph`
+ * Covers `projectSchemaQuotient`, `buildSchemaGraph`
  * and `buildExpandedSchemaViewGraph` — the collapse of an object graph into schema
  * clusters, and the bridge edges that keep an expanded schema connected to the clusters
  * around it. A dropped bridge renders a node as an orphan despite its model edges, so
@@ -321,6 +321,19 @@ describe('buildExpandedSchemaViewGraph — additive expansion', () => {
 
     expect(result.flowEdges.some(edge =>
       edge.source === ref.id && edge.target === '[sales].[orders]')).toBe(true);
+  });
+
+  it('leaves edge strength to the themed --ln-edge-color: no schema, bridge or cluster edge sets an inline opacity', () => {
+    const cluster = buildExpandedSchemaViewGraph(graph(), new Set(['sales']), null).flowEdges;
+    const overview = buildSchemaGraph(graph()).edges;
+
+    // Every edge kind must be present, or the loop below would pass on an empty list.
+    expect(cluster.some(edge => edge.id.startsWith('__bridge__'))).toBe(true);
+    expect(cluster.some(edge => edge.id.startsWith('__clusteredge__'))).toBe(true);
+    expect(overview.length).toBeGreaterThan(0);
+    for (const edge of [...cluster, ...overview].filter(e => e.id.startsWith('__'))) {
+      expect(edge.style?.opacity, edge.id).toBeUndefined();
+    }
   });
 
   it('hides clusters and their bridges, keeping real edges, when hideClusters is set', () => {

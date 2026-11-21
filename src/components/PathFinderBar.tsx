@@ -8,7 +8,6 @@ import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
 interface PathFinderBarProps {
-  /** The name of the node where the path search begins. */
   sourceNodeName: string;
   /** Flattened list of all nodes in the graph for target autocomplete. */
   allNodes: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
@@ -16,13 +15,10 @@ interface PathFinderBarProps {
   pathResult: { found: boolean; nodeCount: number; edgeCount: number } | null;
   /** Callback to execute the path search; returns whether a path was found. */
   onFindPath: (targetNodeId: string) => boolean;
-  /** Callback fired when the user closes the path finder interface. */
   onClose: () => void;
 }
 
-/**
- * Collects a target node and delegates shortest-path traversal to the parent graph.
- */
+/** Collects a target node and delegates shortest-path traversal to the parent graph. */
 export const PathFinderBar = memo(function PathFinderBar({
   sourceNodeName,
   allNodes,
@@ -123,7 +119,6 @@ export const PathFinderBar = memo(function PathFinderBar({
                 onSelect={(node) => handleSelect(node.id)}
                 onHover={setSelectedIndex}
                 dropdownRef={mergedDropdownRef}
-                portal
                 style={floatingStyles}
               />
             </FloatingPortal>

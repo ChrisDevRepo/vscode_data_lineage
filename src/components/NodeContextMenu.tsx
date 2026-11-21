@@ -16,9 +16,9 @@ import { disabledControl } from './ui/disabledControl';
 import { escapeRegexLiteral, quoteIdentifier } from '../utils/sql';
 
 /**
- * Cursor-anchored Floating UI wiring shared by every right-click menu in the canvas: the menu takes
- * focus when it opens, Up/Down/Home/End move between its enabled `menuitem`s, Escape or an outside
- * press closes it.
+ * Cursor-anchored Floating UI wiring shared by every canvas right-click menu: focus moves into the
+ * menu on open, Up/Down/Home/End move between enabled `menuitem`s, Escape or an outside press
+ * closes it.
  */
 function useContextMenuFloating(x: number, y: number, onClose: () => void) {
   const virtualRef = useRef({
@@ -61,17 +61,11 @@ function useContextMenuFloating(x: number, y: number, onClose: () => void) {
 }
 
 interface NodeContextMenuProps {
-  /** X-coordinate for the menu origin. */
   x: number;
-  /** Y-coordinate for the menu origin. */
   y: number;
-  /** ID of the node the menu was opened for. */
   nodeId: string;
-  /** Name of the database object. */
   nodeName: string;
-  /** Schema of the database object. */
   schema: string;
-  /** The specific type of database object (e.g. table, view, proc). */
   objectType: ObjectType;
   /** Optional subtype for external references. */
   externalType?: 'et' | 'file' | 'db';
@@ -81,27 +75,22 @@ interface NodeContextMenuProps {
   fullName?: string;
   /** Whether a trace/path mode is currently active. */
   isTracing: boolean;
-  /** Callback fired when the menu is closed. */
   onClose: () => void;
-  /** Callback to initiate a level-based trace from this node. */
   onTrace: (nodeId: string) => void;
-  /** Callback to initiate pathfinding from this node. */
   onFindPath: (nodeId: string) => void;
-  /** Callback to open the DDL viewer for this node. */
   onViewDdl: (nodeId: string) => void;
-  /** Callback to show the detailed info bar for this node. */
   onShowDetails: (nodeId: string) => void;
   /**
    * What "remove from what is on screen" does for this node, from
-   * {@link import('../engine/modeCapabilities').resolveRemoveAction} — the single Remove item
-   * this menu renders always shown, disabled with its reason when refused, never omitted.
+   * {@link import('../engine/modeCapabilities').resolveRemoveAction}. The Remove item is always
+   * shown, disabled with its reason when refused, never omitted.
    */
   removeAction: RemoveAction;
-  /** Callback to add a new exclusion rule based on this node's name (`removeAction.kind === 'exclude'`). */
+  /** Adds an exclusion rule from this node's name (`removeAction.kind === 'exclude'`). */
   onExcludeNode?: (pattern: string) => void;
   /** Callback to prune this node from the active trace (`removeAction.kind === 'trace-prune'`). */
   onTracePruneNode?: (nodeId: string) => void;
-  /** Callback to remove this node from the active curated/bookmark view (`removeAction.kind === 'curated-remove'`). */
+  /** Removes this node from the active curated/bookmark view (`kind === 'curated-remove'`). */
   onCuratedRemoveNode?: (nodeId: string) => void;
   /** Callback to collapse this node's schema in Expanded Schema View. */
   onCollapseSchema?: (schema: string) => void;
@@ -138,16 +127,9 @@ function removeActionLabel(action: RemoveAction): string {
 }
 
 /**
- * A context menu for graph nodes, providing quick access to lineage and inspection tools.
- *
- * It uses Floating UI to position itself at the cursor coordinates and handles:
- * - Initiating Trace and Pathfinding modes.
- * - Opening DDL and Table Detail views.
- * - Copying qualified names to the clipboard.
- * - Removing the node from whatever scope currently owns it.
- *
- * @param props - The component props.
- * @returns A portal-rendered React component.
+ * Context menu for graph nodes, positioned at the cursor with Floating UI: start trace or
+ * pathfinding, open DDL and Table Detail, copy qualified names, remove the node from the scope that
+ * owns it.
  */
 export const NodeContextMenu = memo(function NodeContextMenu({
   x,
@@ -289,25 +271,20 @@ export const NodeContextMenu = memo(function NodeContextMenu({
 });
 
 interface SchemaContextMenuProps {
-  /** X-coordinate for the menu origin. */
   x: number;
-  /** Y-coordinate for the menu origin. */
   y: number;
-  /** Schema name the right-clicked cluster represents. */
   schema: string;
   /** Whether this schema is currently expanded in Expanded Schema View. */
   isExpanded: boolean;
   /** Reason Expand/Collapse is disabled this render, or `undefined` when allowed. */
   disabledReason?: string;
-  /** Callback fired when the menu is closed. */
   onClose: () => void;
-  /** Expands this schema in Expanded Schema View. */
   onExpand: (schema: string) => void;
   /** Collapses this schema out of Expanded Schema View. */
   onCollapse: (schema: string) => void;
 }
 
-/** Right-click menu for a Schema View cluster: Expand/Collapse, the one action a schema box owns. */
+/** Right-click menu of a Schema View cluster: Expand/Collapse, the one action a schema box owns. */
 export const SchemaContextMenu = memo(function SchemaContextMenu({
   x,
   y,

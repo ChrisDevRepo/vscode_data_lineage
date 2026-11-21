@@ -1,17 +1,13 @@
 /**
- * Input normalization helpers for AI-controlled fields.
- *
- * @remarks
- * Keeps boundary normalization deterministic and reusable across tool handlers,
- * state-machine init, and prompt rendering.
+ * Input normalization helpers for AI-controlled fields: deterministic boundary normalization
+ * reusable across tool handlers, state-machine init and prompt rendering.
  */
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
-import { splitSqlName, stripBrackets } from '../../utils/sql';
+import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 
 /**
- * Re-exported so AI callers keep importing node-id resolution from here.
- * Implementation lives in `src/engine/shared/` because the webview needs it too and must not
- * reach into `src/ai/**`.
+ * Re-exported so AI callers keep importing node-id resolution from here; the implementation lives
+ * in `src/engine/shared/` because the webview needs it too and must not reach into `src/ai/**`.
  */
 export { resolveModelNodeId };
 
@@ -24,7 +20,7 @@ export type SubmitFindingsInputObject = Record<string, unknown> & {
 };
 
 /** One field-level ID canonicalization applied to a cloned `submit_findings` payload. */
-export interface SubmitFindingsIdNormalization {
+interface SubmitFindingsIdNormalization {
   /** Dot-path of the normalized field in the cloned input. */
   readonly field: string;
   /** Original model-supplied ID spelling. */
@@ -42,12 +38,11 @@ export interface SubmitFindingsNormalizationResult {
 }
 
 /**
- * Resolves multiple node ids while preserving order and removing duplicates.
+ * Resolves multiple node ids, preserving order and removing duplicates; returns resolved and
+ * unresolved id arrays.
  *
- * @param raws - An array of raw node id strings.
- * @param nodeMap - The map of canonical nodes to check against.
- * @param identifierCaseSensitive - Proven source policy; missing/false retains legacy case-insensitive lookup.
- * @returns An object containing resolved and unresolved node id arrays.
+ * @param identifierCaseSensitive - Proven source policy; missing/false retains legacy
+ *   case-insensitive lookup.
  */
 export function resolveModelNodeIds(
   raws: string[],
@@ -71,16 +66,11 @@ export function resolveModelNodeIds(
 }
 
 /**
- * Normalizes submit_findings node-id encodings into a cloned input object.
+ * Normalizes submit_findings node-id encodings into a cloned input object. Deliberately narrow:
+ * canonicalizes bracket/case/name encodings only and never removes unknown fields or changes the
+ * model's raw object. Source case sensitivity preserves spelling and never substitutes a distinct
+ * object. The caller must still run the clone through the strict BB/CT Zod schema.
  *
- * @remarks
- * This is intentionally narrow: it canonicalizes bracket/case/name encodings only
- * and never removes unknown fields or changes the raw object supplied by the model.
- * Source case sensitivity preserves spelling and never substitutes a distinct object.
- * The caller must still run the cloned output through the strict BB/CT Zod schema.
- *
- * @param rawInput - Raw model input object.
- * @param nodeMap - Canonical model node map used by {@link resolveModelNodeId}.
  * @returns The cloned input and a list of field-level normalization events.
  */
 export function normalizeSubmitFindingsInputIds(
@@ -120,31 +110,55 @@ export function normalizeSubmitFindingsInputIds(
   return { input, normalizations };
 }
 
+/** Catalog facts {@link normalizeSearchQueryInput} uses to confirm a reading of a dotted name. */
+export interface SearchQueryCatalog {
+  /** Canonical node id to node. */
+  readonly nodeMap: Map<string, { name: string; schema: string; columns?: readonly { name: string }[] }>;
+  /** Schema names of the model. */
+  readonly schemas: readonly string[];
+  /** Proven source policy; missing/false compares names case-insensitively. */
+  readonly identifierCaseSensitive?: boolean;
+}
+
 /**
- * Normalizes a free-form `lineage_search_objects.query` string.
+ * Normalizes a free-form `lineage_search_objects.query` string. Accepts id-like forms the AI may
+ * emit (`[dbo].[FactSales]`, `dbo.FactSales`, `[db].[dbo].[FactSales]`) and extracts `query` (the
+ * object token, `FactSales`) and an optional `schemaHint` (`dbo`) usable as a schema filter. Parts
+ * are split and undelimited by {@link splitSqlName} and {@link stripBrackets}, so a dot or escaped
+ * `]]` inside a bracketed or quoted part stays in the name. With more than three parts it returns
+ * the trimmed input and no schema hint.
  *
- * @remarks
- * Accepts common id-like forms the AI may emit (e.g. `[dbo].[FactSales]`,
- * `dbo.FactSales`, `[db].[dbo].[FactSales]`) and extracts:
- * - `query`: the object token to search by (e.g. `FactSales`)
- * - `schemaHint`: optional schema token (`dbo`) usable as a schema filter
- *
- * Parts are split and undelimited by {@link splitSqlName} and {@link stripBrackets}, so a dot or
- * an escaped `]]` inside a bracketed or quoted part stays in the name. With more than three
- * parts, returns the trimmed input unchanged and no schema hint.
- *
- * @param raw - The free-form query string.
- * @returns An object with the extracted query and optional schema hint.
+ * With `catalog`, a dotted name the catalog confirms as a column reference reads as one: three
+ * parts `schema.object.column` when `schema.object` is an object, two parts `object.column` when
+ * the first part is no schema and the object has that column. The column token is dropped like the
+ * `db` token; the object is searched (an object that is also a schema name wins, deterministically).
+ * Several schemas holding that object and column leave the schema out. Anything the catalog does not
+ * confirm keeps the reading above.
  */
-export function normalizeSearchQueryInput(raw: string): { query: string; schemaHint?: string } {
+export function normalizeSearchQueryInput(raw: string, catalog?: SearchQueryCatalog): { query: string; schemaHint?: string } {
   const input = (raw ?? '').trim();
   if (!input) return { query: '' };
 
   const parts = splitSqlName(input).map(p => stripBrackets(p.trim()).trim()).filter(Boolean);
+  const caseSensitive = catalog?.identifierCaseSensitive ?? false;
+  const same = (a: string, b: string): boolean => schemaKey(a, caseSensitive) === schemaKey(b, caseSensitive);
 
   if (parts.length === 1) return { query: parts[0] };
-  if (parts.length === 2) return { query: parts[1], schemaHint: parts[0] };
-  if (parts.length === 3) return { query: parts[2], schemaHint: parts[1] };
+  if (parts.length === 2) {
+    const [first, second] = parts;
+    if (catalog && !catalog.schemas.some(schema => same(schema, first))) {
+      const owners = [...catalog.nodeMap.values()].filter(n => same(n.name, first) && n.columns?.some(c => same(c.name, second)));
+      if (owners.length > 0) {
+        const schemas = new Set(owners.map(n => n.schema));
+        return schemas.size === 1 ? { query: owners[0].name, schemaHint: owners[0].schema } : { query: owners[0].name };
+      }
+    }
+    return { query: second, schemaHint: first };
+  }
+  if (parts.length === 3) {
+    const object = catalog && catalog.nodeMap.get(resolveModelNodeId(`${quoteIdentifier(parts[0])}.${quoteIdentifier(parts[1])}`, catalog.nodeMap, caseSensitive) ?? '');
+    return object ? { query: object.name, schemaHint: object.schema } : { query: parts[2], schemaHint: parts[1] };
+  }
 
   return { query: input };
 }
@@ -160,7 +174,7 @@ interface JsonSchemaNode {
 
 /** Result of coercing one tool-argument payload. */
 export interface StringifiedArgumentsResult {
-  /** The payload with every stringified structure decoded; the input object when nothing changed. */
+  /** The payload with every stringified structure decoded; the input object if nothing changed. */
   readonly value: unknown;
   /** Dotted paths that were decoded. */
   readonly paths: string[];
@@ -179,12 +193,87 @@ function declaredTypes(schema: JsonSchemaNode | undefined): Set<string> {
 }
 
 /** Parses a JSON text with the platform parser; `undefined` when the text is not valid JSON. */
-function parseJson(text: string): unknown {
+export function parseJson(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
     return undefined;
   }
+}
+
+/** Characters quoted before and after a located character. */
+const WINDOW_BEFORE = 20;
+export const WINDOW_AFTER = 14;
+
+/**
+ * The short window around one character of a text, in its canonical JSON escape (a TAB shows as `\t`,
+ * a line break as `\n`, a backslash as `\\`): the offender is invisible or uncountable to a model, so
+ * the rejection quotes it by its neighbours, never more than the window.
+ *
+ * @param chars - The text as code points.
+ * @param index - Offset of the located character in `chars`.
+ * @returns The quoted window, with an ellipsis where the text goes on.
+ */
+export function quotedWindow(chars: readonly string[], index: number): string {
+  const from = Math.max(0, index - WINDOW_BEFORE);
+  const to = Math.min(chars.length, index + 1 + WINDOW_AFTER);
+  const context = JSON.stringify(chars.slice(from, to).join('')).slice(1, -1);
+  return `"${from > 0 ? '…' : ''}${context}${to < chars.length ? '…' : ''}"`;
+}
+
+const JSON_ESCAPES = new Set(['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u']);
+const JSON_WHITESPACE = new Set([' ', '\t', '\n', '\r']);
+/**
+ * What may follow a closed string: a separator, a closer, or the next key or value when a comma is
+ * missing.
+ */
+const AFTER_STRING = new Set([',', ':', '}', ']', '"', '{', '[']);
+
+/**
+ * Locates the first fault of a text that opens an object or array but is not valid JSON, for the
+ * reason of a rejection (the text itself is never completed or repaired): the text ends before the
+ * value closes, a closing bracket follows its end, a raw line break sits inside a string, a
+ * backslash escape is invalid, or an unescaped `"` closes a string early (other text follows it).
+ * Any other fault is not located.
+ *
+ * @returns The fault kind with its character position, window and the edit that removes it, or
+ *   `undefined` for valid JSON or an unlocated fault.
+ */
+export function locateJsonTextFault(text: string): string | undefined {
+  if (parseJson(text) !== undefined) return undefined;
+  const chars = [...text];
+  const closers: string[] = [];
+  let inString = false;
+  let ended = false;
+  const noun = text.trimStart().startsWith('[') ? 'array' : 'object';
+  const at = (kind: string, index: number, edit: string): string => `${kind} at character ${index + 1} of ${chars.length} (${quotedWindow(chars, index)}): ${edit}`;
+  for (let index = 0; index < chars.length; index++) {
+    const char = chars[index];
+    if (inString) {
+      if (char === '\\') {
+        if (!JSON_ESCAPES.has(chars[index + 1] ?? '')) return at('an invalid backslash escape', index, 'write \\\\');
+        index++;
+      } else if (char === '"') {
+        inString = false;
+        let next = index + 1;
+        while (JSON_WHITESPACE.has(chars[next] ?? '')) next++;
+        if (next < chars.length && !AFTER_STRING.has(chars[next])) return at('an unescaped `"` inside a string', index, 'write \\"');
+      } else if (char === '\n' || char === '\r') return at('a raw line break inside a string', index, 'write \\n');
+      else if (char < ' ') return undefined;
+    } else if (char === '"') inString = true;
+    else if (char === '{' || char === '[') {
+      if (ended) return undefined;
+      closers.push(char === '{' ? '}' : ']');
+    } else if (char === '}' || char === ']') {
+      if (ended) return at(`an extra "${char}" after the end of the ${noun}`, index, 'remove it');
+      if (closers.pop() !== char) return undefined;
+      ended = closers.length === 0;
+    }
+  }
+  // Text cut inside a string asks for the rest of the sentence first: a bare closer would keep the cut sentence.
+  return closers.length > 0
+    ? at(`the text ends before the ${noun} closes`, chars.length - 1, `${inString ? 'finish the cut string, then add `"' : 'add `'}${closers.reverse().join('')}\` at the end`)
+    : undefined;
 }
 
 function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string, paths: string[]): unknown {
@@ -219,22 +308,15 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
 }
 
 /**
- * Decodes JSON-string values where the tool's JSON Schema declares an array or object, or `null`
- * beside one of them.
+ * Decodes JSON-string values where the tool's JSON Schema declares an array or object (or `null`
+ * beside one). Some model servers return such an argument as a JSON string (`"targetColumns":
+ * "[\"A\"]"`); the product cannot know which server it talks to, so the decode (`JSON.parse`) runs
+ * once at the model boundary for every tool and model, driven by the declared schema alone. Text
+ * that is not valid JSON (cut off, or with raw line breaks inside a string) is never completed or
+ * repaired: it stays a string and fails schema validation at its field. The caller logs
+ * {@link StringifiedArgumentsResult.paths}.
  *
- * @remarks
- * Some model servers return an array- or object-typed argument as a JSON string
- * (`"targetColumns": "[\"A\"]"`); the product cannot know which server it talks to, so the decode
- * runs once at the model boundary for every tool and model, driven by the declared schema alone.
- * The decode is `JSON.parse`. A text that is not valid JSON — cut off before its value closes, or
- * carrying raw line breaks inside a string — is never completed or repaired: it stays a string and
- * fails schema validation at its field.
- * The caller logs {@link StringifiedArgumentsResult.paths}.
- *
- * @param input - Tool arguments as the provider returned them.
- * @param jsonSchema - The tool's model-facing JSON Schema.
- * @returns The coerced payload and the paths decoded; a value that does not parse to the declared
- * kind stays as sent so schema validation rejects it with its field path.
+ * @returns The coerced payload and the paths decoded.
  */
 export function coerceStringifiedArguments(input: unknown, jsonSchema: unknown): StringifiedArgumentsResult {
   const paths: string[] = [];

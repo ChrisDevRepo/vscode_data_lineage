@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { applyExclusionFilter } from '../../../src/engine/modelFilters';
-import { applyExclusionPatterns } from '../../../src/engine/dacpacExtractor';
+import { applyExclusionPatterns } from '../../../src/engine/modelFilters';
 import type { DatabaseModel, LineageNode, LineageEdge, ParseStats } from '../../../src/engine/types';
 
 const node = (schema: string, name: string): LineageNode =>

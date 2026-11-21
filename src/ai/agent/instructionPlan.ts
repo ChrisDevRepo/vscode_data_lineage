@@ -1,13 +1,10 @@
 /**
- * Pure compilation boundary for one provider-neutral model call.
- *
- * @remarks
- * An instruction plan is a readonly delivery artifact derived from the current runtime frame.
- * It does not own policy: prompt builders own instruction text, `toolPolicy` owns tool visibility,
- * Zod schemas own structured shapes, and session/engine objects own state. The compiler joins those
- * authorities, enforces cross-cutting BB/CT/classification invariants, and gives model ports one
- * observable call contract. The compiler freezes its envelope and copied arrays; authoritative
- * schema and read-only registry references remain shared rather than deep-cloned.
+ * Pure compilation boundary for one provider-neutral model call. An instruction plan is a readonly
+ * delivery artifact derived from the current runtime frame. It owns no policy: prompt builders own
+ * instruction text, `toolPolicy` tool visibility, Zod schemas structured shapes, session/engine
+ * objects state. The compiler joins those authorities, enforces cross-cutting BB/CT/classification
+ * invariants and gives model ports one observable call contract. It freezes its envelope and copied
+ * arrays; authoritative schema and read-only registry references stay shared, not deep-cloned.
  */
 import type {
   CompleteTextInput,
@@ -57,13 +54,10 @@ interface InstructionFactsShared {
 }
 
 /**
- * Mission/runtime facts from which observable plan metadata is derived.
- *
- * @remarks
- * A discriminated union on `analysisMode` (with `classification` on {@link InstructionFactsShared}) so the
- * BB-forbids / CT-requires `targetColumns` invariant is enforced by the compiler, not a runtime
- * throw: BB (and the mode-absent discovery/entry shape) structurally cannot carry `targetColumns`,
- * and CT structurally must.
+ * Mission/runtime facts from which observable plan metadata is derived. A discriminated union on
+ * `analysisMode` (with `classification` on {@link InstructionFactsShared}) so the BB-forbids /
+ * CT-requires `targetColumns` invariant is a compile error, not a runtime throw: BB (and the
+ * mode-absent discovery/entry shape) cannot carry `targetColumns`, CT must.
  */
 export type InstructionPlanFacts =
   /** Whole-object (BB) exploration — never carries named target columns. */
@@ -81,13 +75,12 @@ interface ExplorationFactsShared {
 }
 
 /**
- * Builds the mode-correct {@link InstructionPlanFacts} union member for an exploration-scoped call,
- * so no call site restates the `analysisMode === 'ct' ? {…targetColumns} : {…}` branch.
+ * Builds the mode-correct {@link InstructionPlanFacts} member for an exploration-scoped call, so no
+ * call site restates the `analysisMode === 'ct' ? {…targetColumns} : {…}` branch.
  *
  * @param analysisMode - Approved mode for this call (from the engine or the gate decision).
- * @param targetColumns - Locked CT targets; required non-empty when `analysisMode` is `ct`, ignored for BB.
+ * @param targetColumns - Locked CT targets; required non-empty for `ct`, ignored for BB.
  * @param shared - Classification / YAML / memory provenance common to both modes.
- * @returns The discriminated facts member the compiler type-checks against the stage.
  */
 export function explorationFacts(
   analysisMode: 'bb' | 'ct',
@@ -102,7 +95,7 @@ export function explorationFacts(
 }
 
 /** Couples a structured schema with the stable identity emitted to traces. */
-export interface StructuredContract<T> {
+interface StructuredContract<T> {
   /** Stable trace/debug identity for the schema. */
   readonly id: string;
   /** Zod boundary shipped to the selected model port. */
@@ -142,19 +135,21 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly facts?: InstructionPlanFacts;
   /** Phase-derived provider schema replacements; dispatch still uses the canonical registry. */
   readonly toolSchemaOverrides?: ReadonlyMap<string, z.ZodType>;
-  /** Live ephemeral session fact read at each provider step; never copied into frame/context state. */
+  /** Live ephemeral session fact read at each provider step; never copied into frame state. */
   readonly presentResultRepairFields?: () => readonly PresentResultRepairField[] | null;
-  /** Held highlight indexes whose labels alone are authorized for repair; read live with the fields. */
+  /** Held highlight indexes whose labels alone are authorized for repair; read live. */
   readonly presentResultRepairHighlightLabelIndexes?: () => readonly number[] | null;
   /** Held section text leaves authorized for indexed repair; read live with the fields. */
   readonly presentResultRepairSectionTextLeaves?: () => PresentResultRepairAuthorization['sectionTextLeaves'] | null;
   /** Whether a committed report from this run exists for `present_result` to amend; read live. */
   readonly presentResultRetainableSections?: () => boolean;
-  /** Number of served `answer_blocks` the visual preview's section ranges may name (`B1`..`B<count>`). */
+  /** Number of served `answer_blocks` the preview's section ranges may name (`B1`..`B<count>`). */
   readonly presentResultPreviewBlockCount?: number;
-  /** Whether the active hop's next `submit_findings` is fresh, with no held draft or archived angle; read live, `true` when absent. */
+  /** Whether the next `submit_findings` is fresh (no held draft or archived angle); read live. */
   readonly freshSubmission?: () => boolean;
-  /** The active CT hop's tracked-column facts that narrow the served `column_flow`; read live, absent serves the general schema. */
+  /** The fields a held draft of the focus failed, which a retry must send; `null` without one; read live. */
+  readonly heldFailed?: () => readonly string[] | null;
+  /** The CT hop's tracked-column facts narrowing the served `column_flow`; read live. */
   readonly hopColumns?: () => SubmitFindingsHopColumns;
 };
 
@@ -210,7 +205,7 @@ export type InstructionPlan<T = unknown> =
   | TextInstructionPlan;
 
 /** Ephemeral runtime projection used to derive one provider call. */
-export interface RuntimeFrame {
+interface RuntimeFrame {
   /** Model-call phase selected by LangGraph. */
   readonly phase: InstructionPhase;
   /** Approved mission facts relevant to this call. */
@@ -227,12 +222,10 @@ function phaseOf(stage: LmStage): InstructionPhase {
 
 /**
  * True for every stage whose `lineage_present_result` schema may be swapped for a live-resolved
- * repair-patch schema (session-authorized held-draft repair).
- *
- * @remarks
- * The handler holds a repair draft on a repairable validation failure in each of these stages, and
- * the caller arms the live resolver by this same predicate, so no stage offers the full schema while
- * the handler validates a narrower authorization.
+ * repair-patch schema (session-authorized held-draft repair). The handler holds a repair draft on a
+ * repairable validation failure in each of these stages and the caller arms the live resolver by
+ * this same predicate, so no stage offers the full schema while the handler validates a narrower
+ * authorization.
  */
 function stageSupportsPresentResultRepair(stage: LmStage): boolean {
   return stage.kind === 'synthesis' || stage.kind === 'visual_preview' || stage.kind === 'completed';
@@ -285,17 +278,10 @@ function buildContext(
   return Object.freeze(context);
 }
 
-/** @param draft - Structured-output call ingredients. @returns A readonly structured plan. */
 export function compileInstructionPlan<T>(draft: StructuredPlanDraft<T>): StructuredInstructionPlan<T>;
-/** @param draft - Tool-generation ingredients. @returns A readonly converse plan. */
 export function compileInstructionPlan(draft: ConversePlanDraft): ConverseInstructionPlan;
-/** @param draft - Internal text-completion ingredients. @returns A readonly text plan. */
 export function compileInstructionPlan(draft: TextPlanDraft): TextInstructionPlan;
-/**
- * Implements plan compilation while preserving discriminated result types.
- * @param draft - Trusted call ingredients selected by the active LangGraph node.
- * @returns A readonly provider-neutral instruction plan.
- */
+/** Compiles the plan, keeping result types; `draft` holds the active node's trusted call data. */
 export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): InstructionPlan<T> {
   if (draft.kind === 'structured') {
     const { kind: _kind, phase, contract, facts, ...input } = draft;
@@ -332,6 +318,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     presentResultRepairHighlightLabelIndexes,
     presentResultRepairSectionTextLeaves,
     freshSubmission,
+    heldFailed,
     hopColumns,
     presentResultRetainableSections,
     presentResultPreviewBlockCount,
@@ -357,7 +344,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
     liveResolvers.set(
       'lineage_submit_findings',
-      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.()),
+      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.(), heldFailed?.() ?? null),
     );
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;
@@ -403,16 +390,11 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
 
 type InstructionPlanExecutor = Pick<ModelPort, 'generateStructured' | 'completeText'>;
 
-/** @param model - Active provider-neutral model port. @param plan - Structured plan to run. @returns Validated structured output. */
+/** Runs a structured plan on the model port; resolves to the validated output. */
 export function executeInstructionPlan<T>(model: InstructionPlanExecutor, plan: StructuredInstructionPlan<T>): Promise<T>;
-/** @param model - Active provider-neutral model port. @param plan - Text plan to run. @returns Trimmed provider text. */
+/** Runs a text plan on the model port; resolves to the trimmed provider text. */
 export function executeInstructionPlan(model: InstructionPlanExecutor, plan: TextInstructionPlan): Promise<string>;
-/**
- * Forwards one compiled structured or text plan to the provider-neutral port.
- * @param model - Active provider-neutral model port.
- * @param plan - Immutable plan selected for this call.
- * @returns The result shape associated with the plan discriminant.
- */
+/** Forwards one compiled plan to the provider-neutral port; the result shape follows the plan. */
 export function executeInstructionPlan<T>(
   model: InstructionPlanExecutor,
   plan: StructuredInstructionPlan<T> | TextInstructionPlan,

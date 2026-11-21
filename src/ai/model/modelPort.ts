@@ -5,6 +5,7 @@ import {
   type BaseMessage,
   type MessageContent,
 } from '@langchain/core/messages';
+import type { ToolCall } from '@langchain/core/messages/tool';
 import type { ZodType } from 'zod';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import {
@@ -29,28 +30,55 @@ export function modelAssistantMessage(text: string): AIMessage {
 /**
  * `AIMessage.additional_kwargs` key carrying a generation's provider stream parts: every part the
  * bridge does not interpret as text or a tool call (reasoning, thought signatures, provider data),
- * held as the original objects in stream order.
- *
- * @remarks
- * The array rides exactly one stream chunk: `AIMessageChunk.concat` keeps that array's objects and
- * order untouched, whereas two chunks each carrying the key would have their items merged by `id`
- * into plain objects.
+ * as the original objects in stream order. The array rides exactly one stream chunk:
+ * `AIMessageChunk.concat` keeps it untouched, whereas two chunks carrying the key would have their
+ * items merged by `id` into plain objects.
  */
 export const PROVIDER_PARTS_KEY = 'providerParts';
 
-/**
- * Reads a message's provider stream parts ({@link PROVIDER_PARTS_KEY}); empty when it carries none.
- */
+/** Reads a message's provider stream parts ({@link PROVIDER_PARTS_KEY}); empty if none. */
 export function messageProviderParts(message: BaseMessage): readonly unknown[] {
   const parts = message.additional_kwargs?.[PROVIDER_PARTS_KEY];
   return Array.isArray(parts) ? parts : [];
 }
 
 /**
+ * The assistant turn to append for one generation: its message plus each call it lacks (a call
+ * whose input was no JSON object) with empty arguments, so every call keeps the tool result that
+ * answers it.
+ *
+ * @param projectArgs - Replaces the arguments of a call it returns arguments for, so the transcript
+ *   shows that call reduced; `null` keeps the call as sent. The message keeps its content, call ids
+ *   and provider parts.
+ */
+export function transcriptTurn(
+  message: AIMessage,
+  calls: readonly GeneratedToolCall[],
+  projectArgs?: (call: ToolCall) => Record<string, unknown> | null,
+): AIMessage {
+  const kept = message.tool_calls ?? [];
+  const keptIds = new Set(kept.map((call) => call.id));
+  const missing = calls.filter((call) => !keptIds.has(call.callId));
+  const projected = kept.map((call) => {
+    const args = projectArgs?.(call);
+    return args ? { ...call, args } : call;
+  });
+  if (missing.length === 0 && projected.every((call, index) => call === kept[index])) return message;
+  return new AIMessage({
+    content: message.content,
+    additional_kwargs: message.additional_kwargs,
+    tool_calls: [
+      ...projected,
+      ...missing.map((call) => ({ id: call.callId, name: call.toolName, args: {}, type: 'tool_call' as const })),
+    ].sort((a, b) => calls.findIndex((call) => call.callId === a.id) - calls.findIndex((call) => call.callId === b.id)),
+  });
+}
+
+/**
  * Creates an assistant message containing validated JSON-object tool calls.
  *
- * @param providerParts - The provider stream parts of the generation that emitted these calls,
- * replayed verbatim before them so a provider that signs its own turn receives it unchanged.
+ * @param providerParts - Provider stream parts of the generation that emitted these calls, replayed
+ *   verbatim before them so a provider that signs its own turn receives it unchanged.
  * @throws {@link ModelPortError} when a call input is not a JSON object.
  */
 export function modelToolCallMessage(
@@ -75,22 +103,26 @@ export function modelToolCallMessage(
 }
 
 function modelToolArgs(input: unknown): Record<string, unknown> {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+  if (!isRecord(input)) {
     throw new ModelPortError(
       'invalid_request',
       'Tool-call input must be a JSON object.',
     );
   }
-  return input as Record<string, unknown>;
+  return input;
+}
+
+/** Whether a value is a JSON object: not null and not an array. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
  * Creates the tool-result message paired with a preceding tool call.
- * @param status - Standard tool-result outcome: `'success'` for an executed call, `'error'`
- * otherwise.
- * @param artifact - Machine-only facts riding `@langchain/core`'s documented `ToolMessage.artifact`
- * side channel — kept on the message for a reader that needs the full structured record, never sent
- * to the provider. Omitted when the caller has none.
+ *
+ * @param status - `'success'` for an executed call, `'error'` otherwise.
+ * @param artifact - Machine-only facts on `ToolMessage.artifact`: kept for a reader needing the
+ *   full structured record, never sent to the provider.
  */
 export function modelToolResultMessage(
   callId: string,
@@ -119,48 +151,46 @@ export type ModelPortErrorCode =
   | 'provider_error';
 
 /**
- * Bounded provider-neutral error safe to retain in graph state.
- *
- * @remarks
- * `cause` retains the original provider exception when one exists. It is what
- * `sanitizeProviderErrorDiagnostic` walks to recover the connection-level `code`
- * (`ECONNRESET`/`ETIMEDOUT`/…) that transport classification keys off. It is
- * declared here rather than relying on the ES2022
- * `Error(message, { cause })` overload because this project compiles against `lib: ES2020`.
- * Every sink sanitizes before emitting, so the raw exception never reaches a log or the UI.
+ * Bounded provider-neutral error safe to retain in graph state. `cause` retains the original
+ * provider exception; `sanitizeProviderErrorDiagnostic` walks it to recover the connection-level
+ * `code` (`ECONNRESET`/`ETIMEDOUT`/...) transport classification keys off. Declared here, not via
+ * the ES2022 `Error(message, { cause })` overload, because the project compiles against `lib:
+ * ES2020`. Every sink sanitizes before emitting, so the raw exception never reaches a log or the
+ * UI.
  */
 export class ModelPortError extends Error {
   public constructor(
     public readonly code: ModelPortErrorCode,
     message: string,
     public readonly cause?: unknown,
+    /** True once the provider emitted any reply part, including buffered or opaque output. */
+    public readonly replyReceived = false,
   ) {
     super(message);
     this.name = 'ModelPortError';
   }
 }
 
+/** The port-level cancellation error every model boundary raises. */
+export function cancelledError(): ModelPortError {
+  return new ModelPortError('cancelled', 'Language model request was cancelled.');
+}
+
 /**
- * Whether a thrown value is a port-level cancellation ({@link ModelPortError}
- * with code `'cancelled'`).
- *
- * @remarks
- * The one predicate callers above the port use for this case — pair it with
- * `support/cancellation.ts`'s `isCancellationOutcome` for signal/transport
- * aborts instead of re-rolling the `instanceof` + code check per caller.
+ * Whether a thrown value is a port-level cancellation ({@link ModelPortError} with code
+ * `'cancelled'`). The one predicate callers above the port use; pair it with
+ * `isCancellationOutcome` (`support/cancellation.ts`) for signal/transport aborts instead of
+ * re-rolling the check per caller.
  */
 export function isPortCancellation(error: unknown): boolean {
   return error instanceof ModelPortError && error.code === 'cancelled';
 }
 
 /**
- * Error names the VS Code language-model host raises when a request is cancelled.
- *
- * @remarks
- * `Canceled` is the platform spelling (`vscode.CancellationError`), `Cancelled` appears from
- * providers that spell it with two `l`s, and `AbortError` is the fetch-level abort surfaced
- * through the same call. Declared once here because the bridge and the port both classify the
- * raw transport error and a byte-for-byte copy of the list drifts silently.
+ * Error names the VS Code language-model host raises on cancellation: `Canceled` (platform
+ * spelling, `vscode.CancellationError`), `Cancelled` (providers using two `l`s) and `AbortError`
+ * (fetch-level abort). Declared once because the bridge and the port both classify the raw
+ * transport error and a copy of the list drifts silently.
  */
 const HOST_CANCELLATION_ERROR_NAMES: ReadonlySet<string> = new Set([
   'AbortError',
@@ -169,15 +199,9 @@ const HOST_CANCELLATION_ERROR_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether a thrown value carries one of the host's cancellation error names.
- *
- * @remarks
- * Name-based by necessity: the host raises a plain `Error` with no code for this case. Pair it
- * with {@link isPortCancellation} for an already-normalized port error, and with
- * `support/cancellation.ts`'s `isCancellationOutcome` for the `ABORT_ERR`/`20` code forms.
- *
- * @param error - The thrown value to classify.
- * @returns `true` when the error name is one the host uses for cancellation.
+ * Whether a thrown value carries one of the host's cancellation error names. Name-based by
+ * necessity: the host raises a plain `Error` with no code. Pair with {@link isPortCancellation} for
+ * a normalized port error, and with `isCancellationOutcome` for the `ABORT_ERR`/`20` code forms.
  */
 export function isHostCancellationError(error: unknown): boolean {
   return error instanceof Error && HOST_CANCELLATION_ERROR_NAMES.has(error.name);
@@ -205,11 +229,8 @@ export interface InstructionContext {
 
 /** Provider-neutral tool metadata supplied to a tool-capable generation. */
 export interface ModelToolDefinition {
-  /** Tool name the model must address the call by. */
   readonly name: string;
-  /** Natural-language description of what the tool does. */
   readonly description: string;
-  /** Zod schema validating the call input. */
   readonly inputSchema: ZodType;
 }
 
@@ -226,11 +247,9 @@ export interface ToolGenerationInput {
   readonly messages: readonly ModelMessage[];
   /** Optional system instruction prepended ahead of `messages`. */
   readonly system?: string;
-  /** Tool definitions offered to the model. */
   readonly tools: readonly ModelToolDefinition[];
   /** Optional policy narrowing which tools the model may call. */
   readonly toolChoice?: ModelToolChoice;
-  /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
   /** Graph phase label carried into diagnostics and trace records. */
   readonly phase: string;
@@ -240,9 +259,8 @@ export interface ToolGenerationInput {
   readonly onTextDelta?: (text: string) => void;
 }
 
-/** A registered native tool call ready for argument validation at its execution boundary. */
+/** A registered native tool call ready for argument validation at its execution boundary. @internal */
 export interface ValidGeneratedToolCall {
-  /** Literal `true` discriminator for the valid arm. */
   readonly valid: true;
   /** Provider call identifier, echoed into the paired tool-result message. */
   readonly callId: string;
@@ -252,22 +270,20 @@ export interface ValidGeneratedToolCall {
   readonly input: unknown;
 }
 
-/** A provider tool call rejected before dispatch. */
+/** A provider tool call rejected before dispatch. @internal */
 export interface InvalidGeneratedToolCall {
-  /** Literal `false` discriminator for the invalid arm. */
   readonly valid: false;
   /** Provider call identifier exactly as the provider emitted it. */
   readonly callId: string;
   /** Tool name as the provider spelled it; it may name no registered tool. */
   readonly toolName: string;
   /**
-   * The rejected payload exactly as the provider sent it. Kept so retry-budget guards can compare
-   * a follow-up call against the just-rejected one (by fingerprint, never by retaining it) and
-   * distinguish a genuine repair attempt from an unproductive resend; without it every reject of
-   * the same tool would be indistinguishable. Never dispatched, replayed, or logged raw.
+   * The rejected payload exactly as the provider sent it, so retry-budget guards can compare a
+   * follow-up call against it (by fingerprint, never retained) and tell a genuine repair from an
+   * unproductive resend. Never dispatched, replayed or logged raw.
    */
   readonly input?: unknown;
-  /** Rejection category — schema-invalid input, tool-call notation in a text value, unknown tool, or a duplicate call id. */
+  /** Rejection category: invalid schema, tool-call notation in text, unknown tool, duplicate id. */
   readonly code:
     | typeof REJECTION_CODES.invalidToolInput
     | typeof REJECTION_CODES.toolCallNotation
@@ -276,10 +292,9 @@ export interface InvalidGeneratedToolCall {
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
   /**
-   * Repair instruction naming the fix for this specific rejection, when the producer derived one
-   * from the issue shape (e.g. an `unrecognized_keys` Zod issue names removal, never the standing
-   * resend-unchanged instruction). Absent for shapes with no producer-derived hint, in which case
-   * the dispatcher applies its own fixed per-code hint.
+   * Repair instruction naming the fix for this rejection, when the producer derived one from the
+   * issue shape (e.g. an `unrecognized_keys` issue names removal, not the standing resend-unchanged
+   * instruction). Absent otherwise; the dispatcher then applies its own fixed per-code hint.
    */
   readonly hint?: string;
   /** Paths of the schema issues that rejected the input, when known. */
@@ -302,13 +317,10 @@ export type ToolGenerationContent =
 export interface ModelIdentity {
   /** Model identifier as the hosting platform reports it. */
   readonly id: string;
-  /** Human-readable model name. */
   readonly name: string;
-  /** Vendor that serves the model. */
   readonly vendor: string;
   /** Model family the platform groups it under. */
   readonly family: string;
-  /** Model version string. */
   readonly version: string;
 }
 
@@ -317,10 +329,11 @@ export type ToolGenerationResult =
   | {
       readonly status: 'completed';
       /**
-       * The model's own turn exactly as the provider returned it — text, every tool call with its
-       * own arguments, and the provider stream parts ({@link PROVIDER_PARTS_KEY}) — appended to the
-       * transcript unchanged. {@link text} and {@link toolCalls} are views of it (`toolCalls` adds
-       * each call's validation outcome).
+       * The model's own turn exactly as the provider returned it (text, every tool call with its
+       * own arguments, and the provider stream parts {@link PROVIDER_PARTS_KEY}), appended to the
+       * transcript unchanged, except that a call whose input is no JSON object is recorded with
+       * `{}` (tool-call arguments must be an object; its paired rejection names the input kind).
+       * {@link text} and {@link toolCalls} are views of it (`toolCalls` adds each call's outcome).
        */
       readonly message: AIMessage;
       readonly content: readonly ToolGenerationContent[];
@@ -351,11 +364,9 @@ export interface GenerateStructuredInput<T> {
   readonly system?: string;
   /** Zod schema the model output must parse against; the parsed value is the returned result. */
   readonly schema: ZodType<T>;
-  /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
   /** Optional graph phase label for diagnostics. */
   readonly phase?: string;
-  /** Optional audit context for this generation. */
   readonly instructionContext?: InstructionContext;
 }
 
@@ -365,11 +376,9 @@ export interface CompleteTextInput {
   readonly messages: readonly ModelMessage[];
   /** Optional system instruction prepended ahead of `messages`. */
   readonly system?: string;
-  /** Optional abort signal cancelling the completion. */
   readonly signal?: AbortSignal;
   /** Optional graph phase label for diagnostics. */
   readonly phase?: string;
-  /** Optional audit context for this completion. */
   readonly instructionContext?: InstructionContext;
 }
 
@@ -382,24 +391,22 @@ export interface SingleGenerationModelPort {
   /** Provider requests attempted through this port so far. */
   readonly modelCalls: number;
   /**
-   * Token budget this request runs under, fixed when the turn built the port.
-   *
-   * @remarks
-   * Rides the port because the port is the object every generation path already receives, and the
-   * window half of the budget is a property of the exact model the port wraps. A superseded turn
-   * still executing therefore keeps measuring against its own model's window and caps.
+   * Token budget this request runs under, fixed when the turn built the port. It rides the port
+   * because every generation path already receives it and the window half is a property of the
+   * exact model the port wraps, so a superseded turn still executing keeps measuring against its
+   * own model's window and caps.
    */
   readonly budget: TurnTokenBudget;
   /** Runs one tool-capable generation and validates emitted calls against the supplied tools. */
   generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult>;
   /**
-   * Counts tokens for one message's content on the exact model this port wraps — the same
+   * Counts tokens for one message's content on the exact model this port wraps; the same
    * provider-reported count `trimMessages` uses to bound the retry transcript.
    */
   getNumTokens(content: MessageContent): Promise<number>;
 }
 
-/** Flattens LangChain `MessageContent` (a string or a list of content blocks) into plain text for a provider token counter. */
+/** Flattens LangChain `MessageContent` (string or content blocks) into text for a token counter. */
 export function messageContentToText(content: MessageContent): string {
   if (typeof content === 'string') return content;
   return content.map((block) => (typeof block === 'string' ? block : 'text' in block && typeof block.text === 'string' ? block.text : '')).join('');
@@ -426,7 +433,6 @@ export function cancelledToolTurnResult(): ToolGenerationResult {
 /**
  * Creates the canonical provider-error result without retaining raw provider output.
  *
- * @param diagnostic - Sanitized provider diagnostic retained for classification.
  * @param userMessage - Optional user-facing message; derived from `diagnostic` when omitted.
  */
 export function errorToolTurnResult(

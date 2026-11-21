@@ -1,7 +1,7 @@
 import type { InvalidRoute } from './smTypes';
 
 /** One model-authored prune target after identifier resolution. */
-export interface CurrentHopActionTarget {
+interface CurrentHopActionTarget {
   /** Verbatim model-authored identifier used in notices. */
   raw: string;
   /** Canonical model id, or null when the reference is unresolved. */
@@ -14,9 +14,8 @@ export interface CurrentHopActionTarget {
 export interface CurrentHopActionPolicyInput {
   /** Canonical exploration origin. */
   originId: string;
-  /** Explicit prune_neighbors targets. */
   pruneTargets: CurrentHopActionTarget[];
-  /** Nodes already processed: analyzed on a hop of their own, or the carrier the engine passed through into the current focus. */
+  /** Nodes already processed: analyzed on their own hop, or the carrier passed into this focus. */
   visitedIds: ReadonlySet<string>;
   /** Nodes already removed by an earlier accepted prune. */
   removedIds: ReadonlySet<string>;
@@ -30,16 +29,14 @@ export interface CurrentHopActionPolicyInput {
 export interface CurrentHopActionPolicyResult {
   /** Nonfatal refused/unknown actions recorded for the next hop. */
   notices: InvalidRoute[];
-  /** Resolved prune targets that are not the origin and not already visited, queued, noted or removed. */
+  /** Resolved prune targets that are not the origin and not visited, queued, noted or removed. */
   acceptedPruneIds: string[];
 }
 
 /**
- * Classifies current-hop prune actions without mutating engine state.
- *
- * @remarks
- * Unresolved and no-op prunes are notices. The origin, queued, visited and removed targets are
- * protected rather than turned into a retry-loop rejection.
+ * Classifies current-hop prune actions without mutating engine state. Unresolved and no-op prunes
+ * are notices; the origin and queued, visited and removed targets are protected instead of becoming
+ * a retry-loop rejection.
  */
 export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInput): CurrentHopActionPolicyResult {
   const notices: InvalidRoute[] = [];

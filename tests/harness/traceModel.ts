@@ -21,29 +21,29 @@ import type { RuntimeLifecycleRecord } from '../../src/ai/observability/aiTraceW
 import type { GenerationRecord, WireRecord } from '../../src/ai/observability/wireLog';
 
 /** Bumped when the bucket shape below changes in a way a consumer must branch on. */
-export const TRACE_MODEL_SCHEMA_VERSION = 2;
+const TRACE_MODEL_SCHEMA_VERSION = 2;
 
 /** One parsed line: the record fields, the writer's `at` timestamp, and the 0-based source line. */
-export type TraceEntry<T> = T & { readonly at: string; readonly lineIndex: number };
+type TraceEntry<T> = T & { readonly at: string; readonly lineIndex: number };
 
 type Lifecycle<TType extends RuntimeLifecycleRecord['type']> =
   Extract<RuntimeLifecycleRecord, { readonly type: TType }>;
 
-export type TraceOpenEntry = TraceEntry<Lifecycle<'trace-open'>>;
-export type TurnStartEntry = TraceEntry<Lifecycle<'turn-start'>>;
-export type TurnTerminalEntry = TraceEntry<Lifecycle<'turn-terminal'>>;
-export type GateEntry = TraceEntry<Lifecycle<'gate'>>;
-export type PhaseEntry = TraceEntry<Lifecycle<'phase'>>;
-export type ToolEntry = TraceEntry<Lifecycle<'tool'>>;
-export type TurnEntry = TurnStartEntry | TurnTerminalEntry;
+type TraceOpenEntry = TraceEntry<Lifecycle<'trace-open'>>;
+type TurnStartEntry = TraceEntry<Lifecycle<'turn-start'>>;
+type TurnTerminalEntry = TraceEntry<Lifecycle<'turn-terminal'>>;
+type GateEntry = TraceEntry<Lifecycle<'gate'>>;
+type PhaseEntry = TraceEntry<Lifecycle<'phase'>>;
+type ToolEntry = TraceEntry<Lifecycle<'tool'>>;
+type TurnEntry = TurnStartEntry | TurnTerminalEntry;
 export type GenerationEntry = TraceEntry<GenerationRecord>;
 /** Every {@link WireRecord} variant except `generation`, which gets its own bucket — see {@link ParsedRun.generations}. */
-export type WireEntry = TraceEntry<Exclude<WireRecord, GenerationRecord>>;
+type WireEntry = TraceEntry<Exclude<WireRecord, GenerationRecord>>;
 /** A structurally valid `{at, type, ...}` line whose `type` this schema version does not recognize. */
-export type UnknownEntry = TraceEntry<{ readonly type: string } & Record<string, unknown>>;
+type UnknownEntry = TraceEntry<{ readonly type: string } & Record<string, unknown>>;
 
 /** One line that could not be read back as a trace record, kept verbatim rather than dropped. */
-export interface MalformedLine {
+interface MalformedLine {
   /** 0-based source line index, matching {@link TraceEntry.lineIndex} on well-formed neighbors. */
   readonly line: number;
   /** The original line text, unparsed — this is what {@link serializeRun} replays. */
@@ -163,6 +163,7 @@ function isRecordShape(value: unknown): value is { readonly at: string; readonly
  * re-stringified from the exact object `JSON.parse` produced (key order included) minus only the
  * `lineIndex` this module added, and malformed lines are replayed from their stored `text`
  * unchanged. A trace with zero lines serializes back to the empty string.
+ * @internal
  */
 export function serializeRun(run: ParsedRun): string {
   const positioned: Array<{ readonly index: number; readonly text: string }> = [];

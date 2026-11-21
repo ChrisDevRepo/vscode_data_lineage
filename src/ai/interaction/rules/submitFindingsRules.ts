@@ -5,9 +5,9 @@ import type { CapturedSection } from '../../session/memoryManager';
 /**
  * Required section angles by locked classification, read from the same
  * {@link CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema
- * (`tools/toolSchemas.ts`) narrows the `sections` keys to. An off-lock angle can no
- * longer be authored at all — it fails that schema before this validator ever runs —
- * so this rule only ever catches a locked angle that is missing, not a surplus one.
+ * (`tools/toolSchemas.ts`) narrows the `sections` keys to. An off-lock angle fails that schema
+ * before this validator runs, so this rule only catches a locked angle that is missing, not a
+ * surplus one.
  */
 const SECTION_RULES: Record<ClassificationValue, {
   required: readonly ('business' | 'technical')[];
@@ -28,13 +28,13 @@ const SECTION_RULES: Record<ClassificationValue, {
 };
 
 /**
- * Validates findings carry the `sections.business`/`sections.technical` keys required by the
- * locked classification.
+ * Validates findings carry the `sections.business`/`sections.technical` keys the locked
+ * classification requires.
  *
  * @param archivedAngles - Angles already archived for this focus node from an earlier visit
- * (`AiMemoryManager.getArchivedAngles`). A follow-up (`supplementAgenda`) revisits a node whose earlier sections
- * `storeDetail` already appended into the archive (never replaced), so an angle present there
- * satisfies the lock even when this submission does not re-carry it.
+ *   (`AiMemoryManager.getArchivedAngles`). A `supplementAgenda` follow-up revisits a node whose
+ *   earlier sections `storeDetail` appended (never replaced), so an angle present there satisfies
+ *   the lock though this submission does not re-carry it.
  */
 export function validateSectionsAgainstClassification(
   sections: CapturedSection[] | undefined,
@@ -58,16 +58,13 @@ export function validateSectionsAgainstClassification(
 }
 
 /**
- * Converts a `sections` object keyed by angle into angle-bearing entries.
- *
- * @remarks
- * The converter for a validated payload (`toHopFinding` in `toolSchemas.ts`). Tolerant on purpose:
- * only the `business`/`technical` keys are read, and a blank or non-string body is absent, so it
- * never counts toward coverage and never overwrites a held body.
+ * Converts a `sections` object keyed by angle into angle-bearing entries, for a validated payload
+ * (`toHopFinding` in `toolSchemas.ts`). Tolerant on purpose: only `business`/`technical` keys are
+ * read, and a blank or non-string body is absent, so it never counts toward coverage and never
+ * overwrites a held body. Anything not shaped like `{ business?: string, technical?: string }` is
+ * dropped.
  *
  * @param rawSections - The unparsed `sections` value from the raw or normalized tool input.
- * @returns Angle-bearing entries suitable for {@link validateSectionsAgainstClassification};
- * anything not shaped like `{ business?: string, technical?: string }` is dropped.
  */
 export function extractRawSectionAngles(rawSections: unknown): CapturedSection[] {
   if (typeof rawSections !== 'object' || rawSections === null || Array.isArray(rawSections)) return [];
@@ -82,15 +79,12 @@ export function extractRawSectionAngles(rawSections: unknown): CapturedSection[]
 }
 
 /**
- * Returns phase-valid recovery guidance for an active-hop `submit_findings` focus rejection.
- *
- * @remarks
- * Active SM exposes only `lineage_submit_findings` and `lineage_get_neighbor_columns`.
- * The hint therefore never points at discovery tools; an unresolved focus must be
- * corrected from the current-hop focus ID already in the worker context.
+ * Returns phase-valid recovery guidance for an active-hop `submit_findings` focus rejection. Active
+ * SM exposes only `lineage_submit_findings` and `lineage_get_neighbor_columns`, so the hint never
+ * points at discovery tools; an unresolved focus must be corrected from the current-hop focus ID
+ * already in the worker context.
  *
  * @param expectedFocusNodeId - Expected focus id for focus mismatch errors.
- * @returns A model-facing recovery hint that mentions only active-phase tools.
  */
 export function activeSubmitFindingsRecoveryHint(expectedFocusNodeId?: string): string {
   return expectedFocusNodeId

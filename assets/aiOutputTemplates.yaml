@@ -33,7 +33,7 @@
 # Per-key reference: docs/AI_PROMPTS.md
 # ──────────────────────────────────────────────────────────────────────────────
 
-schemaVersion: 2
+schemaVersion: 3
 
 # ── Discovery (chat-only) — editable via overlay ─────────────────────────────
 
@@ -112,22 +112,49 @@ notes:
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
 # Each fired *_capture template produces ONE `sections` key for its angle.
 # Under classification `both` both recipes fire (two keys); a single-angle
-# lock fires one recipe (one key). Shape: { business?: string, technical?: string }. Independent specs —
-# no cross-references between templates. Each key is self-contained;
+# lock fires one recipe (one key). Shape: { business?: string, technical?: string }. Recipes are independent specs
+# with no cross-references; only `shared_capture` (below) applies to every key. Each key is self-contained;
 # synthesis groups across nodes at the next phase.
+
+# Coverage that applies to every fired recipe, served once ahead of the recipes (a per-recipe copy repeats it
+# under `both`). Rendered as an unlabelled "- <instruction>" bullet.
+shared_capture:
+  stages: [active]
+  instruction: >
+    For grouping or ranked-row removal, derive the survivors per grouping or
+    partition key from the retained count or rank; ordering selects a survivor,
+    not a new partition grain. Equality keys used to delete existing matches
+    are deletion criteria, not automatically the output grain.
+    SQL snippet rule: write each item for a business reader first (explanation,
+    then formula when it adds meaning, several related formulas as a table). End
+    the item with one ```sql block for a DBA when its logic ranks or
+    deduplicates rows, matches rows on several keys, branches into several
+    outcomes, or combines several conditions in one predicate; simple filters,
+    renames, direct assignments and logic the formula already states get none.
+    The block keeps only the lines that decide that logic, verbatim from
+    `bb_ddl` in source order: the clauses of one logic stay together from where
+    a value is defined to where it filters or removes rows, each kept clause
+    keeps the first line of its statement, omitted lines become `-- ...`, never
+    a whole statement or column list, and the deciding lines end in a short
+    `-- ` recap comment.
+    Distinguish input rows from surviving rows at each cardinality-changing step.
+    For a step whose supplied SQL defines a calculation, explain that definition under Steps with its formula, input rows and meaning; naming the computation without explaining it leaves Steps incomplete.
+
+    Where it eases scanning, use bullets for parallel facts, `name` — effect for switches and parameters, tables for shared attributes; Steps is a numbered list, and identifiers and literals go in backticks.
+  example: ""
 
 # `sections` lists the bold labels this recipe writes, in order. Synthesis serves the labels of the active
 # angle(s) in `general` (Section structure), so a label is declared here once and nowhere else.
 business_capture:
   stages: [active]
-  sections: [Purpose, Rules and branches, Grain, Column mapping, Steps, Loading, Error handling, Gaps]
+  sections: [Purpose, Rules and branches, Grain, Calculation logic, Steps, Loading, Error handling, Gaps]
   instruction: |
     What the node does to the meaning of the data.
     1. Purpose: the domain role and the decision it serves.
-    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active. Explain calculations within the rule they implement, with their formula, business meaning, terms and consequences.
-    3. Grain: distinguish input rows from surviving rows at each cardinality-changing step. For conditional eligibility, evaluate the complete predicate with the declared defaults and with each override separately, and qualify survival claims by that condition. A warning-only check does not override a later row-eligibility filter. For grouping or ranked-row removal, derive the survivors per grouping or partition key from the retained count or rank; ordering selects a survivor, not a new partition grain. Equality keys used to delete existing matches are deletion criteria, not automatically the output grain. Quote the deciding SQL with the explanation.
-    4. Column mapping: `| From | To | Business meaning |`.
-    5. Steps: explain the logical data transformations and status transitions in order. For a step whose supplied SQL defines a calculation, explain that definition with its formula, input rows, meaning and deciding SQL here; naming the computation without explaining it leaves this section incomplete. This business section stands alone even when a technical section is also requested.
+    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active. Explain calculations within the rule they implement, with their formula, business meaning, terms and consequences; add SQL only under the SQL snippet rule.
+    3. Grain: for conditional eligibility, evaluate the complete predicate with the declared defaults and with each override separately, and qualify survival claims by that condition. A warning-only check does not override a later row-eligibility filter.
+    4. Calculation logic: what happens to the data the question asks about as it moves through the supplied SQL, from one CTE, temp table or statement to the next.
+    5. Steps: explain the logical data transformations and status transitions in order. This business section stands alone even when a technical section is also requested.
     6. Loading: whether target rows are replaced, extended or removed.
     7. Error handling: what a failure leaves in the rows.
     8. Gaps.
@@ -150,12 +177,12 @@ technical_capture:
   instruction: |
     The mechanics, and which rows survive them.
     1. Purpose: the execution role.
-    2. Rules and branches: each switch value and the statement it runs. Explain calculations within the rule they implement, with their formula, deciding SQL, branch behavior and consequences.
-    3. Join shape and grain: JOIN and WHERE predicates and join hints; distinguish input rows from surviving rows at each cardinality-changing step. For grouping or ranked-row removal, derive the survivors per grouping or partition key from the retained count or rank; ordering selects a survivor, not a new partition grain. Equality keys used to delete existing matches are deletion criteria, not automatically the output grain. Quote the deciding SQL with the explanation.
-    4. Steps as a numbered walk of SQL statements and logical data changes. For a step whose supplied SQL defines a calculation, explain that definition with its formula, input rows, meaning and deciding SQL here; naming the computation without explaining it leaves this section incomplete. This technical section stands alone even when a business section is also requested. Do not invent physical access or execution steps from SQL syntax: describe a join hint as a requested strategy, not an observed operator; without a plan, do not label a step scan, seek, hash build or probe.
+    2. Rules and branches: each switch value and the statement it runs. Explain calculations within the rule they implement, with their formula, branch behavior and consequences; add SQL only under the SQL snippet rule.
+    3. Join shape and grain: JOIN and WHERE predicates and join hints.
+    4. Steps: the SQL statements and logical data changes, in order. This technical section stands alone even when a business section is also requested.
     5. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
     6. Error handling: TRY/CATCH, retry, locking.
-    7. Evidence boundary, not an output item: do not add an evidence-review section or ⚠️ line merely because this recipe lists this rule. Put filters, literals, defaults, time functions, predicate shapes and assignments under Rules or Steps as factual behavior. Describe explicit SQL join hints, grouping and row grain as SQL facts. A literal or default is not a defect without supplied schema or business evidence for a requirement it violates. Use ⚠️ only when the supplied SQL alone proves a specific row or value consequence, or supplied evidence proves a violated requirement; quote the deciding expression and that evidence. Claims about index presence or use, actual seeks or scans, statistics, estimated or observed row counts, execution plans, chosen physical join strategies or runtime costs require matching catalog, plan or runtime evidence; SQL hints alone do not establish what the engine executed or its performance. If the user requested an unavailable dimension, state once in factual prose that its evidence was not supplied.
+    7. Evidence boundary, not an output item: do not add an evidence-review section or ⚠️ line merely because this recipe lists this rule. Put filters, literals, defaults, time functions, predicate shapes and assignments under Rules or Steps as factual behavior. Describe explicit SQL join hints, grouping and row grain as SQL facts. A literal or default is not a defect without supplied schema or business evidence for a requirement it violates. Use ⚠️ only when the supplied SQL alone proves a specific row or value consequence, or supplied evidence proves a violated requirement; quote the deciding expression and that evidence. If the user requested an unavailable dimension, state once in factual prose that its evidence was not supplied.
   example: ""
 
 # ── Structural callouts (active phase, bodied focus) ─────────────────────────
@@ -166,7 +193,7 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    A ⚠️ is optional: use it only when the supplied SQL proves specific row or value loss, duplication or overwrite, or supplied schema or business evidence proves a violated requirement. Quote the deciding expression and any evidence of the requirement. For a no-transaction failure window, require at least two ordered writes to persistent data: the first changes persistent state and a later persistent write is needed to complete the same operation. Temporary objects, variables, reads, calculations, and steps before a single persistent write do not create that failure window. State filters, literals, defaults, join hints, grouping and row grain as SQL facts unless supplied evidence proves an adverse effect. Claims about index presence or use, actual seeks or scans, statistics, estimated or observed row counts, execution plans, chosen physical join strategies or runtime costs require matching catalog, plan or runtime evidence; SQL hints alone do not establish what the engine executed or its performance. Do not create a callout merely because evidence for a requested dimension is unavailable; state its absence once in factual prose.
+    A ⚠️ is optional: use it only when the supplied SQL proves specific row or value loss, duplication or overwrite, or supplied schema or business evidence proves a violated requirement. Quote the deciding expression and any evidence of the requirement. For a no-transaction failure window, require at least two ordered writes to persistent data: the first changes persistent state and a later persistent write is needed to complete the same operation. Temporary objects, variables, reads, calculations, and steps before a single persistent write do not create that failure window. State filters, literals, defaults, join hints, grouping and row grain as SQL facts unless supplied evidence proves an adverse effect. Do not create a callout merely because evidence for a requested dimension is unavailable; state its absence once in factual prose.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
     `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.
@@ -187,7 +214,7 @@ structural_summary:
 column_trace_capture:
   stages: [active]
   instruction: |
-    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared `sections`. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. An empty upstream list states that the value originates here; unresolved mappings remain questions.
+    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared `sections`. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. Unresolved mappings remain questions.
 
 # Per-angle section assembly (business / technical / both) is governed by
 # buildSynthesisPrompt() in src/ai/prompting/prompts.ts. No separate per-angle templates
@@ -207,12 +234,12 @@ general:
   instruction: |
     Render what the captured bodies contain, business meaning first; nothing is invented to fill a bullet:
     - **Section structure**: use only these bold labels, in this order when applicable: {{sections}}. Embed formulas in the relevant rule or step, on their own lines with explanation or in a table with short descriptions. Never make a Formulas subsection or isolated inventory. Put lifecycle transitions under Steps and normal defaults under Rules and branches. Business explains meaning and consequences, technical explains execution, and both states shared facts once. Omit empty or inapplicable labels, including None/not applicable boilerplate and lists of absent mechanisms. Gaps contains only material unresolved questions. Preserve substantive facts without repeated wording.
-    - **Steps**: a real markdown numbered list, one step per line. Put tables and SQL fences on separate lines with blank lines around them; keep SQL to the deciding expression, using captured witness references when available.
+    - **Steps**: a real markdown numbered list, one step per line. Put tables and SQL fences on separate lines with blank lines around them.
     - **Column renames**: a `| From | To | Business meaning |` row per rename or derivation only when the backend does not supply that inventory; backend-ownership instructions take precedence over Column mapping labels and tables.
     - **Source guards**: short WHERE / JOIN / MERGE predicates, not whole statements.
     - **Status lifecycles**: numbered transitions.
     - **Callouts**: each captured ⚠️ sits once, in its section, as its own markdown list item (`- ⚠️ …`), never merged onto the same line as another callout; impact before mechanism in a business mission.
-    - **Scope**: a side branch the question did not ask about is one line in the section it hangs off — never a section, a highlight, or a deletion. A column trace follows the traced column's value chain to its terminal sources.
+    - **Scope**: a side branch the question did not ask about is one line in the section it hangs off — never a section, a highlight, or a deletion. A column trace follows the traced column's value chain within approved scope, distinguishing terminal sources from scope boundaries.
   example: ""
 
 # ── Big-picture ETL closing — TECHNICAL angle only ───────────────────────────

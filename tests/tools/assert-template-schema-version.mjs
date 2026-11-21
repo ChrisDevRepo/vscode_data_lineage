@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { isCi, SKIP_EXIT_CODE } from './gate-status.mjs';
-import { breakingStructureChanges, structureDiff, templateStructure } from './templateStructure.mjs';
+import { structureDiff, templateStructure } from './templateStructure.mjs';
 
 const ASSET = 'assets/aiOutputTemplates.yaml';
 const TYPES = 'src/ai/session/types.ts';
@@ -96,11 +96,7 @@ if (baselineAsset === currentAsset) {
   process.exit(0);
 }
 
-const baselineStructure = templateStructure(baselineAsset);
-const currentStructure = templateStructure(currentAsset);
-const identicalStructure = JSON.stringify(baselineStructure) === JSON.stringify(currentStructure);
-const changes = structureDiff(baselineStructure, currentStructure);
-const breaking = breakingStructureChanges(changes);
+const changes = structureDiff(templateStructure(baselineAsset), templateStructure(currentAsset));
 const formattedChanges = changes.map((line) => `      ${line}`).join('\n');
 
 const baselineTypes = showAtTag(baseline, TYPES);
@@ -109,38 +105,33 @@ if (baselineTypes === undefined) {
 }
 const baselineVersion = readVersion(baselineTypes, VERSION_RE, `AI_TEMPLATE_SCHEMA_VERSION at ${baselineLabel}`);
 
-if (breaking.length === 0) {
-  if (baselineVersion !== constantVersion) {
-    console.error(
-      `FAIL  ${ASSET} changed since ${baselineLabel} with no removal, rename, or retype — wording and ` +
-      `additions are backward compatible — but AI_TEMPLATE_SCHEMA_VERSION moved ` +
-      `${baselineVersion} → ${constantVersion} anyway:\n${formattedChanges}\n` +
-      `      The bump alone forces every custom overlay to be re-scaffolded for nothing. Revert the ` +
-      `constant in ${TYPES} and schemaVersion in ${ASSET} to ${baselineVersion}.`,
-    );
-    process.exit(1);
-  }
-  console.log(
-    (identicalStructure
-      ? `PASS  ${ASSET} wording changed since ${baselineLabel}; template structure unchanged`
-      : `PASS  ${ASSET} changed additively since ${baselineLabel} — no template key or field removed, renamed, or retyped`) +
-    `, so a previous overlay still fits; schemaVersion ${assetVersion} stays.`,
+if (constantVersion < baselineVersion) {
+  console.error(
+    `FAIL  AI_TEMPLATE_SCHEMA_VERSION went down since ${baselineLabel}: ${baselineVersion} → ${constantVersion}. ` +
+    `A version never goes down.`,
   );
-  process.exit(0);
+  process.exit(1);
 }
 
-if (baselineVersion === constantVersion) {
+if (changes.length > 0 && baselineVersion === constantVersion) {
   console.error(
-    `FAIL  ${ASSET} broke structure since ${baselineLabel} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}:\n` +
-    `${breaking.map((line) => `      ${line}`).join('\n')}\n` +
-    `      A ${baselineLabel} custom overlay will match this version, be accepted, and be read against a shape it\n` +
+    `FAIL  ${ASSET} changed structure since ${baselineLabel} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}:\n` +
+    `${formattedChanges}\n` +
+    `      Any added, removed, renamed or retyped template key or field needs a new version. A ${baselineLabel} ` +
+    `custom overlay would match this version, be accepted, and be read against a shape it\n` +
     `      no longer fits, with no warning and no fallback. Bump the constant in ${TYPES} and\n` +
     `      schemaVersion in ${ASSET}, then record the change in CHANGELOG.md.`,
   );
   process.exit(1);
 }
 
-console.log(
-  `PASS  ${ASSET} broke structure since ${baselineLabel} and AI_TEMPLATE_SCHEMA_VERSION was bumped ` +
-  `${baselineVersion} → ${constantVersion}; stale overlays fall back to built-in templates.\n${formattedChanges}`,
-);
+if (baselineVersion !== constantVersion) {
+  console.log(
+    `PASS  AI_TEMPLATE_SCHEMA_VERSION bumped ${baselineVersion} → ${constantVersion} since ${baselineLabel}; ` +
+    `an older custom file is ignored with a warning.` +
+    (changes.length > 0 ? `\n${formattedChanges}` : ''),
+  );
+  process.exit(0);
+}
+
+console.log(`PASS  ${ASSET} wording changed since ${baselineLabel}; template structure unchanged, schemaVersion ${assetVersion} stays.`);

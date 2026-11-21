@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.6] - Unreleased
+
+### Removed
+- SQL Server (mssql) extension connection and the `dataLineageViz.database.connectionProvider` setting; a saved mssql project asks to reconnect.
+- The **with positions** bookmark option.
+
+### Changed
+- AI output templates version 3: re-create custom template files.
+
+### Fixed
+- GUI: light-theme colors and contrast, settings, loading and notifications.
+- AI analysis: clearer rejection feedback and retries, analysis kept inside the approved scope, column traces, shorter prompts; output templates gain a shared section for business and technical capture.
+
+### Dependencies
+- Security updates: dompurify, zod, fast-xml-parser, @azure/msal-node.
+- Dependency updates (patch and minor releases).
+
 ## [1.2.5] - 2026-10-07
 
 ### Changed

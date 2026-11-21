@@ -30,8 +30,8 @@ interface TooltipProps {
 }
 
 /**
- * Themed tooltip that replaces native `title` attributes.
- * Uses `--ln-*` CSS variables — correct in light, dark, and HC themes.
+ * Themed tooltip replacing native `title` attributes, using `--ln-*` CSS variables for light, dark
+ * and HC themes.
  */
 export const Tooltip = memo(function Tooltip({
   content,

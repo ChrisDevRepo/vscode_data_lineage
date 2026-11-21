@@ -18,15 +18,10 @@ import type { ColumnDef } from './types';
  * Built once per model load and cleared on reload to prevent memory leaks.
  */
 export class ColumnStore {
-  /**
-   * Primary storage mapping node unique identifiers to their ordered column definitions.
-   * Preserves ordinal position from the source metadata.
-   */
+  /** Maps node unique ids to their ordered column definitions, keeping source ordinal position. */
   private readonly cols = new Map<string, ColumnDef[]>();
 
-  /**
-   * Storage mapping node unique identifiers to their raw DDL (bodyScript) strings.
-   */
+  /** Storage mapping node unique identifiers to their raw DDL (bodyScript) strings. */
   private readonly ddl = new Map<string, string>();
 
   /**
@@ -69,10 +64,7 @@ export class ColumnStore {
     return this.ddl.get(nodeId);
   }
 
-  /**
-   * Clears all internal maps to release memory.
-   * Should be called during model reload or extension shutdown.
-   */
+  /** Clears all internal maps to release memory; call on model reload or extension shutdown. */
   clear(): void {
     this.cols.clear();
     this.ddl.clear();

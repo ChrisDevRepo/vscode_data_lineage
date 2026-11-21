@@ -6,21 +6,21 @@ import { useAutocomplete } from '../hooks/useAutocomplete';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { SuggestionList } from './ui/SuggestionList';
 import { Tooltip } from './ui/Tooltip';
+import { CloseIcon } from './ui/CloseIcon';
 import { disabledControl } from './ui/disabledControl';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 interface SearchWithAutocompleteProps {
   /** Callback to execute a node search/jump; `schema` disambiguates results with the same name. */
   onExecuteSearch?: (name: string, schema?: string) => void;
-  /** Optional callback to initiate a trace directly from the search result. */
   onStartTrace?: (nodeId: string) => void;
-  /** When set, the Start Trace action renders disabled with this reason instead of starting a trace. */
+  /** When set, Start Trace renders disabled with this reason instead of starting a trace. */
   startTraceDisabledReason?: string;
   /** Flattened list of all nodes in the project for autocomplete suggestions. */
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
-  /** Authoritative set of node IDs currently rendered in the graph; partitions suggestions into "In View" and "Other". */
+  /** Node IDs rendered in the graph; partitions suggestions into "In View" and "Other". */
   visibleNodeIds: Set<string>;
-  /** IDs of working-set nodes collapsed inside a schema cluster; forms a third suggestion partition when provided. */
+  /** Working-set node IDs collapsed in a schema cluster; a third suggestion partition when set. */
   collapsedSchemaNodeIds?: Set<string>;
 }
 
@@ -133,9 +133,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
           className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center ln-text-muted hover:opacity-70"
           aria-label="Clear search"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-          </svg>
+          <CloseIcon />
         </button>
       ) : (
         <div className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center pointer-events-none ln-text-placeholder">
@@ -155,7 +153,6 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
             onSelect={selectSuggestion}
             onHover={setSelectedIndex}
             dropdownRef={mergedDropdownRef}
-            portal
             style={floatingStyles}
             renderAction={onStartTrace ? (node) => {
               const trigger = disabledControl(
@@ -185,6 +182,19 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
               );
             } : undefined}
           />
+        </FloatingPortal>
+      )}
+
+      {!isOpen && searchTerm.length >= 2 && allSuggestions.length === 0 && (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            role="status"
+            style={floatingStyles}
+            className="z-50 rounded-md shadow-lg ln-dropdown px-3 py-2 text-xs ln-text-muted"
+          >
+            No results found.
+          </div>
         </FloatingPortal>
       )}
     </div>

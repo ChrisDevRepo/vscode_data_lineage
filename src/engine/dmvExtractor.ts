@@ -1,12 +1,8 @@
 /**
  * @module DmvExtractor
- * Handles the transformation of raw SQL Server DMV (Dynamic Management View) results into a structured database model.
- *
- * This module is responsible for:
- * - Parsing and validating result sets from `sys.objects`, `sys.columns`, and `sys.sql_expression_dependencies`.
- * - Reconstructing complex constraints (FK, UQ, CK) from relational rows.
- * - Mapping SQL Server engine editions and versions to human-readable platform names.
- * - Building lightweight schema previews for Phase 1 exploration.
+ * Turns raw SQL Server DMV results into a structured database model: parses and validates the
+ * `sys.*` result sets, rebuilds FK/UQ/CK constraints from rows, maps engine editions to platform
+ * names, and builds the lightweight schema previews of Phase 1 exploration.
  */
 
 import {
@@ -25,30 +21,24 @@ import {
   UNKNOWN_DB_PLATFORM,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
-import type { SimpleExecuteResult, DbCellValue, IServerInfo } from '../types/mssql';
+import type { SimpleExecuteResult, DbCellValue } from '../types/database';
 import { quoteIdentifier, schemaKey } from '../utils/sql';
 
-/**
- * Aggregates raw query results from various system catalog views.
- */
+/** Aggregates raw query results from various system catalog views. */
 export interface DmvResults {
   /** Core object definitions (tables, views, procedures) and their body scripts. */
   nodes: SimpleExecuteResult;
-  /** Column metadata including types, lengths, and nullability. */
   columns: SimpleExecuteResult;
-  /** Raw cross-object dependency edges. */
   dependencies: SimpleExecuteResult;
   /** Full cross-schema catalog for dependency resolution. */
   allObjects?: SimpleExecuteResult;
-  /** metadata for Foreign Key, Unique, and Check constraints. */
   constraints?: SimpleExecuteResult;
-  /** Server-level platform and version metadata. */
   platformInfo?: SimpleExecuteResult;
-  /** Platform derived from MSSQL server metadata when the platform query is unavailable. */
+  /** Explicit platform label used when the platform query is unavailable. */
   serverPlatform?: string;
 }
 
-/** Shown when the catalog returns no objects: an empty database, or a login without VIEW DEFINITION. */
+/** Shown when the catalog has no objects: an empty database or a login lacking VIEW DEFINITION. */
 const NO_USER_OBJECTS_WARNING = 'No user objects found in database. If the database has objects, the login needs VIEW DEFINITION on it.';
 
 /**
@@ -114,10 +104,8 @@ export function buildModelFromDmv(
     const c = { table: 0, view: 0, procedure: 0, function: 0 } as Record<string, number>;
     for (const o of objects) if (o.type in c) c[o.type]++;
     const colCount = results.columns.rowCount;
-    const fkCount = results.constraints?.rows.filter(r => {
-      const idx = results.constraints!.columnInfo.findIndex(ci => ci.columnName.toLowerCase() === 'constraint_type');
-      return idx >= 0 && r[idx]?.displayValue === 'FK';
-    }).length ?? 0;
+    const constraintCols = results.constraints ? buildColumnIndex(results.constraints) : undefined;
+    const fkCount = results.constraints?.rows.filter(r => cellValue(r, constraintCols!, 'constraint_type') === 'FK').length ?? 0;
     onDebugLog(`DMV extract — ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}, columns=${colCount}, fks=${fkCount})`);
   }
   const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog, identifierCaseSensitive);
@@ -134,7 +122,7 @@ export function buildModelFromDmv(
   return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform, source: 'database' };
 }
 
-/** Enables exact identifiers only for an actual catalog collation with a checked comparison style. */
+/** Enables exact identifiers only for a real catalog collation with a checked comparison style. */
 function checkedIdentifierCaseSensitivity(result?: SimpleExecuteResult): boolean {
   if (result?.rows.length !== 1) return false;
   const cols = buildColumnIndex(result);
@@ -145,9 +133,7 @@ function checkedIdentifierCaseSensitivity(result?: SimpleExecuteResult): boolean
     && comparisonStyle <= 0x7fffffff && (comparisonStyle & 1) === 0;
 }
 
-/**
- * Maps SQL Server engine metadata to human-readable platform strings.
- */
+/** Maps SQL Server engine metadata to human-readable platform strings. */
 function mapEnginePlatform(result: SimpleExecuteResult): string {
   if (!result.rows.length) return UNKNOWN_DB_PLATFORM;
   const colIdx = buildColumnIndex(result);
@@ -156,21 +142,6 @@ function mapEnginePlatform(result: SimpleExecuteResult): string {
   const majorVersion  = parseInt(cellValue(row, colIdx, 'major_version'), 10);
   const edition       = cellValue(row, colIdx, 'edition');
   return mapEngineMetadata(engineEdition, majorVersion, edition);
-}
-
-/**
- * Maps authoritative MSSQL extension server metadata to a platform label.
- *
- * @remarks
- * A second entry point exists so the `getServerInfo` fallback cannot drift from the
- * `platform-info` query path: both funnel into `mapEngineMetadata`, so a connection
- * yields the same label whichever tier resolved it. Changing one mapping without the
- * other would make the displayed platform depend on which tier happened to answer.
- */
-export function mapServerInfoPlatform(
-  info: Pick<IServerInfo, 'engineEditionId' | 'serverMajorVersion' | 'serverEdition'>,
-): string {
-  return mapEngineMetadata(info.engineEditionId, info.serverMajorVersion, info.serverEdition);
 }
 
 function mapEngineMetadata(engineEdition: number, majorVersion: number, edition: string): string {
@@ -193,9 +164,7 @@ function mapEngineMetadata(engineEdition: number, majorVersion: number, edition:
   }
 }
 
-/**
- * Column requirements for various DMV queries to ensure data integrity.
- */
+/** Column requirements for various DMV queries to ensure data integrity. */
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   'schema-preview': ['schema_name', 'type_code', 'object_count'],
   nodes: ['schema_name', 'object_name', 'type_code', 'body_script'],
@@ -226,9 +195,7 @@ export function validateQueryResult(name: string, result: SimpleExecuteResult): 
   return required.filter(c => !actual.has(c));
 }
 
-/**
- * Safely extracts a cell value from a database row.
- */
+/** Safely extracts a cell value from a database row. */
 function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: string): string {
   const idx = colIndex.get(name);
   if (idx === undefined) return '';
@@ -236,9 +203,6 @@ function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: stri
   return cell && !cell.isNull ? cell.displayValue : '';
 }
 
-/**
- * Builds a fast-lookup map for column names to their array indices.
- */
 function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   const map = new Map<string, number>();
   for (let i = 0; i < result.columnInfo.length; i++) {
@@ -252,9 +216,7 @@ function metadataObjectKey(schema: string, object: string, identifierCaseSensiti
   return JSON.stringify([schemaKey(schema, identifierCaseSensitive), schemaKey(object, identifierCaseSensitive)]);
 }
 
-/**
- * Reconstructs UQ, CK, and FK constraints from a flattened result set.
- */
+/** Reconstructs UQ, CK, and FK constraints from a flattened result set. */
 function buildConstraintMaps(result: SimpleExecuteResult, identifierCaseSensitive: boolean): ConstraintMaps {
   const colIdx = buildColumnIndex(result);
   const uqColMap = new Map<string, string>();
@@ -304,9 +266,6 @@ function buildConstraintMaps(result: SimpleExecuteResult, identifierCaseSensitiv
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap: new Map() };
 }
 
-/**
- * Extracts normalized objects and their columns from raw result sets.
- */
 function extractObjects(results: DmvResults, identifierCaseSensitive: boolean): ExtractedObject[] {
   const nodeColIdx = buildColumnIndex(results.nodes);
   const colColIdx = buildColumnIndex(results.columns);
@@ -415,9 +374,7 @@ function extractObjects(results: DmvResults, identifierCaseSensitive: boolean): 
   return objects;
 }
 
-/**
- * Extracts directional dependencies between objects based on sys.sql_expression_dependencies.
- */
+/** Extracts directional dependencies between objects based on sys.sql_expression_dependencies. */
 function extractDependencies(results: DmvResults): ExtractedDependency[] {
   const depColIdx = buildColumnIndex(results.dependencies);
   const deps: ExtractedDependency[] = [];
@@ -444,9 +401,7 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
   return deps;
 }
 
-/**
- * Extracts a lightweight catalog of all objects from the full catalog query.
- */
+/** Extracts a lightweight catalog of all objects from the full catalog query. */
 function extractAllObjects(result: SimpleExecuteResult, identifierCaseSensitive: boolean): ExtractedObject[] {
   const colIdx = buildColumnIndex(result);
   const seen = new Set<string>();

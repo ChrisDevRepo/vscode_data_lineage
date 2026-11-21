@@ -21,7 +21,7 @@ import { schemaKey } from '../../utils/sql';
 import { sanitizeForLog } from '../../utils/log';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
-import { applyIsolationFilter } from '../../engine/shared/modelFilters';
+import { countVisibleNodes, userFilterAdmits } from '../../engine/shared/modelFilters';
 import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
 import { executeIsolatedRegexSearch, RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
@@ -32,7 +32,6 @@ import {
   presentSchema, presentNeighbor, presentFilter, presentForeignKeys,
 } from '../support/aiPresenter';
 import { type GetScopeBundleInput } from './toolSchemas';
-import { ASYMMETRIC_DEPTH_BOTH_ZERO } from '../../engine/shared/explorationDepthContract';
 
 
 import {
@@ -60,13 +59,14 @@ function buildNodeTypeById(model: DatabaseModel): Map<string, string> {
  * Builds a lookup map for edges between nodes.
  *
  * @param model - The full database model.
- * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge type.
+ * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge
+ *   type.
  */
 export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const nodeTypeById = buildNodeTypeById(model);
   const m = new Map<string, string>();
   for (const e of model.edges) {
-    m.set(`${e.source}→${e.target}`, edgeApiType(e.type, nodeTypeById.get(e.source) ?? ''));
+    m.set(`${e.source}→${e.target}`, edgeApiType(e, nodeTypeById.get(e.source) ?? ''));
   }
   return m;
 }
@@ -74,7 +74,6 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
 /** {@link buildEdgeTypeMap} per loaded model instance; a newly loaded model is a new key. */
 const edgeTypeMapCache = new WeakMap<DatabaseModel, Map<string, string>>();
 
-/** Returns the memoized edge-type map for `model`, building it once per model instance. */
 function getModelEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   let map = edgeTypeMapCache.get(model);
   if (!map) {
@@ -86,15 +85,9 @@ function getModelEdgeTypeMap(model: DatabaseModel): Map<string, string> {
 
 
 /**
- * Builds a source-aware map of "Schema.Name" to lists of unresolved (unrelated) references.
- *
- * @remarks
- * Unresolved references are identifiers found in the DDL during parsing that do not
- * exist in the current model. This metadata helps the AI understand potential
- * external dependencies or missing objects.
- *
- * @param model - The full database model.
- * @returns A map of object names to their unresolved reference strings.
+ * Source-aware map of "Schema.Name" to unresolved references: identifiers found in the DDL during
+ * parsing that do not exist in the model, so the AI can see potential external dependencies or
+ * missing objects.
  */
 export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   const m = new Map<string, string[]>();
@@ -111,21 +104,13 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
 
 
 /**
- * Constructs a detailed "Focus Node" object for use in exploration hop contexts.
+ * Constructs the "Focus Node" object for exploration hop contexts: the node's metadata (DDL,
+ * columns, foreign keys, unresolved references) in a shape the agent analyzes during a hop.
  *
- * @remarks
- * This function packages all pertinent metadata for a node (DDL, columns, foreign keys,
- * and unresolved references) into a shape suitable for the AI agent to analyze during a hop.
- *
- * @param node - The node currently in focus.
- * @param nodeMap - The map of all nodes.
- * @param unrelatedMap - The map of unresolved references.
  * @param store - Optional high-fidelity column store.
- * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
- * @param neighborIndex - Optional pre-computed neighbor index to attach in/out edge metadata.
- * @param edgeTypeMap - Optional map of edge types.
+ * @param ddlKey - Key for the DDL property (defaults to 'ddl').
+ * @param neighborIndex - Optional pre-computed index attaching in/out edge metadata.
  * @param identifierCaseSensitive - Checked source policy shared with the unresolved-reference map.
- * @returns A record containing the focus node's metadata.
  */
 export function buildHopFocusNode(
   node: LineageNode,
@@ -165,45 +150,18 @@ export function buildHopFocusNode(
   return result;
 }
 
-
-/** Objects shown by the source-aware schema/type filter, then Hide Isolated. */
-function countVisibleNodes(model: DatabaseModel, activeFilter: SerializedFilterState): number {
-  const scoped = model.nodes.filter(n => {
-    const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => schemaKey(s, model.identifierCaseSensitive) === schemaKey(n.schema, model.identifierCaseSensitive));
-    const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type);
-    return schemaOk && typeOk;
-  });
-  const scopedIds = new Set(scoped.map(n => n.id));
-  const scopedModel = {
-    ...model,
-    nodes: scoped,
-    edges: model.edges.filter(e => scopedIds.has(e.source) && scopedIds.has(e.target)),
-  };
-  return applyIsolationFilter(scopedModel, activeFilter.hideIsolated ?? false).nodes.length;
-}
-
 /**
- * Retrieves the high-level context of the current project for the AI.
- *
- * @remarks
- * Orientation only: schema list, node/edge stats, and the active UI filter. The object catalog
- * itself is `lineage_search_objects`'s job (name/column search) or `lineage_get_scope_bundle`'s
- * (graph-scope retrieval) — inlining it here duplicated that tool rather than orienting the AI
- * toward it, so this never returns the per-node list.
- *
- * @param model - The database model.
- * @param activeFilter - The current UI filter state.
- * @param projectName - The name of the active project.
- * @returns Project metadata, schema list, stats, and the active filter.
+ * High-level project context for the AI: orientation only (schema list, node/edge stats, active UI
+ * filter). The object catalog is `lineage_search_objects`' or `lineage_get_scope_bundle`'s job;
+ * inlining it here duplicated those tools rather than orienting toward them, so no per-node list is
+ * returned.
  */
 export function getContext(
   model: DatabaseModel,
   activeFilter: SerializedFilterState | null,
   projectName: string | null,
 ) {
-  const visibleNodes = activeFilter
-    ? countVisibleNodes(model, activeFilter)
-    : model.nodes.length;
+  const visibleNodes = countVisibleNodes(model, activeFilter);
 
   return {
     project_name:  projectName,
@@ -219,86 +177,62 @@ export function getContext(
 
 
 /**
- * The one wording for "list a whole schema", shared by both rejections that offer that repair.
- *
- * @remarks
- * The repair is the arguments object and nothing else, with no value left to infer from prose and
- * no wrong value named for a reader to copy — naming a forbidden reading in prose only makes it the
- * most salient token in the hint.
+ * The one wording for "list a whole schema", shared by both rejections that offer that repair. The
+ * repair is the arguments object alone, with no value left to infer and no wrong value named, since
+ * naming a forbidden reading makes it the most salient token in the hint.
  */
 const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "", "schemas": ["<schema>"]}.';
 
 /**
- * Bare tokens that mean "match everything" in whichever wildcard idiom a caller reaches for —
- * SQL `%`, shell/glob `*`, regex `.*` — independent of the `mode` sent alongside them.
- *
- * @remarks
- * Recognized only together with an explicit `schemas[]` scope, where "list everything in this
- * schema" is the one meaning available (the same precondition `listAllInSchemas` already uses
- * for an empty query); without a schema scope "everything" is unbounded and the token is left to
- * fail exactly as any other invalid pattern would, in either regex mode (`invalid_regex`, `*` has
- * nothing to repeat) or substring mode (`query_not_a_name`, punctuation matches no name) — an
- * unambiguous request should not need two rejections to resolve.
+ * Bare tokens meaning "match everything" in any wildcard idiom (SQL `%`, glob `*`, regex `.*`),
+ * independent of `mode`. Recognized only with an explicit `schemas[]` scope, where "list everything
+ * in this schema" is the one available meaning (the precondition `listAllInSchemas` uses for an
+ * empty query). Without a schema scope "everything" is unbounded and the token fails like any
+ * invalid pattern (`invalid_regex` in regex mode, `query_not_a_name` in substring mode).
  */
 const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 
 /**
- * Validates a substring-mode search query for sanity.
+ * Validates a substring-mode search query. The query is matched literally, so one of only regex
+ * punctuation matches nothing (the second rejection); "matches everything" is true only of a
+ * regex-mode pattern. Length is not limited: one character is a servable substring and volume is
+ * owned by the evidence-share measurement that answers an oversized result with `result_too_large`.
+ * Punctuation-only queries land on `query_not_a_name`, which names the mode that serves them.
  *
- * @remarks
- * Only reached in substring mode, where the query is matched literally — so a query made of
- * nothing but regex punctuation matches nothing at all, which is what the second rejection says;
- * "matches everything" is only true of a pattern in regex mode.
- *
- * Length is the other axis, and one character is a servable substring: `searchCatalog` matches it
- * like any longer one and this tool hands it no result cap, so volume is owned by the evidence-share
- * measurement that answers an oversized result with `result_too_large`, never by a minimum here.
- * Punctuation-only queries still land on `query_not_a_name` below, which names the mode that serves
- * them.
- *
- * @param query - The user-provided search string.
  * @returns `null` for a usable query; otherwise the rejection naming the fix.
  */
 function validateQuery(query: string): ToolRejection | null {
   const trimmed = query.trim();
   if (trimmed.length < 1) {
-    return makeRejection({ code: 'query_too_short', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryTooShort, hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
   }
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
-    return makeRejection({ code: 'query_not_a_name', hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryNotAName, hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
   }
   return null;
 }
 
 
 /**
- * Searches for objects in the model by name or column name.
+ * Searches objects by name or column name, fuzzy or regex. A schema-restricted search with no
+ * results is retried globally.
  *
- * @remarks
- * This function performs a fuzzy or regex search across object names and column names.
- * It automatically handles schema mismatches by searching globally if a schema-restricted
- * search yields no results.
+ * `by_type` is the one home of the type breakdown: the rows `total` counts, tallied on the pass
+ * that tags them, so a per-heading number served here cannot drift from the list it heads.
+ * `name_match` resolves a typed object name: rows whose name equals the query, narrowed to the
+ * user's filtered scope when any sits in it, as `unique` or `ambiguous` with ids; absent for regex,
+ * list-all and substring-only hits.
  *
- * `by_type` is the one home for the type breakdown: the same rows `total` counts, tallied on the
- * pass that tags them. A per-row `t` is read row by row, while an answer grouped by kind states one
- * number per heading — served, that number cannot drift from the list it heads.
- *
- * `name_match` resolves a typed object name: the rows whose name equals the query, narrowed to the
- * user's filtered scope when any of them sits in it, as `unique` or `ambiguous` with their ids.
- * Absent for regex, list-all and substring-only hits.
- *
- * @param model - The database model.
- * @param query - The search query.
- * @param types - Optional filter for object types.
- * @param schemas - Optional filter for schemas.
- * @param mode - Search mode ('substring' or 'regex').
+ * @param offeredTools - The tools the current stage serves (`getAllowedLmToolNames`); a hint names
+ *   only these.
  * @param activeFilter - Current UI filter state to tag results.
  * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `normalizeSearchQueryInput`
- * rewrites the query (e.g. `[dbo].[FactSales]` into the schema hint `dbo` and the name `FactSales`).
- * @returns A list of matches with metadata, the `by_type` breakdown of that list, and AI hints.
+ *   rewrites the query (e.g. `[dbo].[FactSales]` into schema `dbo` and name `FactSales`).
+ * @returns Matches with metadata, the `by_type` breakdown and AI hints.
  */
 export async function searchObjects(
   model: DatabaseModel,
+  offeredTools: ReadonlySet<string>,
   query: string,
   types?: ObjectType[],
   schemas?: string[],
@@ -309,7 +243,9 @@ export async function searchObjects(
   signal?: AbortSignal,
 ) {
   const isRegex = mode === 'regex';
-  const normalizedQuery = isRegex ? { query, schemaHint: undefined } : normalizeSearchQueryInput(query);
+  const normalizedQuery = isRegex
+    ? { query, schemaHint: undefined }
+    : normalizeSearchQueryInput(query, { nodeMap: getModelNodeMap(model), schemas: [...new Set(model.nodes.map(n => n.schema))], identifierCaseSensitive: model.identifierCaseSensitive });
   if (normalizedQuery.schemaHint || normalizedQuery.query !== query.trim()) {
     onDebug?.(`[Normalize] tool=search_objects field=query from=${JSON.stringify(query)} to=${JSON.stringify(normalizedQuery.query)}${normalizedQuery.schemaHint ? ` schema_hint=${JSON.stringify(normalizedQuery.schemaHint)}` : ''}`);
   }
@@ -332,7 +268,7 @@ export async function searchObjects(
       return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) });
     }
   }
-  const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
+  const listAllInSchemas = effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0;
 
   if (!isRegex && !listAllInSchemas) {
     const rejection = validateQuery(normalizedQuery.query);
@@ -401,17 +337,18 @@ export async function searchObjects(
       })),
   ];
 
-  const filterSchemaSet = activeFilter?.schemas?.length
-    ? new Set(activeFilter.schemas.map(s => schemaKey(s, model.identifierCaseSensitive)))
-    : null;
+  const admits = activeFilter ? userFilterAdmits(model, activeFilter) : null;
+  const hitIds = new Set([...nameHits, ...columnHits.map(h => h.node)].map(n => n.id));
+  const hitNodes = new Map(admits ? model.nodes.filter(n => hitIds.has(n.id)).map(n => [n.id, n]) : []);
   const typeCounts = new Map<string, number>();
   const taggedResults = results.map(r => {
     const row = r as Record<string, unknown>;
     const type = String(row.t);
     typeCounts.set(type, (typeCounts.get(type) ?? 0) + 1);
+    const node = hitNodes.get(String(row.id));
     return {
       ...r,
-      in_user_filter: filterSchemaSet ? filterSchemaSet.has(schemaKey((row.s as string) ?? '', model.identifierCaseSensitive)) : true,
+      in_user_filter: admits && node ? admits(node) : true,
     };
   });
   const byType = Object.fromEntries(
@@ -424,9 +361,7 @@ export async function searchObjects(
   const inScopeRows = exactNameRows.filter(r => r.in_user_filter);
   const resolvedIds = (inScopeRows.length > 0 ? inScopeRows : exactNameRows).map(r => String((r as Record<string, unknown>).id));
 
-  const visibleNodeCount = activeFilter
-    ? countVisibleNodes(model, activeFilter)
-    : model.nodes.length;
+  const visibleNodeCount = countVisibleNodes(model, activeFilter);
   const filterContext = {
     active_schemas: activeFilter?.schemas?.length ? activeFilter.schemas : null,
     active_types: activeFilter?.types?.length ? activeFilter.types : null,
@@ -456,43 +391,46 @@ export async function searchObjects(
         ? [...new Set(crossHits.map(n => n.schema))]
         : [];
       const schemaHint = foundSchemas.length > 0
-        ? ` "${effectiveQuery}" exists in [${foundSchemas.join(', ')}] — retry without schema filter or use search_ddl.`
+        ? ` "${effectiveQuery}" exists in [${foundSchemas.join(', ')}] — retry without schema filter${offeredTools.has('lineage_search_ddl') ? ' or use search_ddl' : ''}.`
         : '';
       return {
         ...base,
         ai_hint: `0 results in schemas [${appliedSchemaFilter.join(', ')}].${schemaHint}`,
       };
     }
+    const options = [
+      ...(offeredTools.has('lineage_search_ddl') ? ['try search_ddl for DDL body matches'] : []),
+      ...(isRegex ? [] : ['try regex mode']),
+      'broaden with fewer filters',
+    ];
+    const advice = options.length > 1 ? `${options.slice(0, -1).join(', ')}, or ${options[options.length - 1]}` : options[0];
     return {
       ...base,
-      ai_hint: `No results for "${effectiveQuery}". Try search_ddl for DDL body matches${isRegex ? '' : ', try regex mode'}, or broaden with fewer filters.`,
+      ai_hint: `No results for "${effectiveQuery}". ${advice[0].toUpperCase()}${advice.slice(1)}.`,
     };
   }
   return base;
 }
 
 
-/** Neighbours per direction one `lineage_get_object_detail` page carries; the rest is read with `cursor`. */
+/** Neighbours per direction one `lineage_get_object_detail` page carries; the rest via `cursor`. */
 const NEIGHBOR_PAGE = 25;
 
-/** Corrective hint on every per-id `not_found` rejection that names an object id — points the model at the search tool instead of leaving it to guess a corrected id. */
+/**
+ * Corrective hint on every per-id `not_found` rejection that names an object id — points the model
+ * at the search tool instead of leaving it to guess a corrected id.
+ */
 const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact object ID.';
 
 /**
- * Retrieves full metadata for a specific database object, including DDL, columns, and neighbors.
+ * Full metadata for one object (DDL, columns, neighbors): the primary drill-down tool. Upstream and
+ * downstream neighbors are paged with `cursor`; DDL and column lists always arrive in full on the
+ * first page.
  *
- * @remarks
- * This is the primary "drill-down" tool for the AI. It provides a high-fidelity view of a single node,
- * including its schema, name, type, and relationships. Upstream and downstream neighbors are paged
- * with `cursor`; DDL and column lists are always delivered in full on the first page.
- *
- * @param model - The full database model.
- * @param id - The unique identifier of the object (e.g., "schema.name").
- * @param store - Optional column store for high-fidelity metadata.
  * @param cursor - Neighbour page cursor from a previous call.
  * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `id` resolves to a different
- * canonical spelling.
- * @returns A detailed object representation or a "not_found" error.
+ *   canonical spelling.
+ * @returns The object representation or a "not_found" error.
  */
 export function getObjectDetail(
   model: DatabaseModel,
@@ -564,22 +502,15 @@ export function getObjectDetail(
 }
 
 /**
- * Retrieves a bounded BFS scope in one call, optionally including all DDL.
+ * A bounded BFS scope in one call, optionally with all DDL, so the AI can answer multi-object
+ * lineage asks without chaining per-node detail calls. With `include_ddl` the discovery scope
+ * budget guard is enforced before the payload is materialized. An omitted `include_ddl` attaches
+ * the bodies only when they fit; otherwise the reply carries `ddl_withheld: 'over_budget'`, the
+ * only signal that bodies exist but were held back, so the deeper analysis can be offered.
  *
- * @remarks
- * Discovery graph-scope helper: returns the scope as a bundle so the AI can
- * answer multi-object lineage asks without chaining per-node detail calls.
- * When `include_ddl` is true, the discovery scope budget guard is enforced
- * before materializing the payload.
- *
- * @param model - The database model.
- * @param graph - The graphology instance.
- * @param input - The scope bundle input payload.
- * @param budget - The calling turn's budget, which the discovery guard is measured against.
- * @param store - Optional column store for high-fidelity metadata.
+ * @param budget - The calling turn's budget the discovery guard is measured against.
  * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `origin` resolves to a
- * different canonical spelling.
- * @returns The requested scope bundle.
+ *   different canonical spelling.
  */
 export function getScopeBundle(
   model: DatabaseModel,
@@ -608,7 +539,7 @@ export function getScopeBundle(
 
   if (direction === 'bidirectional' && upstreamDepth === 0 && downstreamDepth === 0) {
     return makeRejection({
-      code: ASYMMETRIC_DEPTH_BOTH_ZERO,
+      code: REJECTION_CODES.asymmetricDepthBothZero,
       hint: 'upstream_depth and downstream_depth are both 0, which would return only the origin node with no neighbors. Set at least one side above 0, or call lineage_get_object_detail for a single object.',
     });
   }
@@ -678,7 +609,7 @@ export function getScopeBundle(
 
   const edges = model.edges
     .filter(e => scopeIds.has(e.source) && scopeIds.has(e.target))
-    .map(e => [e.source, e.target, edgeApiType(e.type, nodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
+    .map(e => [e.source, e.target, edgeApiType(e, nodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
 
   const edgeTypeMap = getModelEdgeTypeMap(model);
   const nodes = [...scopeIds]
@@ -711,11 +642,12 @@ export function getScopeBundle(
     upstream_depth: direction === 'bidirectional' ? (upstreamDepth ?? null) : undefined,
     downstream_depth: direction === 'bidirectional' ? (downstreamDepth ?? null) : undefined,
     include_ddl: effectiveIncludeDdl,
+    ...(includeDdl === undefined && ddlChars > 0 && !ddlFits ? { ddl_withheld: 'over_budget' as const } : {}),
     scope: {
       nodes: nodes.length,
       edges: edges.length,
       estimated_ddl_chars: ddlChars,
-      estimated_ddl_tokens: effectiveIncludeDdl ? estimateTokens(ddlChars) : 0,
+      estimated_ddl_tokens: estimateTokens(ddlChars),
     },
     nodes,
     edges,
@@ -724,30 +656,20 @@ export function getScopeBundle(
 
 
 /**
- * Returns structural metadata (columns + foreign keys) for one or more neighbor nodes.
+ * Structural metadata (columns with type/nullability, foreign keys) for neighbor nodes: the SM
+ * ACTIVE pruning-verification affordance, for when a focus procedure uses a wildcard reference
+ * (`SELECT * FROM dbo.FactSales`) and the neighbor's columns cannot be seen from its body, so the
+ * AI can decide prune vs. keep. Returns no DDL bodies: DDL is reserved for discovery and synthesis
+ * (`get_object_detail`); in SM hops the only DDL seen is the focus's `bb_ddl` from
+ * `buildHopFocusNode`.
  *
- * @remarks
- * SM ACTIVE pruning-verification affordance. When a focus procedure's DDL uses a
- * wildcard reference (e.g. `SELECT * FROM dbo.FactSales`), the AI cannot see the
- * neighbor's columns from the focus body alone; this tool lets it inspect them
- * to decide whether the neighbor carries mission-relevant data (prune vs. keep).
+ * The caller validates that ids are direct neighbors of the focus within the active BFS scope
+ * (`NavigationEngine.validateNeighborIds`).
  *
- * **Scope:** structural metadata only — columns with type/nullability, foreign-key
- * definitions. Deliberately does **not** return DDL bodies; DDL is reserved for
- * DISCOVERY (`get_object_detail`) and SYNTHESIS (`get_object_detail`) phases. In
- * SM hop-by-hop the only DDL the AI sees is the focus node's `bb_ddl`, delivered
- * by `buildHopFocusNode`.
- *
- * **Engine-side validation (caller's responsibility):** ids must be direct
- * neighbors of the current focus node AND within the active BFS scope. See
- * `NavigationEngine.validateNeighborIds`.
- *
- * @param model - Loaded database model.
  * @param ids - Canonical node ids that passed `NavigationEngine.validateNeighborIds`.
- * @param store - Optional column store for high-fidelity column data.
- * @returns `{ results: [...], total }` — one row per input id, columns and FKs only. `columns` is
- * always present, `[]` for an object with none (a procedure), so an empty answer reads as an answer.
- * @throws When an id is not a model node — a caller that skipped engine validation.
+ * @returns `{ results: [...], total }`, one row per id. `columns` is always present, `[]` for an
+ *   object with none (a procedure), so an empty answer reads as an answer.
+ * @throws When an id is not a model node (a caller that skipped engine validation).
  */
 export function getNeighborColumns(
   model: DatabaseModel,
@@ -778,20 +700,14 @@ export function getNeighborColumns(
 
 
 /**
- * Executes a structural graph analysis to identify hubs, islands, or longest paths.
+ * Structural graph analysis (hubs, islands, longest paths, cycles) with deterministic engine logic,
+ * so the AI can reason about topology and change-risk hotspots without retrieving every node.
  *
- * @remarks
- * This tool allows the AI to perform higher-level reasoning about the entire graph topology
- * without retrieving every node's metadata. It uses deterministic engine logic to find
- * architectural hotspots and change-risk areas.
- *
- * @param graph - The graphology instance.
- * @param type - The type of analysis to perform ('hubs', 'islands', 'longest_path', 'cycles').
- * @param budget - The calling turn's budget, which the discovery guard is measured against.
- * @param minDegree - Minimum degree for a node to be considered a hub.
- * @param maxSize - Maximum size for a connected component to be considered an island.
- * @param longestPathMinNodes - Minimum number of nodes for a path to be considered "long".
- * @returns A summary of the analysis results including grouped node IDs.
+ * @param type - Analysis to perform ('hubs', 'islands', 'longest_path', 'cycles').
+ * @param budget - The calling turn's budget the discovery guard is measured against.
+ * @param minDegree - Minimum degree for a hub.
+ * @param maxSize - Maximum component size for an island.
+ * @param longestPathMinNodes - Minimum node count for a path to count as "long".
  */
 export function runAnalysis(
   graph: Graph,
@@ -864,52 +780,43 @@ function toLineRanges(lines: number[]): string {
  */
 const MIN_SEARCH_DDL_ROW_CHARS = JSON.stringify({ id: '', name: '', type: '', line: 0, text: '', context: '' }).length;
 
-/** Hint on a located long line: the row is not served as text, the DDL read shows the line whole. */
+/** Hint on a located long line: the row is not served as text; the DDL read shows it whole. */
 const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_CHARS} characters, so no row shows them. Read the object's DDL with lineage_get_object_detail and go to the line number; match_offset is where the match starts within the line.`;
 
 /**
- * Searches the DDL/source code of scriptable objects with a regular expression.
+ * Searches the DDL of scriptable objects with a regular expression. The contract is grep's: a
+ * pattern in, every match out with object, 1-based line number, matched line and context. Nothing
+ * is sliced: an empty result is stated as a fact, an unusable pattern is an error naming the regex
+ * problem, and a result too large for the discovery budget hands off to the approval path instead
+ * of returning a partial list.
  *
- * @remarks
- * The contract is grep's, the shape models are trained on: a pattern in, every match out with its
- * object, 1-based line number, matched line and surrounding context. Nothing is sliced — an empty
- * result is stated as a fact, an unusable pattern is an error naming the regex problem, and a
- * result too large for the discovery budget hands off to the approval path rather than returning a
- * partial list.
+ * A hit inside a SQL comment carries `commented: true`; one inside an `IF`/`WHILE` block carries
+ * `enclosing_predicate` with the condition text. Marked, never filtered: a comment can hold the
+ * answer, and the few context lines a hit ships with cannot show the block or condition more than a
+ * line or two away.
  *
- * A hit whose match sits inside a SQL comment carries `commented: true`; an executable hit carries
- * nothing extra. Marked, never filtered — a comment can hold the answer, and the few context lines
- * a hit ships with cannot show the block it sits in.
+ * `by_object` is the one per-object home: each object with a hit, its `hits` total and, where
+ * anything is dead, `commented_hits` and the commented lines as ranges. Counts are served, not
+ * tallied from rows, since an answer composed by theme merges rows from several places. `objects`
+ * is this list's length. Additive: every hit stays in `results` with its own flag.
  *
- * A hit inside an `IF`/`WHILE` block carries `enclosing_predicate` with that condition's text; a hit
- * outside any such block carries nothing extra — the same window that hides a comment block also
- * hides a controlling condition sitting more than a line or two away.
+ * Matching is per whole line. A match on a line longer than `SEARCH_LINE_MAX_CHARS` is not served
+ * as a row but located in `searched.long_lines` (object id, line number, length, match offset, a
+ * hint naming the DDL read that shows it whole) in every result shape, empty and over-budget
+ * included; omitted when none is that long. Where the list would push the reply past the discovery
+ * budget it is stated as counts (`object_count`, `line_count`, `objects_omitted`) with a hint.
  *
- * `by_object` is the one per-object home: every object that produced a hit, with its `hits` total
- * and — where anything is dead — `commented_hits` and the commented lines as ranges. A per-row
- * value is read row by row, while an answer composed by theme merges rows from several places into
- * one statement, so the counts an answer states per object are served rather than tallied from the
- * rows. `objects` is this list's length, so the count and the
- * breakdown cannot disagree. Additive: every hit stays in `results` with its own flag.
- *
- * Matching is per line, over the whole line. A matching line longer than `SEARCH_LINE_MAX_CHARS`
- * is not served as a row: it is located in `searched.long_lines` — object id, line number, line
- * length and match offset, with a hint naming the DDL read that shows the line whole — in every
- * result shape, empty and over-budget included. Omitted when no matching line is that long. The
- * list is measured with the reply it ships in; where it would push that reply past the discovery
- * budget it is stated as counts (`object_count`, `line_count`, `objects_omitted`) with a hint instead.
- *
- * @param model - The database model.
- * @param query - The regex pattern.
- * @param budget - The calling turn's budget, which the discovery guard is measured against.
- * @param types - Optional filter for scriptable object types.
- * @param store - Optional column store for high-fidelity DDL.
- * @param onDebug - Optional sink for a debug line when `query` is rewritten, or the result is over budget.
- * @returns Every matching line with its object metadata, plus the per-object `by_object` counts, or
- * the empty/invalid/over-budget fact.
+ * @param offeredTools - The tools the current stage serves (`getAllowedLmToolNames`); a hint names
+ *   only these.
+ * @param budget - The calling turn's budget the discovery guard is measured against.
+ * @param onDebug - Optional sink for a debug line when `query` is rewritten or the result is over
+ *   budget.
+ * @returns Every matching line with object metadata plus `by_object` counts, or the
+ *   empty/invalid/over-budget fact.
  */
 export async function searchDdl(
   model: DatabaseModel,
+  offeredTools: ReadonlySet<string>,
   query: string,
   budget: TurnTokenBudget,
   types?: ('view' | 'procedure' | 'function')[],
@@ -1005,7 +912,9 @@ export async function searchDdl(
     objects,
     searched,
     results_omitted: true as const,
-    hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.',
+    hint: `The matches exceed the discovery token budget and were not inlined. ${offeredTools.has('lineage_start_exploration')
+      ? 'Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.'
+      : 'Narrow the pattern or restrict types[].'}`,
   }));
 
   const countAdmission = rowAdmission(scanned.total);

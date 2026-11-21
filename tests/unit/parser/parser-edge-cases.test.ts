@@ -7,9 +7,7 @@
  * is not a cross-database reference — and one failing must not conceal the rest.
  *
  * Uniform cases go through the `CASES` tables below; a case needing a bespoke assertion
- * gets its own `it`. `-- EXPECT`-annotated .sql fixtures under tests/fixtures/sql/targeted/
- * cover the same parser through tsql-complex.test.ts and are the cheaper place to add a
- * new construct — prefer a fixture unless the assertion cannot be expressed there.
+ * gets its own `it`.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -1187,12 +1185,12 @@ describe('a bracketed identifier is not a string literal', () => {
 
   it('an escaped bracket in a source name is captured, not the fragment before it', () => {
     const result = parseSqlBody('SELECT * FROM [dbo].[a]]b]');
-    expect(result.sources).toContain('[dbo].[a]b]');
+    expect(result.sources).toContain('[dbo].[a]]b]');
   });
 
   it('an escaped bracket in a target name is captured, not the fragment before it', () => {
     const result = parseSqlBody('INSERT INTO [dbo].[x]]y] SELECT 1');
-    expect(result.targets).toContain('[dbo].[x]y]');
+    expect(result.targets).toContain('[dbo].[x]]y]');
   });
 });
 

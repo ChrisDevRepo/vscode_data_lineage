@@ -11,15 +11,13 @@ interface SuggestionListProps {
   dropdownRef: Ref<HTMLDivElement>;
   className?: string;
   renderAction?: (node: AutocompleteNode) => ReactNode;
-  /** When true, skip absolute positioning classes (portal handles positioning). */
-  portal?: boolean;
-  /** Inline styles from Floating UI positioning. */
+  /** Inline styles from Floating UI positioning; the list renders inside a floating portal. */
   style?: CSSProperties;
   /** Nodes that exist in the model but are not visible in the current filtered view. */
   otherSuggestions?: AutocompleteNode[];
   /**
-   * Nodes in the working set that are currently collapsed inside a schema cluster.
-   * Selecting one uses the same search/navigation callback as other suggestions.
+   * Working-set nodes collapsed inside a schema cluster; selecting one uses the same
+   * search/navigation callback as other suggestions.
    */
   collapsedSuggestions?: AutocompleteNode[];
 }
@@ -71,11 +69,7 @@ function SuggestionRow({
   );
 }
 
-/**
- * Renders the keyboard-navigable autocomplete suggestion list.
- *
- * @returns The suggestion listbox, or `null` when all partitions are empty.
- */
+/** Keyboard-navigable autocomplete suggestion list; `null` when all partitions are empty. */
 export function SuggestionList({
   suggestions,
   selectedIndex,
@@ -84,7 +78,6 @@ export function SuggestionList({
   dropdownRef,
   className = 'w-full',
   renderAction,
-  portal = false,
   style,
   otherSuggestions = [],
   collapsedSuggestions = [],
@@ -97,7 +90,7 @@ export function SuggestionList({
     <div
       ref={dropdownRef}
       role="listbox"
-      className={`${portal ? 'z-50' : 'absolute top-full mt-1 z-30'} rounded-md shadow-lg overflow-y-auto ln-dropdown ${className}`}
+      className={`z-50 rounded-md shadow-lg overflow-y-auto ln-dropdown ${className}`}
       style={{ ...style, maxHeight: 320 }}
     >
       {showVisibleHeader && (

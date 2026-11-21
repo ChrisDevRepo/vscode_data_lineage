@@ -1,15 +1,14 @@
 /**
- * Executes active-hop submissions for the `lineage_submit_findings` tool.
- *
- * @remarks
- * Raw arguments are parsed once against the current hop's served contract, before id resolution
- * and internal conversion. Turn-lease validation and effect serialization remain in the registry.
+ * Executes active-hop submissions for the `lineage_submit_findings` tool. Raw arguments are parsed
+ * once against the current hop's served contract, before id resolution and internal conversion.
+ * Turn-lease validation and effect serialization stay in the registry.
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
-import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
+import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionFields } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
-import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
+import { combineToolRejections, makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
+import { buildRouteValidationRejection, routeDirectives } from '../../sm/smRouteValidation';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
@@ -21,10 +20,9 @@ import { type ToolServices, getModelNodeMap } from './toolServices';
 
 /**
  * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
- * `role_mixed` counts refs that pair an INDIRECT class with a DIRECT one.
- *
- * @param columnFlow - The hop's submitted `column_flow`; absent yields zero counts.
- * @returns The suffix for the `[Hop N]` log line.
+ * `role_mixed` counts refs pairing an INDIRECT class with a DIRECT one; zero when `column_flow` is
+ * absent. Returns the suffix for the `[Hop N]` log line.
+ * @internal
  */
 export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
   const refs = (columnFlow ?? []).flatMap(entry => entry.upstream_columns);
@@ -37,11 +35,8 @@ export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefin
 }
 
 /**
- * Validates and submits findings for the current exploration focus.
- *
- * @param input - Raw model-supplied tool input.
- * @param s - Host capabilities for the active tool session.
- * @returns The accepted-hop result, completion envelope, or structured rejection.
+ * Validates and submits findings for the current exploration focus; returns the accepted-hop
+ * result, completion envelope or structured rejection.
  */
 export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
@@ -54,12 +49,17 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
       const focus = engine.currentFocus;
       const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
-      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns);
+      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldFailed);
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
-        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+        const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+        const routes = engine.columnFlowFaults(input);
+        const rejection = routes.length > 0 ? combineToolRejections([schemaFault, buildRouteValidationRejection(routes)]) : schemaFault;
         const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
-        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
+        if (held) {
+          rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes)].filter(Boolean).join(' ');
+          rejection.held = heldSubmissionFields(held);
+        }
         return s.logAndReturn('lineage_submit_findings', rejection, input);
       }
       const rawInput: SubmitFindingsInputObject = parsed.data;

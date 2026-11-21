@@ -5,12 +5,9 @@ import { safeTraceStringify, type WireRecord } from './wireLog';
 import { markGitIgnored } from '../../utils/gitIgnoredDir';
 
 /**
- * One lifecycle record in the session-scoped AI diagnostic trace.
- *
- * Lifecycle variants contain no prompt, model text, tool argument/result, or
- * error prose. The same trace also contains explicitly marked wire records, including sanitized
- * provider diagnostics, but only after the user enables the diagnostic command for this extension
- * host session.
+ * One lifecycle record in the session-scoped AI diagnostic trace. Lifecycle variants carry no
+ * prompt, model text, tool argument/result or error prose; wire records do, but only after the user
+ * enables the diagnostic command for this extension host session.
  */
 export type RuntimeLifecycleRecord =
   | {
@@ -26,18 +23,8 @@ export type RuntimeLifecycleRecord =
       readonly runFingerprint: string;
       readonly status: 'ok' | 'error' | 'cancelled';
       /**
-       * Machine-readable stop reason behind a non-`ok` status (`no_progress`,
-       * `engine_error`, …).
-       *
-       * @remarks
-       * A turn that ends on a tool rejection carries that rejection's prose nowhere in the trace:
-       * rejection text reaches the wire only as the tool result replayed into the *next* request,
-       * and a terminal rejection has no next request. This enumerated reason — plus `errorCode`
-       * here and `issuePaths` on the `tool` record — is what makes such a turn diagnosable from the
-       * NDJSON alone, without moving any prose into a lifecycle record.
-       *
-       * Typed as `string` deliberately: it mirrors the graph's existing stop-reason channel rather
-       * than importing the agent layer's union into observability.
+       * Machine-readable stop reason behind a non-`ok` status (`no_progress`, `engine_error`, ...),
+       * typed `string` so observability does not import the agent layer's union.
        */
       readonly reason?: string;
       /** Stable machine-readable graph failure code, when the graph set one. */
@@ -47,12 +34,9 @@ export type RuntimeLifecycleRecord =
     }
   | {
       /**
-       * First record in every trace file: what produced it.
-       *
-       * @remarks
-       * The headless harness and the extension host write the same schema to the same filename
-       * pattern, so without this record a file cannot say whether it came from a live VS Code
-       * session or a test run — and only the former is valid production evidence.
+       * First record in every trace file: what produced it. The headless harness and the extension
+       * host write the same schema to the same filename pattern, so only this record says whether a
+       * file came from a live VS Code session (valid production evidence) or a test run.
        */
       readonly type: 'trace-open';
       readonly origin: TraceOrigin;
@@ -64,27 +48,15 @@ export type RuntimeLifecycleRecord =
       readonly runFingerprint: string;
       readonly seq: number;
       readonly phase: string;
-      /**
-       * Consent-card identifier this gate raised.
-       *
-       * @remarks
-       * The join key to the matching {@link RuntimeLifecycleRecord} `gate-resolution` row. Without
-       * it a raised gate and the action that answered it cannot be paired, and a gate the user
-       * could not resolve is indistinguishable in the NDJSON from one they simply ignored.
-       */
+      /** Consent-card identifier; the join key to the matching `gate-resolution` row. */
       readonly gateId?: string;
       readonly elapsedMs: number;
     }
   | {
       /**
-       * Outcome of one native consent-card action.
-       *
-       * @remarks
-       * Raised gates are recorded by the turn, but resolution happens in a VS Code command handler
-       * outside the turn's event stream, so it reaches the trace from the participant instead.
-       * Enumerated values only — the refusal *prose* stays in the debug log, matching the
-       * lifecycle-records-carry-no-prose contract above. `runFingerprint` is absent by design:
-       * lifecycle records are grouped by `requestId`, and the resolving command has no run scope.
+       * Outcome of one native consent-card action, written by the participant because the command
+       * handler runs outside the turn's event stream. Enumerated values only; no run scope, so no
+       * `runFingerprint`.
        */
       readonly type: 'gate-resolution';
       readonly requestId: string;
@@ -94,10 +66,7 @@ export type RuntimeLifecycleRecord =
       readonly outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed';
       /** Enumerated cause when `outcome` is `refused`; never free text. */
       readonly refusedBy?: 'gate_id_mismatch' | 'no_pending_gate';
-      /**
-       * When the action was received. The record's own `at` stamps an accepted approval only after
-       * the released turn finishes, so the pair separates decision wait from released work.
-       */
+      /** When the action was received; an accepted approval's `at` follows the released turn. */
       readonly decidedAt?: string;
     }
   | {
@@ -114,65 +83,28 @@ export type RuntimeLifecycleRecord =
       readonly runFingerprint: string;
       readonly seq: number;
       readonly phase: string;
+      /** Provider call id; absent for a rejection raised without a call. */
+      readonly callId?: string;
       readonly toolName: string;
-      /**
-       * Dispatch outcome.
-       *
-       * @remarks
-       * `gate` is not a failure: a consent gate returns through the same rejection envelope as a
-       * real rejection but is never charged against the semantic budget, so folding it into
-       * `rejected` overstates every rejection count derived from this trace.
-       */
+      /** Dispatch outcome; `gate` is a consent gate, not charged to the semantic budget. */
       readonly status: 'accepted' | 'rejected' | 'gate' | 'dispatch_error';
       readonly rejectionCode?: string;
-      /**
-       * Dotted field paths the rejection blamed, when it reported any.
-       *
-       * @remarks
-       * `rejectionCode` alone cannot distinguish two different rules that share a code — several
-       * `validation` rejections in one phase are otherwise indistinguishable in the NDJSON. These
-       * are the same bounded identifier paths the rejection carries as `issuePaths`, never prose, so the
-       * lifecycle-records-carry-no-prose contract above still holds.
-       */
+      /** Dotted field paths the rejection blamed, when any; identifiers, never prose. */
       readonly issuePaths?: readonly string[];
       readonly durationMs: number;
     };
 
-/**
- * Record accepted by the session-scoped AI diagnostic trace.
- *
- * @remarks
- * The wire half is the whole {@link WireRecord} union, so the per-generation `generation` row and
- * the verbatim `provider-raw` bodies are accepted here by construction rather than by a second
- * hand-maintained list that could drift from the emitting ports.
- */
+/** Record accepted by the trace: a lifecycle record or any {@link WireRecord}. */
 export type AiTraceRecord = RuntimeLifecycleRecord | WireRecord;
 
-/**
- * What produced a trace file.
- *
- * @remarks
- * `extension-host` is a live VS Code session — real user, real Copilot/provider traffic, valid as
- * production evidence. `headless-harness` is the internal live-provider harness, which runs the
- * production runtime as a plain Node process against a substituted model port: useful for
- * regression, never evidence about the shipped extension's transport behaviour.
- */
+/** What produced a trace file: a live `extension-host` session or the `headless-harness`. */
 export type TraceOrigin = 'extension-host' | 'headless-harness';
 
 /** Opt-in switches applied when the session trace is enabled. */
 export interface AiTraceOptions {
-  /**
-   * Producer stamped into the file's opening record. Defaults to `extension-host`.
-   */
+  /** Producer stamped into the opening record. Defaults to `extension-host`. */
   readonly origin?: TraceOrigin;
-  /**
-   * Captures full system-prompt text and verbatim provider request/response bodies.
-   *
-   * @remarks
-   * Off by default, and deliberately not a setting: verbose traces repeat the system prompt on
-   * every generation and carry whole provider payloads, so a long exploration writes megabytes.
-   * Callers turn it on for one diagnostic session when a hash is not enough to identify the input.
-   */
+  /** Captures full system-prompt text and verbatim provider request/response bodies. */
   readonly verbose?: boolean;
 }
 
@@ -180,13 +112,9 @@ export interface AiTraceOptions {
 export type AiTraceWriteFailureHandler = (error: unknown, firstFailure: boolean) => void;
 
 /**
- * Single NDJSON sink for AI diagnostics.
- *
- * The writer starts disabled. {@link enable} creates one session-specific path
- * under the supplied root's `lm-trace` directory; all later lifecycle and wire records are appended to
- * that file until the extension host is restarted. Writes are serialized and
- * the file is owner-readable only because wire records can contain database
- * identifiers, SQL, prompts, and model responses.
+ * Single NDJSON sink for AI diagnostics. Starts disabled; {@link enable} opens one session file
+ * under `<root>/lm-trace`. Writes are serialized and the file is owner-only (mode 0600) because
+ * wire records carry identifiers, SQL, prompts and model responses.
  */
 export class AiTraceWriter {
   private filePath: string | undefined;
@@ -201,12 +129,8 @@ export class AiTraceWriter {
   public constructor(private readonly onWriteFailure?: AiTraceWriteFailureHandler) {}
 
   /**
-   * Enables tracing for the current extension-host session.
+   * Enables tracing for this session; a repeat call returns the existing path.
    *
-   * Repeated calls return the existing path without reopening the file.
-   *
-   * @param logRoot - Root directory under which `lm-trace` is created.
-   * @param options - Capture switches; see {@link AiTraceOptions.verbose}.
    * @returns Absolute path of the session trace file.
    * @throws When the writer has already been closed.
    */
@@ -233,34 +157,20 @@ export class AiTraceWriter {
     return this.filePath !== undefined && !this.closed;
   }
 
-  /**
-   * Whether the enabled trace captures system-prompt text and verbatim provider bodies.
-   *
-   * @remarks
-   * False while the writer is disabled: emitters ask this to decide what to build, and building a
-   * verbose payload for a sink that will discard it is the one cost the default path must not pay.
-   */
+  /** Whether the enabled trace captures system-prompt text and verbatim provider bodies. */
   public isVerbose(): boolean {
     return this.verbose && this.isEnabled();
   }
 
-  /**
-   * Queues a lifecycle or wire record for append.
-   *
-   * @param record - Diagnostic record to serialize as one NDJSON line.
-   * @returns A promise that settles after the queued append, or immediately when disabled.
-   */
+  /** Queues a record for append; settles after the append, or immediately when disabled. */
   public write(record: AiTraceRecord): Promise<void> {
     if (!this.filePath || this.closed) return Promise.resolve();
     return this.enqueue(record, true);
   }
 
   /**
-   * Serializes one record onto the append chain.
-   *
-   * @param consumeOneShot - Whether a failure spends the once-per-session warn-level report. The
-   *   trace-open stamp passes `false` so a transient failure at enable time cannot demote every
-   *   later genuine append failure to debug level.
+   * Serializes one record onto the append chain. `consumeOneShot` is false for the trace-open stamp
+   * so a failure at enable time does not spend the once-per-session warn-level report.
    */
   private enqueue(record: AiTraceRecord, consumeOneShot: boolean): Promise<void> {
     const line = `${serializeRecord(record)}\n`;
@@ -274,18 +184,7 @@ export class AiTraceWriter {
     return write;
   }
 
-  /**
-   * Writes the lifecycle projection of a native turn event.
-   *
-   * Status and gate events are retained; content-bearing events are discarded.
-   *
-   * @param requestId - Native chat request identifier shared by records from the same turn.
-   * @param runFingerprint - Stable identifier for the active run.
-   * @param seq - Monotonic event sequence within the run.
-   * @param event - Native event to project.
-   * @param elapsedMs - Milliseconds elapsed since the run started.
-   * @returns A promise that settles after the projected record is written.
-   */
+  /** Writes the lifecycle projection of a turn event: status and gate events only. */
   public writeTurnEvent(
     requestId: string,
     runFingerprint: string,

@@ -304,10 +304,9 @@ describe('model search', () => {
 /**
  * A match inside a SQL comment is marked.
  *
- * The reported context is a 3-line window, so a match deep inside a block comment arrived
- * indistinguishable from live code: three answers described commented-out SQL as running behaviour.
- * The marker is additive — `commented` is set only when true, and never filters a hit, because two
- * of that same answer's correct facts came from inside a comment.
+ * The reported context is a 3-line window, so a match deep inside a block comment is otherwise
+ * indistinguishable from live code. The marker is additive: `commented` is set only when true and
+ * never filters a hit, because a correct fact can come from inside a comment.
  */
 describe('model search — commented matches', () => {
   /** Runs `pattern` over one body and returns `[line, commented]` for every hit, in order. */

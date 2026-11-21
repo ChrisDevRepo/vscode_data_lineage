@@ -5,22 +5,10 @@ import 'monaco-editor/languages/definitions/sql/register';
 import 'monaco-editor/features/folding/register';
 import type * as Monaco from 'monaco-editor';
 import type { LineageNode } from '../engine/types';
+import { getMonacoTheme } from './monacoTheme';
 
 /** Configures the React loader with the core editor and SQL tokenizer only. */
 loader.config({ monaco: monacoEditor });
-
-/**
- * Maps the current VS Code theme kind to a corresponding Monaco Editor theme.
- *
- * @returns The matching Monaco theme identifier.
- */
-function getMonacoTheme(): string {
-  const kind = document.body.getAttribute('data-vscode-theme-kind');
-  if (kind === 'vscode-high-contrast') return 'hc-black';
-  if (kind === 'vscode-high-contrast-light') return 'hc-light';
-  if (kind === 'vscode-dark') return 'vs-dark';
-  return 'vs';
-}
 
 interface MonacoSqlViewProps {
   /** The SQL lineage node containing the DDL script to display. */
@@ -29,9 +17,7 @@ interface MonacoSqlViewProps {
   findQuery?: string;
 }
 
-/**
- * Renders read-only SQL with VS Code theme synchronization and search decorations.
- */
+/** Renders read-only SQL with VS Code theme synchronization and search decorations. */
 export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
@@ -46,12 +32,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     return () => observer.disconnect();
   }, []);
 
-  /**
-   * Applies inline highlights to the editor based on the provided search query.
-   *
-   * @param ed - The active Monaco editor instance.
-   * @param query - The search term to highlight.
-   */
+  /** Highlights the search `query` inline in editor `ed`. */
   function applyHighlights(ed: Monaco.editor.IStandaloneCodeEditor, query: string | undefined) {
     if (!decorationsRef.current) {
       decorationsRef.current = ed.createDecorationsCollection([]);
@@ -90,9 +71,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     };
   }, []);
 
-  /**
-   * Callback invoked when the Monaco editor instance has mounted successfully.
-   */
+  /** Callback invoked when the Monaco editor instance has mounted successfully. */
   function handleEditorMount(ed: Monaco.editor.IStandaloneCodeEditor) {
     editorRef.current = ed;
     contentListenerRef.current?.dispose();

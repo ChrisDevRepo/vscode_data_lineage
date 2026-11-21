@@ -1,87 +1,22 @@
 /**
  * @module ProfilingEngine
- * Handles SQL generation and result parsing for table-level data profiling.
- *
- * This module enables "Smart Profiling" by generating type-aware, single-pass SQL
- * aggregation queries. It supports multiple target platforms (SQL Server 2022+,
- * Azure SQL, Synapse, Fabric DWH) and provides:
- * - Statistical metrics (distinct counts, null percentages, completeness, uniqueness).
- * - Advanced profiling (min/max, mean, standard deviation, zero/empty counts).
- * - Automatic sampling logic for massive datasets.
- * - Platform-specific optimizations like `APPROX_COUNT_DISTINCT`.
+ * SQL generation and result parsing for table-level data profiling: type-aware, single-pass
+ * aggregation queries (distinct counts, null percentages, min/max, mean, standard deviation,
+ * zero/empty counts) for SQL Server 2022+, Azure SQL, Synapse and Fabric DWH, with automatic
+ * sampling and platform-specific optimizations such as `APPROX_COUNT_DISTINCT`.
  */
 
 import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
-import type { SimpleExecuteResult } from '../types/mssql';
+import type { SimpleExecuteResult } from '../types/database';
 import { quoteIdentifier } from '../utils/sql';
+import type { ColumnStats, TableStats } from './shared/bridgeContract';
 
-/**
- * Statistical profile for a single column.
- */
-export interface ColumnStats {
-  /** The original column name. */
-  name: string;
-  /** The SQL data type (e.g., 'nvarchar(50)'). */
-  type: string;
-  /** Number of unique values (may be approximated). */
-  distinctCount: number;
-  /** count of NULL values. */
-  nullCount: number | null;
-  /** Percentage of rows containing NULL. */
-  nullPercent: number | null;
-  /** Ratio of non-NULL values to total rows. */
-  completeness: number;
-  /** Ratio of distinct values to total rows. */
-  uniqueness: number;
-  /** Minimum value (formatted as string). */
-  min?: string;
-  /** Maximum value (formatted as string). */
-  max?: string;
-  /** Numeric mean. */
-  mean?: number;
-  /** Sample standard deviation (`STDEV`). */
-  stdDev?: number;
-  /** Minimum string length. */
-  minLength?: number;
-  /** Maximum string length. */
-  maxLength?: number;
-  /** Count of values equal to 0 (numeric only). */
-  zeroCount?: number;
-  /** Count of empty strings (string only). */
-  emptyCount?: number;
-  /** Whether profiling was skipped (e.g., for XML/LOB types). */
-  skipped?: boolean;
-}
-
-/**
- * Comprehensive statistical profile for a database table.
- */
-export interface TableStats {
-  /** Total rows evaluated (or sampled). */
-  rowCount: number;
-  /** Metrics for each individual column. */
-  columns: ColumnStats[];
-  /** Whether the data was sampled or fully scanned. */
-  sampled: boolean;
-  /** The percentage of the table that was sampled. */
-  samplePercent?: number;
-  /** Warnings encountered during parsing. */
-  warnings?: string[];
-}
-
-/**
- * Available profiling depths.
- */
 export type StatsMode = 'quick' | 'standard';
 
-/**
- * Internal classification for determining applicable aggregations.
- */
+/** Internal classification for determining applicable aggregations. */
 type ColCategory = 'integer' | 'decimal' | 'string' | 'datetime' | 'boolean' | 'uuid' | 'skip';
 
-/**
- * Mapping of SQL Server base types to profiling categories.
- */
+/** Mapping of SQL Server base types to profiling categories. */
 const TYPE_CATEGORIES: Record<string, ColCategory> = {
   int: 'integer', bigint: 'integer', smallint: 'integer', tinyint: 'integer',
   decimal: 'decimal', numeric: 'decimal', float: 'decimal', real: 'decimal',
@@ -97,27 +32,15 @@ const TYPE_CATEGORIES: Record<string, ColCategory> = {
   sql_variant: 'skip', timestamp: 'skip', rowversion: 'skip', sysname: 'skip',
 };
 
-/** String types whose `= ''` comparison also matches whitespace-only values, so emptiness is measured by byte length instead. */
+/** String types whose `= ''` also matches whitespace-only values, so emptiness uses byte length. */
 const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set(['varchar', 'nvarchar']);
 
-/**
- * Extracts the base type name from a complex type string (e.g., 'varchar(max)' -> 'varchar').
- *
- * @param typeStr - SQL type text to inspect.
- *
- * @returns Lowercase base type name with any length/precision suffix removed.
- */
+/** Lowercase base type name without length/precision ('varchar(max)' -> 'varchar'). @internal */
 export function extractBaseType(typeStr: string): string {
   return typeStr.replace(/\(.*$/, '').trim().toLowerCase();
 }
 
-/**
- * Classifies a column definition into a profiling category.
- *
- * @param col - Column definition to classify.
- *
- * @returns Profiling category for the column; `skip` for computed/unprofilable types.
- */
+/** Classifies a column definition into a profiling category; `skip` for computed/unprofilable. @internal */
 export function classifyColumn(col: ColumnDef): ColCategory {
   if (col.extra === 'COMPUTED') return 'skip';
   const base = extractBaseType(col.type);
@@ -127,53 +50,39 @@ export function classifyColumn(col: ColumnDef): ColCategory {
 const qi = quoteIdentifier;
 
 /**
- * Result-column alias of one aggregate of the column at `index` in the profiled column list.
- * Positional, so the alias length is independent of the column name (an identifier is at most
- * 128 characters) and two columns can never share an alias.
+ * Result-column alias of one aggregate of the column at `index`. Positional, so the alias length is
+ * independent of the column name (an identifier is at most 128 characters) and two columns never
+ * share an alias.
  */
 function aggregateAlias(index: number, suffix: string): string {
   return `c${index}_${suffix}`;
 }
 
-/** Largest magnitude a float column may hold for AVG and STDEV to stay inside the float range (the variance squares each value). */
+/** Largest magnitude a float column may hold for AVG/STDEV to stay in range (variance squares). */
 const FLOAT_MOMENT_LIMIT = '1E+150';
 
 /**
- * Builds a mean or standard-deviation aggregate over a float column that cannot raise an
- * arithmetic overflow: values beyond {@link FLOAT_MOMENT_LIMIT} are left out of the aggregate and
- * their presence turns the statistic into NULL, which the reader reports as absent.
+ * Builds a mean or standard-deviation aggregate over a float column that cannot raise an arithmetic
+ * overflow: values beyond {@link FLOAT_MOMENT_LIMIT} are left out and their presence turns the
+ * statistic into NULL, which the reader reports as absent.
  */
 function floatMomentFragment(aggregate: 'AVG' | 'STDEV', qn: string, alias: string): string {
   const inRange = `CASE WHEN ABS(${qn}) <= ${FLOAT_MOMENT_LIMIT} THEN ${qn} END`;
   return `CASE WHEN MAX(ABS(${qn})) > ${FLOAT_MOMENT_LIMIT} THEN NULL ELSE ${aggregate}(${inRange}) END AS ${alias}`;
 }
 
-/**
- * Pair of column name and its generated SQL aggregation fragments.
- */
+/** Pair of column name and its generated SQL aggregation fragments. */
 export interface ColumnAggregation {
-  /**
-   * Column name represented by this aggregation bucket.
-   */
   colName: string;
-  /**
-   * Expression fragments collected for the column.
-   */
   fragments: string[];
-  /**
-   * Derived aggregation category for the column.
-   */
   category: ColCategory;
 }
 
 /**
- * Generates SQL aggregation fragments for a set of columns based on the requested mode.
+ * Generates SQL aggregation fragments for a set of columns for the requested mode.
  *
- * @param cols - Columns to profile.
  * @param useApprox - Whether to use faster `APPROX_COUNT_DISTINCT`.
- * @param mode - The depth of profiling ('quick' or 'standard').
- * @param maxColumns - Budget for total columns to profile in a single pass.
- * @returns Array of column aggregations.
+ * @param maxColumns - Budget for total columns profiled in a single pass.
  */
 export function buildColumnAggregations(
   cols: ColumnDef[],
@@ -237,20 +146,16 @@ export function buildColumnAggregations(
   return result;
 }
 
-/** Result column that carries the number of rows a `TABLESAMPLE` query actually read. */
+/** Result column that carries the number of rows a `TABLESAMPLE` query actually read. @internal */
 export const SAMPLE_ROWS_ALIAS = '__rows';
 
 /**
- * Assembles the full profiling SELECT statement with optional sampling.
+ * Assembles the full profiling SELECT with optional sampling.
  *
- * @param schema - Target schema.
- * @param tableName - Target table.
- * @param aggregations - Pre-computed column aggregations.
  * @param engineEdition - SQL Server engine edition for platform-specific sampling.
  * @param rowCount - Known total row count.
- * @param sampleThreshold - Threshold to trigger sampling.
+ * @param sampleThreshold - Row count above which sampling applies.
  * @param sampleSize - Target row count for the sample.
- * @returns Complete T-SQL profiling query.
  */
 export function buildProfilingQuery(
   schema: string,
@@ -284,21 +189,12 @@ export function buildProfilingQuery(
   return `SELECT ${topClause}${sampleRowsAgg}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
 }
 
-/**
- * Bracket-quotes and escapes a string for use in dynamic SQL literals.
- */
+/** Bracket-quotes and escapes a string for use in dynamic SQL literals. */
 function qiStr(name: string): string {
   return qi(name).replace(/'/g, "''");
 }
 
-/**
- * Generates an efficient row count query using `sys.partitions`.
- *
- * @param schema - Schema name to query.
- * @param tableName - Table name to query.
- *
- * @returns T-SQL statement summing `sys.partitions` rows for the heap/clustered index.
- */
+/** Row-count query summing `sys.partitions` rows for the heap/clustered index. */
 export function buildRowCountQuery(schema: string, tableName: string): string {
   return `SELECT SUM(p.rows) AS row_count
 FROM sys.partitions p
@@ -306,26 +202,16 @@ WHERE p.object_id = OBJECT_ID(N'${qiStr(schema)}.${qiStr(tableName)}')
   AND p.index_id IN (0, 1)`;
 }
 
-/**
- * Calculates the required sampling percentage for `TABLESAMPLE`.
- *
- * @param sampleSize - Requested sample size.
- * @param rowCount - Known row count.
- *
- * @returns Sampling percentage in `[1, 100]`; 100 when the row count is unknown or zero.
- */
+/** Sampling percentage for `TABLESAMPLE`, in `[1, 100]`; 100 when the row count is unknown or 0. */
 export function computeSamplePercent(sampleSize: number, rowCount: number): number {
   if (rowCount <= 0) return 100;
   return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
 }
 
 /**
- * Formats a raw database datetime string into a compact, UI-friendly format.
- *
- * @param raw - Raw input value to normalize.
- *
- * @returns Date-only string when the time part is midnight, otherwise `date hh:mm`;
- * non-datetime input is returned unchanged.
+ * Formats a raw database datetime string compactly: date only when the time is midnight, otherwise
+ * `date hh:mm`; non-datetime input is returned unchanged.
+ * @internal
  */
 export function compactDate(raw: string): string {
   if (!raw || raw === 'NULL') return raw;
@@ -360,27 +246,19 @@ const TYPE_BADGE_LABELS: Record<string, string> = {
   sql_variant: 'VAR', timestamp: 'TS', rowversion: 'TS', sysname: 'STR',
 };
 
-/**
- * Returns a 3-4 letter badge label for a SQL type.
- *
- * @param typeStr - SQL type text to inspect.
- *
- * @returns Known badge label for the base type, else the first 4 letters uppercased.
- */
+/** 3-4 letter badge label for a SQL type: its base type's known label, else its first 4 letters. */
 export function typeBadgeLabel(typeStr: string): string {
   const base = extractBaseType(typeStr);
   return TYPE_BADGE_LABELS[base] ?? base.toUpperCase().slice(0, 4);
 }
 
 /**
- * Parses the single-row result from a profiling query into structured statistics.
+ * Parses the single-row result of a profiling query into structured TableStats. A column without
+ * an aggregate in the row (skipped type or over the `maxColumns` budget) is marked `skipped`.
  *
  * @param row - The raw relational result row.
- * @param cols - Column definitions of the table.
- * @param rowCount - The evaluated row count.
  * @param sampled - Whether sampling was used.
  * @param samplePercent - Percentage of rows sampled.
- * @returns Structured TableStats.
  */
 export function parseProfilingResult(
   row: Record<string, string>,
@@ -409,7 +287,7 @@ export function parseProfilingResult(
     const cat = classifyColumn(col);
     const isNullable = col.nullable === 'NULL';
 
-    if (cat === 'skip') {
+    if (cat === 'skip' || row[aggregateAlias(index, 'd')] === undefined) {
       columns.push({
         name: col.name,
         type: col.type,
@@ -471,8 +349,6 @@ export function parseProfilingResult(
  * Turns the single row of a profiling query into the name → value map {@link parseProfilingResult}
  * reads. A NULL cell is left out, so an aggregate over no values (MIN of an all-NULL column) is
  * absent rather than the text `NULL`.
- *
- * @param result - The profiling query result; only the first row is read.
  */
 export function profilingRowFromResult(result: SimpleExecuteResult): Record<string, string> {
   const row: Record<string, string> = {};

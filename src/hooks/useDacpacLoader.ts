@@ -1,37 +1,29 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig } from '../engine/types';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame, type ConnectionProviderId } from '../engine/shared/bridgeContract';
+import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../engine/types';
 
-/**
- * Represents a status notification displayed in the UI during project loading or processing.
- */
-export type StatusMessage = {
+/** Status notification shown during project loading or processing. */
+type StatusMessage = {
   /** The descriptive text of the status message. */
   text: string;
   /** The semantic type of the message, affecting UI styling (color, icons). */
   type: 'info' | 'success' | 'warning' | 'error';
 };
 
-/**
- * The source context currently being loaded.
- */
-export type LoadingContext = 'dacpac' | 'database' | null;
+/** The source context currently being loaded. */
+type LoadingContext = 'dacpac' | 'database' | null;
 
 /**
- * The full state and action set managed by the project loader hook.
- *
- * @remarks
- * This interface defines the bridge between the React frontend and the VS Code
- * extension host for all data extraction and project lifecycle events.
+ * State and actions of the project loader hook, bridging the webview and the extension host for
+ * extraction and project lifecycle events.
  */
 export interface DacpacLoaderState {
   /** The fully extracted database model (Phase 2 result). */
   model: DatabaseModel | null;
   /** The lightweight schema preview (Phase 1 result). */
   schemaPreview: SchemaPreview | null;
-  /** The set of schemas selected by the user for extraction. */
   selectedSchemas: Set<string>;
   /** Whether an extraction or connection process is active. */
   isLoading: boolean;
@@ -43,54 +35,37 @@ export interface DacpacLoaderState {
   filePath: string | null;
   /** The current status message to show in the UI. */
   status: StatusMessage | null;
-  /** Whether the selected connection provider can open live connections. */
-  mssqlAvailable: boolean | null;
-  /** The connection provider the extension reported, or `null` before the first status message. */
-  connectionProvider: ConnectionProviderId | null;
-  /** Switches `dataLineageViz.database.connectionProvider` to the built-in provider. */
-  switchToBuiltInConnection: () => void;
   /** Whether the project should immediately visualize upon load (e.g., demo or restore). */
   pendingAutoVisualize: boolean;
   /** Whether the UI should transition to the graph view. */
   pendingVisualize: boolean;
   /** Whether the currently loaded model is the AdventureWorks demo. */
   isDemo: boolean;
+  /** The saved project the last `dacpac-model` named as its source; null when it named none. */
+  projectId: string | null;
   /** Triggers the VS Code file picker to open a .dacpac. */
   openFile: () => void;
   /** Resets the internal loader state to the starting screen. */
   resetToStart: () => void;
-  /** Loads an existing project by its unique ID. */
   loadProject: (id: string) => void;
   /** Loads the built-in demo project. */
   loadDemo: () => void;
-  /** Triggers the MSSQL connection picker flow. */
   connectToDatabase: () => void;
-  /** Aborts the current loading process. */
+  /** Aborts the current load: tells the host to stop and drops any result it still posts. */
   cancelLoading: () => void;
-  /** Clears the auto-visualize trigger flag. */
   clearAutoVisualize: () => void;
-  /** Clears the transition trigger flag. */
   clearPendingVisualize: () => void;
   /** Starts the Phase 2 extraction for the selected schemas. */
-  visualize: (selectedSchemas: Set<string>, projectName?: string) => void;
-  /** Toggles a schema's selection status. */
+  visualize: (selectedSchemas: Set<string>, projectName?: string, projectId?: string) => void;
   toggleSchema: (name: string) => void;
-  /** Selects all available schemas in a list. */
   selectAllSchemas: (names: string[]) => void;
-  /** Deselects all available schemas in a list. */
   clearAllSchemas: (names: string[]) => void;
 }
 
 /**
- * Orchestrates the project loading lifecycle: from file picking to full lineage extraction.
- *
- * @remarks
- * Two-phase extraction for both DACPACs and live databases: Phase 1 shows a schema selector,
- * Phase 2 does the full DDL parse and graph build. Communicates with the extension host via
- * `postMessage`.
- *
- * @param onConfigReceived - Callback triggered when the extension host delivers updated configuration.
- * @returns The project loader state and interactive actions.
+ * Orchestrates the project load lifecycle through `postMessage` with the host. Extraction is
+ * two-phase for DACPACs and live databases: a schema selector, then the full DDL parse and graph
+ * build.
  */
 export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => void): DacpacLoaderState {
   const vscodeApi = useVsCode();
@@ -102,15 +77,25 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [fileName, setFileName] = useState<string | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusMessage | null>(null);
-  const [mssqlAvailable, setMssqlAvailable] = useState<boolean | null>(null);
-  const [connectionProvider, setConnectionProvider] = useState<ConnectionProviderId | null>(null);
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
+  const projectIdRef = useRef<string | null>(null);
   /**
-   * Status auto-clear policy: transient info messages (progress, connecting, loading) clear 6 s
-   * after loading ends; success messages carry the load summary, and warnings and errors need the
-   * user's attention, so those stay until the next status replaces them.
+   * The last load this webview sent, and whether the user cancelled it. A result naming another
+   * load or the cancelled one is dropped; with no load sent yet (fresh webview after reload) or a
+   * result naming none, every result applies.
+   */
+  const loadRef = useRef<{ id: string | null; cancelled: boolean }>({ id: null, cancelled: false });
+  /** Names a new load; the id travels on the request and comes back on its results. */
+  const beginLoad = useCallback((): string => {
+    const id = crypto.randomUUID();
+    loadRef.current = { id, cancelled: false };
+    return id;
+  }, []);
+  /**
+   * Status auto-clear: transient info messages (progress, connecting, loading) clear 6 s after
+   * loading ends; success, warning and error messages stay until the next status replaces them.
    */
   useEffect(() => {
     if (status && status.type === 'info' && !isLoading) {
@@ -151,16 +136,12 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, event.data);
-      if (!frame.ok) {
-        if (frame.reason === 'version') {
-          window.vscode?.postMessage({
-            type: 'error',
-            error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
-          });
-        }
-        return;
-      }
+      // `App` listens to the same frames and reports an invalid one; reporting it here too would show two toasts.
+      if (!frame.ok) return;
       const msg = frame.data;
+
+      const { id: sentId, cancelled } = loadRef.current;
+      if ('loadId' in msg && msg.loadId !== undefined && sentId !== null && (msg.loadId !== sentId || cancelled)) return;
 
       const applyConfig = (raw: Partial<ExtensionConfig>) => {
         onConfigReceived({
@@ -181,12 +162,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         setIsLoading(false);
         setLoadingContext(null);
         setStatus({ text: 'Project file is no longer available.', type: 'error' });
-        return;
-      }
-
-      if (msg.type === 'mssql-status') {
-        setMssqlAvailable(msg.available);
-        setConnectionProvider(msg.provider ?? null);
         return;
       }
 
@@ -215,6 +190,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
       if (msg.type === 'dacpac-model') {
         isDemoRef.current = msg.isDemo === true;
+        projectIdRef.current = msg.projectId ?? null;
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
         setSchemaPreview(null);  // clear Phase 1 state once Phase 2 model arrives
@@ -239,6 +215,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       }
 
       if (msg.type === 'db-model') {
+        projectIdRef.current = msg.projectId ?? null;
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
         applyModel(msg.model as DatabaseModel, name);
@@ -258,29 +235,28 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
     window.addEventListener('message', handler);
     vscodeApi.postMessage({ type: 'ready' });
-    vscodeApi.postMessage({ type: 'check-mssql' });
     return () => window.removeEventListener('message', handler);
   }, [onConfigReceived, applyModel, applySchemaPreview, vscodeApi]);
 
-  const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
+  const visualize = useCallback((schemas: Set<string>, projectName?: string, projectId?: string) => {
     const named = projectName ? { projectName } : {};
     if (schemaPreview !== null && model === null && loadingContext !== 'database') {
-      vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named });
+      vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named, ...(projectId ? { projectId } : {}), loadId: beginLoad() });
       setIsLoading(true);
       setLoadingContext('dacpac');
       return;
     }
 
-    vscodeApi.postMessage({ type: 'db-visualize', schemas: Array.from(schemas), ...named });
+    vscodeApi.postMessage({ type: 'db-visualize', schemas: Array.from(schemas), ...named, loadId: beginLoad() });
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Loading selected schemas from database...', type: 'info' });
-  }, [vscodeApi, schemaPreview, model, loadingContext]);
+  }, [vscodeApi, beginLoad, schemaPreview, model, loadingContext]);
 
   const openFile = useCallback(() => {
     isDemoRef.current = false;
-    vscodeApi.postMessage({ type: 'open-dacpac' });
-  }, [vscodeApi]);
+    vscodeApi.postMessage({ type: 'open-dacpac', loadId: beginLoad() });
+  }, [vscodeApi, beginLoad]);
 
   const resetToStart = useCallback(() => {
     setModel(null);
@@ -300,34 +276,35 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     setIsLoading(true);
     setStatus(null);
     setLoadingContext(null); // set when response message type is known
-    vscodeApi.postMessage({ type: 'load-project', id });
-  }, [vscodeApi]);
+    vscodeApi.postMessage({ type: 'load-project', id, loadId: beginLoad() });
+  }, [vscodeApi, beginLoad]);
 
   const loadDemo = useCallback(() => {
     isDemoRef.current = true;
     setIsLoading(true);
     setLoadingContext('dacpac');
     setStatus(null);
-    vscodeApi.postMessage({ type: 'load-demo' });
-  }, [vscodeApi]);
+    vscodeApi.postMessage({ type: 'load-demo', loadId: beginLoad() });
+  }, [vscodeApi, beginLoad]);
 
   const connectToDatabase = useCallback(() => {
     isDemoRef.current = false;
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Connecting to database...', type: 'info' });
-    vscodeApi.postMessage({ type: 'db-connect' });
-  }, [vscodeApi]);
-
-  const switchToBuiltInConnection = useCallback(() => {
-    vscodeApi.postMessage({ type: 'use-builtin-connection' });
-  }, [vscodeApi]);
+    vscodeApi.postMessage({ type: 'db-connect', loadId: beginLoad() });
+  }, [vscodeApi, beginLoad]);
 
   const cancelLoading = useCallback(() => {
+    const { id } = loadRef.current;
+    if (id) {
+      loadRef.current = { id, cancelled: true };
+      vscodeApi.postMessage({ type: 'cancel-load', loadId: id });
+    }
     setIsLoading(false);
     setLoadingContext(null);
     setStatus(null);
-  }, []);
+  }, [vscodeApi]);
 
   const clearAutoVisualize = useCallback(() => {
     setPendingAutoVisualize(false);
@@ -360,7 +337,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   return {
     model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, filePath, status,
-    mssqlAvailable, connectionProvider, switchToBuiltInConnection, pendingAutoVisualize, pendingVisualize, isDemo: isDemoRef.current,
+    pendingAutoVisualize, pendingVisualize, isDemo: isDemoRef.current, projectId: projectIdRef.current,
     openFile, resetToStart, loadProject, loadDemo, connectToDatabase, cancelLoading,
     clearAutoVisualize, clearPendingVisualize, visualize,
     toggleSchema, selectAllSchemas, clearAllSchemas,

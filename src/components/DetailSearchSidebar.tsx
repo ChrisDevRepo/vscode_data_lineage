@@ -5,56 +5,38 @@ import { searchBodyScripts, searchColumns } from '../utils/modelSearch';
 import { highlightText } from './highlight';
 
 /** Search projection containing the node fields used by the detail sidebar. */
-export interface DetailSearchNode {
-  /** The unique ID of the object. */
+interface DetailSearchNode {
   id: string;
-  /** The human-readable name of the object. */
   name: string;
-  /** The schema the object belongs to. */
   schema: string;
-  /** The classification of the object. */
   type: ObjectType;
   /** The raw SQL body script (stored procedure definition, view definition, etc.). */
   bodyScript?: string;
-  /** The array of column definitions for the object. */
   columns?: ColumnDef[];
 }
 
 interface DetailSearchSidebarProps {
-  /** Callback triggered to close the sidebar. */
   onClose: () => void;
-  /** The complete set of searchable nodes. */
   allNodes: DetailSearchNode[];
-  /**
-   * Callback triggered when a search result is clicked.
-   * @param nodeId - The ID of the target node.
-   * @param searchTerm - The term that was searched for.
-   */
+  /** Called when a search result is clicked, with the target node ID and the searched term. */
   onResultClick: (nodeId: string, searchTerm: string) => void;
   /**
-   * IDs of nodes currently rendered in the graph after all active filters.
-   * When provided, results whose node ID is absent are rendered dimmed with a
-   * "Not in Current Filter" separator — matching Quick Jump behavior.
+   * IDs of nodes rendered in the graph after all filters. When provided, results whose node is
+   * absent render dimmed under a "Not in Current Filter" separator, as in Quick Jump.
    */
   visibleNodeIds?: Set<string>;
   /**
-   * IDs of filter-visible nodes that are currently collapsed into a schema cluster.
-   * These results remain actionable and expand their schema when selected.
+   * IDs of filter-visible nodes collapsed into a schema cluster; their results stay actionable and
+   * expand the schema when selected.
    */
   collapsedSchemaNodeIds?: Set<string>;
 }
 
-/**
- * Internal representation of a search match.
- */
 interface SearchResult {
-  /** The node that matched the query. */
   node: DetailSearchNode;
-  /** A textual snippet containing the match. */
   snippet: string;
 }
 
-/** Props for a single Detail Search result row. */
 interface ResultRowProps {
   result: SearchResult;
   term: string;
@@ -65,7 +47,6 @@ interface ResultRowProps {
   clustered?: boolean;
 }
 
-/** Display labels for grouped search results. */
 const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
   procedure: 'Procedures',
   view: 'Views',
@@ -77,11 +58,8 @@ const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
 const BODY_TYPES = new Set<ObjectType>(['procedure', 'view']);
 
 /**
- * Body matches this panel renders for one term.
- *
- * @remarks
- * A display cap belonging to this panel, stated here rather than defaulted inside
- * `searchBodyScripts` — the AI's grep tool shares that function and must never be capped.
+ * Body matches this panel renders for one term. A display cap of this panel, stated here rather
+ * than defaulted in `searchBodyScripts`, which the AI's grep tool shares and must never cap.
  */
 const BODY_RESULT_LIMIT = 100;
 
@@ -97,13 +75,7 @@ function groupByType(items: SearchResult[]): Map<string, SearchResult[]> {
   return map;
 }
 
-/**
- * Wraps every occurrence of `term` within `snippet` with a `<mark>` element.
- *
- * @param snippet - The text to annotate.
- * @param term - The search term to highlight (case-insensitive).
- * @returns An array of strings and `<mark>` React nodes.
- */
+/** Wraps every case-insensitive occurrence of `term` in `snippet` with a `<mark>` element. */
 function highlightSnippet(snippet: string, term: string): React.ReactNode[] {
   if (!term) return [snippet];
   const parts: React.ReactNode[] = [];
@@ -123,11 +95,8 @@ function highlightSnippet(snippet: string, term: string): React.ReactNode[] {
 }
 
 /**
- * Single Detail Search result row.
- *
- * @remarks
- * When `clustered` is true, the row is in filter scope but collapsed into a schema cluster.
- * When `dimmed` is true, the row is outside the active graph filter.
+ * Single Detail Search result row. `clustered`: in filter scope but collapsed into a schema
+ * cluster. `dimmed`: outside the active graph filter.
  */
 function ResultRow({ result, term, onResultClick, dimmed = false, clustered = false }: ResultRowProps) {
   return (
@@ -163,15 +132,10 @@ function ResultRow({ result, term, onResultClick, dimmed = false, clustered = fa
 }
 
 /**
- * A specialized sidebar component for performing full-text searches across object definitions
- * and column metadata.
- *
- * @remarks
- * Searches within stored procedure / view body scripts and column names. Results from nodes
- * outside the active graph filter are rendered dimmed with a "Not in Current Filter" separator
- * when `visibleNodeIds` is supplied — consistent with Quick Jump behavior.
- *
- * Performance: `useDeferredValue` prevents UI lock during heavy searches.
+ * Sidebar for full-text search across object definitions and column metadata: stored procedure /
+ * view body scripts and column names. With `visibleNodeIds`, results outside the active filter
+ * render dimmed under a "Not in Current Filter" separator, as in Quick Jump. `useDeferredValue`
+ * keeps the UI responsive during heavy searches.
  */
 export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   onClose,

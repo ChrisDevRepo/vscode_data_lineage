@@ -20,7 +20,7 @@
 
 import JSZip from 'jszip';
 import type { DatabaseModel, ObjectType } from '../../../src/engine/types';
-import { generateDwhModel, type DwhProfile } from './dwhGraphGenerator';
+import { generateDwhModel } from './dwhGraphGenerator';
 
 /** Parameters for {@link buildSyntheticDacpac}. */
 export interface SyntheticDacpacParams {
@@ -36,8 +36,6 @@ export interface SyntheticDacpacParams {
   externalRefCount?: number;
   /** Seed forwarded to {@link generateDwhModel}; defaults to a fixed constant for reproducibility. */
   seed?: number;
-  /** Realism tuning forwarded to {@link generateDwhModel}, beyond `schemaCount`/`externalRefCount`. */
-  profile?: Omit<DwhProfile, 'schemaCount' | 'externalRefCount'>;
 }
 
 /** Ground truth a test asserts an extraction result against. */
@@ -77,7 +75,7 @@ function xmlEscape(value: string): string {
  * @param model - The generated model to serialize.
  * @returns The `model.xml` document text and the real (non-external) declared-dependency edge count.
  */
-export function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount: number } {
+function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount: number } {
   const byId = new Map(model.nodes.map(n => [n.id, n]));
 
   const externalUrlByCarrier = new Map<string, string>();
@@ -130,14 +128,14 @@ export function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edg
  * exercise the actual DACPAC extraction path rather than a hand-built `DatabaseModel`.
  */
 export async function buildSyntheticDacpac(params: SyntheticDacpacParams): Promise<SyntheticDacpacResult> {
-  const { objectCount, schemaCount, externalRefCount = 0, seed = DEFAULT_SEED, profile } = params;
+  const { objectCount, schemaCount, externalRefCount = 0, seed = DEFAULT_SEED } = params;
   if (schemaCount < 1) throw new Error('schemaCount must be at least 1');
   if (externalRefCount > objectCount) throw new Error('externalRefCount cannot exceed objectCount');
 
   const { model } = generateDwhModel({
     objectCount,
     seed,
-    profile: { ...profile, schemaCount, externalRefCount },
+    profile: { schemaCount, externalRefCount },
   });
 
   const { xml, edgeCount } = serializeDwhModelToXml(model);

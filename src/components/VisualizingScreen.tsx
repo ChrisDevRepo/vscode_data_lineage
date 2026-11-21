@@ -4,23 +4,19 @@ import { Tooltip } from './ui/Tooltip';
 import { Spinner } from './ui/Spinner';
 
 /**
- * Represents the major phases of the application initialization and graph generation process.
- * - 'load': Extracting metadata from DACPAC or live database.
- * - 'parse': Building the internal graph and model structure.
- * - 'generate': Calculating layout and preparing the visual canvas.
+ * Phases of initialization and graph generation: 'load' extracts metadata from the DACPAC or live
+ * database, 'parse' builds the internal graph and model, 'generate' calculates layout and prepares
+ * the canvas.
  */
 export type LoadingPhase = 'load' | 'parse' | 'generate';
 
 interface VisualizingScreenProps {
-  /** The name or path of the data source currently being processed. */
   sourceName: string;
-  /** The current active phase of the loading process. */
   phase: LoadingPhase;
   /** Optional real-time progress text (e.g., table count) from the extractor. */
   progressText: string | null;
   /** High-level summary stats (node/edge count) shown once parsing is complete. */
   stats: string | null;
-  /** Error message to display if the process fails. */
   error: string | null;
   /** Callback to cancel the current loading operation and stop extraction. */
   onCancel: () => void;
@@ -39,12 +35,8 @@ const PHASE_ORDER: Record<LoadingPhase, number> = { load: 0, parse: 1, generate:
 type PhaseStatus = 'pending' | 'active' | 'done' | 'error';
 
 /**
- * Determines the status of a specific loading phase based on the current active phase.
- *
- * @param rowPhase - The phase to check.
- * @param current - The currently active loading phase.
- * @param hasError - Whether an error has occurred in the process.
- * @returns The status of the phase (pending, active, done, or error).
+ * Status of a loading phase (pending, active, done or error) given the currently active phase and
+ * whether an error occurred.
  */
 function phaseStatus(rowPhase: LoadingPhase, current: LoadingPhase, hasError: boolean): PhaseStatus {
   const rowIdx = PHASE_ORDER[rowPhase];
@@ -89,9 +81,7 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
 
 const AUTO_REDIRECT_MS = 8000;
 
-/**
- * Displays project-loading progress, elapsed time, cancellation, and failure recovery.
- */
+/** Displays project-loading progress, elapsed time, cancellation, and failure recovery. */
 export const VisualizingScreen = memo(function VisualizingScreen({
   sourceName,
   phase,

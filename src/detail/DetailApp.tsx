@@ -1,29 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LineageNode } from '../engine/types';
-import { DEFAULT_CONFIG } from '../engine/types';
 import type { TableStatsState } from '../components/TableDetailPanel';
 import type { StatsMode } from '../engine/profilingEngine';
 import { TableDetailPanel } from '../components/TableDetailPanel';
 import { MonacoSqlView } from './MonacoSqlView';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, parseRejectionLogs, validateBridgeFrame, type DetailConfig } from '../engine/shared/bridgeContract';
 
-/**
- * Configuration options for the detail view, typically synchronized from VS Code settings.
- */
-interface DetailConfig {
-  /** Whether the active session is connected to a live database. */
-  isDbMode: boolean;
-  /** Whether table statistics (row counts, distributions) are enabled. */
-  statsEnabled: boolean;
-  /** Whether to skip statistics generation for external tables. */
-  excludeExternalTables: boolean;
-  /** Whether standard profiling mode is enabled. */
-  standardModeEnabled: boolean;
-}
-
-/**
- * Represents the complete state of the detail panel for a specific node.
- */
+/** Represents the complete state of the detail panel for a specific node. */
 interface DetailState {
   /** The lineage node being inspected. */
   node: LineageNode;
@@ -32,14 +15,6 @@ interface DetailState {
   /** The current configuration for the detail view. */
   config: DetailConfig;
 }
-
-/** Default configuration used when no explicit config is provided by the extension host. */
-const DEFAULT_DETAIL_CONFIG: DetailConfig = {
-  isDbMode:              false,
-  statsEnabled:          DEFAULT_CONFIG.tableStatistics.enabled,
-  excludeExternalTables: DEFAULT_CONFIG.tableStatistics.excludeExternalTables,
-  standardModeEnabled:   DEFAULT_CONFIG.tableStatistics.standardModeEnabled,
-};
 
 /** VS Code API acquired once for the detail webview lifecycle. */
 const _vscodeApi = acquireVsCodeApi();
@@ -54,17 +29,15 @@ window.addEventListener('error', (event) => {
   _vscodeApi.postMessage({ type: 'error', error: `[Detail] Uncaught error: ${event.message}` });
 });
 
-/**
- * Coordinates detail-webview messages, DDL/column views, and profiling state.
- */
+/** Coordinates detail-webview messages, DDL/column views, and profiling state. */
 export function DetailApp() {
   const vscodeApi  = useRef(_vscodeApi);
-  const nodeIdRef  = useRef<string | undefined>(undefined);
+  const nodeRef    = useRef<DetailState['node'] | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
   const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('ddl');
 
-  nodeIdRef.current = detail?.node?.id;
+  nodeRef.current = detail?.node;
 
   useEffect(() => {
     function handler(e: MessageEvent) {
@@ -75,25 +48,29 @@ export function DetailApp() {
             type: 'error',
             error: `[Detail] Bridge protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
           });
+        } else {
+          for (const line of parseRejectionLogs('Detail', frame)) vscodeApi.current.postMessage(line);
         }
         return;
       }
       const msg = frame.data;
 
       if (msg.type === 'detail-update') {
-        setStatsState(prev => nodeIdRef.current !== msg.node?.id ? { phase: 'idle' } : prev);
+        setStatsState(prev => nodeRef.current?.id !== msg.node?.id ? { phase: 'idle' } : prev);
         setDetail({
           node:      msg.node,
           findQuery: msg.findQuery,
-          config:    msg.config ?? DEFAULT_DETAIL_CONFIG,
+          config:    msg.config,
         });
       } else if (msg.type === 'detail-clear') {
         setStatsState({ phase: 'idle' });
         setDetail(null);
-      } else if (msg.type === 'table-stats-result') {
-        setStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
-      } else if (msg.type === 'table-stats-error') {
-        setStatsState({ phase: 'error', message: msg.message });
+      } else if (msg.type === 'table-stats-result' || msg.type === 'table-stats-error') {
+        const { schema, objectName } = msg.objectRef;
+        if (schema !== nodeRef.current?.schema || objectName !== nodeRef.current?.name) return;
+        setStatsState(msg.type === 'table-stats-result'
+          ? { phase: 'result', stats: msg.stats, mode: msg.mode }
+          : { phase: 'error', message: msg.message });
       }
     }
     window.addEventListener('message', handler);
@@ -152,7 +129,6 @@ export function DetailApp() {
         statsEnabled={config.statsEnabled}
         excludeExternalTables={config.excludeExternalTables}
         standardModeEnabled={config.standardModeEnabled}
-        fillContainer
         findQuery={findQuery}
       />
     );
@@ -186,8 +162,7 @@ export function DetailApp() {
               statsEnabled={false}
               excludeExternalTables={false}
               standardModeEnabled={false}
-              fillContainer
-              findQuery={findQuery}
+                    findQuery={findQuery}
               compactColumns
             />
           ) : (

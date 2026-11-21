@@ -1,22 +1,15 @@
 /**
- * Session-phase finite state machine — types and runtime schema.
- *
- * {@link AiSession} owns multi-turn phase state. LangGraph routes each invocation from
- * the discriminated phase union so phase handling remains exhaustive.
- *
- * Lives alongside `smTypes.ts` (engine-facing types) and `session.ts` (session
- * container). Kept dependency-light so unit tests can consume it without wiring a
- * live engine.
+ * Session-phase finite state machine: types and runtime schema. {@link AiSession} owns multi-turn
+ * phase state and LangGraph routes each invocation from the discriminated phase union, keeping
+ * phase handling exhaustive. Lives beside `smTypes.ts` and `session.ts`; dependency-light so unit
+ * tests need no live engine.
  */
 
 import { z } from 'zod';
 
 /**
- * Runtime schema for an engine-emitted `action_required` envelope.
- *
- * @remarks
- * Validates engine-emitted gate payloads before the host graph/runtime publishes native gate
- * events.
+ * Runtime schema for an engine-emitted `action_required` envelope, validating gate payloads before
+ * the host graph/runtime publishes native gate events.
  */
 export const PendingGateSchema = z.object({
   gate: z.literal('confirm_sm_start'),
@@ -28,23 +21,22 @@ export const PendingGateSchema = z.object({
 });
 
 /**
- * A validated consent gate waiting on a user reply. Produced by the engine, resolved
- * by the next user chat turn. Envelope plumbing fields (`error`, `hint`) are
- * deliberately absent — they are transport concerns, not session state.
+ * A validated consent gate waiting on a user reply, produced by the engine and resolved by the next
+ * chat turn. Envelope plumbing fields (`error`, `hint`) are absent: they are transport concerns,
+ * not session state.
  */
 export type PendingGate = z.infer<typeof PendingGateSchema>;
 
 /**
- * Persistent session phase — the source of truth for what the next chat turn should
- * do. Survives across VS Code chat turns via the `AiSession` singleton.
- *
- * @remarks
- * - `idle` — no exploration in progress; next turn enters discovery.
- * - `awaiting_gate` — engine paused on a consent gate; next turn resolves the user's reply (yes / no / redirect).
- * - `exploring` — engine is running hops; next turn continues or completes.
- * - `completed` — synthesis turn finished, archive survives on the session singleton. Next turn runs the
- *   follow-up protocol: a refinement (text edit, node prune, or explicit-node supplement), an answer from a graph
- *   walk, or a fresh proposal that opens a new approval card.
+ * Persistent session phase, the source of truth for what the next chat turn does; survives across
+ * chat turns via the `AiSession` singleton.
+ * - `idle`: no exploration in progress; the next turn enters discovery.
+ * - `awaiting_gate`: engine paused on a consent gate; the next turn resolves the user's reply (yes
+ *   / no / redirect).
+ * - `exploring`: engine running hops; the next turn continues or completes.
+ * - `completed`: synthesis finished, archive kept on the session. The next turn runs the follow-up
+ *   protocol: a refinement (text edit, node prune, explicit-node supplement), an answer from a
+ *   graph walk, or a fresh proposal opening a new approval card.
  */
 export type SessionPhase =
   /** No exploration active. Next turn goes through discovery. */
@@ -53,5 +45,5 @@ export type SessionPhase =
   | { kind: 'awaiting_gate'; gate: PendingGate }
   /** Engine is in the hop loop; next turn resumes or finishes. */
   | { kind: 'exploring' }
-  /** Synthesis turn finished; archive is frozen but addressable. Follow-up turns route through the follow-up protocol. */
+  /** Synthesis turn finished; archive frozen but addressable; follow-ups use the follow-up path. */
   | { kind: 'completed' };

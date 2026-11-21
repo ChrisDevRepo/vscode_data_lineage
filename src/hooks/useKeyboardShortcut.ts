@@ -4,18 +4,17 @@ import { isTextEntryTarget, isTextEntryTargetWithContent } from '../ui/keyboardS
 /** Tuning knobs for one {@link useKeyboardShortcut} registration. */
 interface KeyboardShortcutOptions {
   /**
-   * Higher runs first. When more than one active, unblocked registration matches the same key
-   * (Esc closing a picker vs. exiting the whole mode, for instance), only the highest-priority
-   * one fires — the rest are not called. Default: `0`.
+   * Higher runs first. When several active, unblocked registrations match a key (Esc closing a
+   * picker vs. exiting the mode), only the highest-priority one fires. Default: `0`.
    */
   priority?: number;
   /**
    * Passes the text-entry guard when the focused input/textarea/contenteditable is empty, so a
-   * step-back shortcut can still exit the surrounding mode once the local field it would
-   * otherwise be blocked by has nothing left to clear. Default: `false` (any text-entry focus blocks).
+   * step-back shortcut can exit the mode once the local field has nothing left to clear. Default:
+   * `false` (any text-entry focus blocks).
    */
   allowEmptyTextEntry?: boolean;
-  /** Registers the shortcut only while `true`; toggling it adds/removes the registration. Default: `true`. */
+  /** Registers the shortcut only while `true`; toggling adds or removes it. Default: `true`. */
   active?: boolean;
 }
 
@@ -28,12 +27,10 @@ interface RegisteredShortcut {
 }
 
 /**
- * Live shortcut registrations, shared across every `useKeyboardShortcut` call.
- *
- * @remarks
- * Competing handlers for the same key — an overlay's local close vs. the app's mode-exit handler
- * both bound to Escape — resolve to exactly one winner by {@link KeyboardShortcutOptions.priority}
- * instead of racing independent listeners with their own `stopPropagation`.
+ * Live shortcut registrations shared by every `useKeyboardShortcut` call. Competing handlers for
+ * one key (an overlay's close vs. the mode-exit handler on Escape) resolve to one winner by
+ * {@link KeyboardShortcutOptions.priority} instead of racing listeners with their own
+ * `stopPropagation`.
  */
 const registry = new Set<RegisteredShortcut>();
 
@@ -67,26 +64,25 @@ function acquireListener(): () => void {
 }
 
 /**
- * Custom hook for registering global keyboard shortcuts within the VS Code webview context.
+ * Registers global keyboard shortcuts in the VS Code webview.
  *
- * @remarks
- * Every registration shares one `document` `keydown` listener. Matching is case-insensitive and
- * ignores events carrying a Ctrl/Cmd/Alt modifier, so bare-letter shortcuts never collide with
- * native chords like Ctrl+C. By default a match is blocked while a text-entry surface (`input`,
- * `textarea`, or any `contenteditable` element) has focus; pass `allowEmptyTextEntry` to relax
- * that to "blocked only while that surface holds content". When two or more active registrations
- * match the same key, only the highest-{@link KeyboardShortcutOptions.priority} unblocked one
- * fires.
+ * All registrations share one `document` `keydown` listener. Matching is case-insensitive and
+ * ignores events with a Ctrl/Cmd/Alt modifier, so bare letters never collide with chords like
+ * Ctrl+C. A match is blocked while a text-entry surface has focus; `allowEmptyTextEntry` relaxes
+ * that to "while it holds content". Among active registrations matching a key, only the
+ * highest-{@link KeyboardShortcutOptions.priority} unblocked one fires.
  *
- * @param key - The key or array of keys that should trigger the callback. Compared case-insensitively against `KeyboardEvent.key`.
- * @param callback - The function to execute when a matching key is pressed and this registration wins.
- * @param preventDefault - Whether to call `e.preventDefault()` when this registration wins. Defaults to `false`.
- * @param options - Priority, the text-entry guard relaxation, and whether the registration is currently active.
+ * @param key - Key or keys that trigger the callback, compared case-insensitively against
+ *   `KeyboardEvent.key`.
+ * @param callback - Runs when a matching key is pressed and this registration wins.
+ * @param preventDefault - Call `e.preventDefault()` when this registration wins. Defaults to
+ *   `false`.
+ * @param options - Priority, the text-entry guard relaxation, and whether the registration is
+ *   active.
  *
  * @example
  * ```tsx
  * useKeyboardShortcut('Escape', () => setIsOpen(false), true);
- * useKeyboardShortcut(['Enter', 'n'], () => handleCreate(), false);
  * useKeyboardShortcut('Escape', unpinColumn, false, { priority: 10, active: !!pinnedColumn });
  * ```
  */

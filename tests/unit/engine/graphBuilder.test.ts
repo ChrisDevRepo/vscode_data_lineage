@@ -5,10 +5,6 @@
  * The trace is the heart of the product, so every directional rule is its own `it`: which
  * nodes a depth cap admits, and which edges survive the toward-the-origin filter, fail for
  * different reasons and must be able to fail independently.
- *
- * Split out of this file, by module under test:
- * - virtual external nodes (`buildModel`) → modelBuilder-externalRefs.test.ts
- * - schema and expanded-schema views → schemaViews.test.ts
  */
 
 import { readFileSync } from 'fs';

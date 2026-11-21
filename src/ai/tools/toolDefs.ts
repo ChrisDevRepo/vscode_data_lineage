@@ -1,11 +1,7 @@
 /**
- * The AI tool catalog.
- *
- * @remarks
- * One entry per registered `languageModelTool`, pairing the model-facing name with its
- * single Zod input schema. This is the authoritative, **VS Code-free** list that drives
- * host registration: `registerAiTools` builds a {@link ToolRegistry} from it and binds
- * each entry's handler.
+ * The AI tool catalog: one entry per registered `languageModelTool`, pairing the model-facing name
+ * with its single Zod input schema. The authoritative **VS Code-free** list that drives host
+ * registration (`registerAiTools` builds a {@link ToolRegistry} from it and binds each handler).
  */
 import type { z } from 'zod';
 import type { ToolDefinition } from './registry';
@@ -38,8 +34,8 @@ export interface ToolContract<TSchema extends z.ZodType = z.ZodType> {
   readonly inputSchema: TSchema;
   /**
    * Progress label shown while the tool executes. Omitted on tools that run repeatedly inside one
-   * user-visible operation (per-hop commits) — a registered tool without a label emits no status
-   * update, so the operation-level status stays visible instead of flickering per call.
+   * user-visible operation (per-hop commits): a tool without a label emits no status update, so the
+   * operation-level status stays visible instead of flickering per call.
    */
   readonly progressLabel?: string;
   /** Lifecycle mutation class used for execution serialization. */
@@ -49,12 +45,9 @@ export interface ToolContract<TSchema extends z.ZodType = z.ZodType> {
 }
 
 /**
- * The canonical tool catalog, in registration order.
- *
- * @remarks
- * The model descriptions mirror the public manifest and are used directly by API adapters.
- * `submit_findings` and `present_result` use model-facing schemas whose runtime dispatch
- * narrows to the strict phase/mode-specific variants.
+ * The canonical tool catalog, in registration order. The model descriptions mirror the public
+ * manifest and are used directly by API adapters; `submit_findings` and `present_result` use
+ * model-facing schemas whose runtime dispatch narrows to the strict phase/mode-specific variants.
  */
 export const TOOL_DEFS = [
   {
@@ -66,13 +59,13 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_objects', inputSchema: SearchObjectsInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search for database objects by name or column.',
-    modelDescription: 'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.',
+    modelDescription: 'Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` `{status: unique|ambiguous, ids}` for an exact name.',
     progressLabel: 'Searching database objects…',
   },
   {
     name: 'lineage_get_scope_bundle', inputSchema: GetScopeBundleModelSchema, tags: ['lineage', 'lineage-research'], effect: 'scope_store',
     userDescription: 'Get a bounded BFS scope in one call, with optional DDL for all nodes in scope.',
-    modelDescription: 'Graph-scope retrieval for multi-object lineage questions. In `nodes[]`, the origin carries `in` (writes INTO it) and `out` (reads FROM it); every node carries `uh`/`dh`, its hop distance upstream/downstream from the origin on the side(s) it was reached (the origin is 0 on both; a node reached on both sides carries both) — read this instead of re-deriving reach from edge order. `edges` are positional [source, target, type]. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
+    modelDescription: 'Graph-scope retrieval for multi-object lineage questions. In `nodes[]`, the origin carries `in` (upstream neighbors) and `out` (downstream neighbors), each with edge verb `e`; every node carries `uh`/`dh`, its hop distance upstream/downstream from the origin on the side(s) it was reached (the origin is 0 on both; a node reached on both sides carries both) — read this instead of re-deriving reach from edge order. `edges` are positional [source, target, type]. Keep lineage_get_object_detail for one object.',
     progressLabel: 'Gathering object dependencies…',
   },
   {
@@ -95,7 +88,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_object_detail', inputSchema: GetObjectDetailInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Get full details for a specific database object.',
-    modelDescription: 'Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls.',
+    modelDescription: 'Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors).',
     progressLabel: 'Fetching object details…',
   },
   {
@@ -119,7 +112,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_screen_state', inputSchema: GetScreenStateInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Shows what is currently on screen: active trace, analysis, or applied bookmark.',
-    modelDescription: 'Returns what is on screen: active trace, graph analysis, applied bookmark, and view. Optional `ids` recall objects from a stored AI run; optional `filter` lists pruned, open_leads, or stale. `ids` and `filter` need a stored run; without one they answer `no_run_memory`. Omit input for the screen card.',
+    modelDescription: 'Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall the stored run.',
     progressLabel: 'Reading screen state…',
   },
 ] as const satisfies readonly ToolContract[];

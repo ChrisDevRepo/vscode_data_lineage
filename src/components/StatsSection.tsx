@@ -1,5 +1,6 @@
 import { Fragment, useState, useCallback, useMemo } from 'react';
-import type { TableStats, ColumnStats, StatsMode } from '../engine/profilingEngine';
+import type { StatsMode } from '../engine/profilingEngine';
+import type { TableStats, ColumnStats } from '../engine/shared/bridgeContract';
 import type { TableStatsState } from './TableDetailPanel';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
@@ -28,12 +29,27 @@ function formatDecimal(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
-/** Format a raw min/max string — if numeric, add thousands separators. */
+/** Significant digits a double holds exactly. */
+const EXACT_DOUBLE_DIGITS = 15;
+
+/**
+ * Whether a plain decimal string survives `Number()` unchanged, judged on its digits (trailing
+ * fraction zeros ignored).
+ */
+function holdsExactly(raw: string): boolean {
+  const match = /^-?(\d+)(?:\.(\d+))?(?:[eE][+-]?\d+)?$/.exec(raw);
+  if (!match || !Number.isFinite(Number(raw))) return false;
+  const digits = (match[1] + (match[2] ?? '').replace(/0+$/, '')).replace(/^0+/, '');
+  return digits.length <= EXACT_DOUBLE_DIGITS;
+}
+
+/**
+ * Formats a raw min/max string with separators when a double holds it exactly; else the source
+ * text, so big-int and decimal(38) values keep every digit.
+ */
 function formatValue(raw: string | undefined): string {
   if (!raw) return '–';
-  const n = Number(raw);
-  if (!isNaN(n)) return formatDecimal(n);
-  return raw;
+  return holdsExactly(raw) ? formatDecimal(Number(raw)) : raw;
 }
 
 /** Format a count with percentage of total rows. */
@@ -57,8 +73,8 @@ function hasDetail(col: ColumnStats): boolean {
 }
 
 /**
- * Labeled key-value grid for expanded column detail.
- * Every metric has a plain English label — no abbreviations.
+ * Labeled key-value grid for expanded column detail; every metric has a plain English label, no
+ * abbreviations.
  */
 function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   const pairs: Array<{ label: string; value: string }> = [];
@@ -139,6 +155,11 @@ function sortColumns(cols: IndexedCol[], key: SortKey, dir: 'asc' | 'desc'): Ind
 }
 
 
+/** `aria-sort` value for the active sort direction. */
+function ariaSortOf(dir: 'asc' | 'desc'): 'ascending' | 'descending' {
+  return dir === 'asc' ? 'ascending' : 'descending';
+}
+
 const GRID_COLS = 'minmax(60px, 1fr) 38px 46px minmax(70px, auto)';
 
 const cellClip: React.CSSProperties = {
@@ -190,7 +211,8 @@ function StatsResults({ stats, mode }: {
 
   const sortedProfiled = useMemo(() => sortColumns(profiled, sort.key, sort.dir), [profiled, sort]);
   const isStandard = mode === 'standard';
-  const hdrStyle: React.CSSProperties = { color: 'var(--ln-fg-muted)', cursor: 'pointer', userSelect: 'none' };
+  const hdrStyle: React.CSSProperties = { color: 'var(--ln-fg-muted)', userSelect: 'none' };
+  const hdrButtonStyle: React.CSSProperties = { background: 'none', border: 0, padding: 0, font: 'inherit', color: 'inherit', textAlign: 'inherit', cursor: 'pointer' };
 
   const isDetailVisible = (colName: string) => {
     if (expandedAll) return !expandedCols.has(colName);
@@ -229,88 +251,126 @@ function StatsResults({ stats, mode }: {
         )}
       </div>
 
-      <div
-        className="font-medium pb-1"
-        style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px', borderBottom: '1px solid var(--ln-border)' }}
-      >
-        <div style={hdrStyle} onClick={() => {
-          if (sort.key === 'ordinal') toggleSort('name');
-          else if (sort.key === 'name') toggleSort('ordinal');
-          else toggleSort('ordinal');
-        }}>
-          Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
-          {sort.key === 'ordinal' && <span style={{ fontSize: '0.55rem', marginLeft: 2, opacity: 0.7 }}>#</span>}
-        </div>
-        <div style={{ color: 'var(--ln-fg-muted)' }}>Type</div>
-        <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('null')}>
-          Null%{sort.key === 'null' && <SortArrow dir={sort.dir} />}
-        </div>
-        <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('distinct')}>
-          Distinct{sort.key === 'distinct' && <SortArrow dir={sort.dir} />}
-        </div>
-      </div>
-
-      {sortedProfiled.map(col => {
-        const showDetail = isStandard && hasDetail(col) && isDetailVisible(col.name);
-        const canExpand = isStandard && hasDetail(col);
-        return (
-          <div key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-            <div
-              className="py-1"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: GRID_COLS,
-                gap: '0 6px',
-                alignItems: 'center',
-                cursor: canExpand ? 'pointer' : 'default',
-              }}
-              onClick={canExpand ? () => toggleCol(col.name) : undefined}
-              role={canExpand ? 'button' : undefined}
-              tabIndex={canExpand ? 0 : undefined}
-              onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCol(col.name); } } : undefined}
+      <table role="table" className="font-medium" style={{ display: 'block' }}>
+        <thead style={{ display: 'block', borderBottom: '1px solid var(--ln-border)', paddingBottom: 4 }}>
+          <tr role="row" style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px' }}>
+            <th
+              role="columnheader"
+              scope="col"
+              aria-sort={sort.key === 'name' ? ariaSortOf(sort.dir) : 'none'}
+              style={{ ...hdrStyle, fontWeight: 'inherit', textAlign: 'left' }}
             >
-              <Tooltip content={col.name} asChild>
-              <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }}>
-                <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)', visibility: canExpand ? 'visible' : 'hidden' }}>
-                  <ChevronIcon expanded={showDetail} />
-                </span>
-                <span style={cellClip}>{col.name}</span>
-              </div>
-              </Tooltip>
-              <div style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></div>
-              <div className="font-mono" style={{
-                ...cellClip,
-                textAlign: 'right',
-                color: col.nullPercent !== null ? nullQualityColor(col.nullPercent) : 'var(--ln-fg-dim)',
-                fontSize: col.nullPercent === null ? '0.65rem' : undefined,
-              }}>
-                {col.nullPercent === null ? 'NN' : `${col.nullPercent.toFixed(1)}%`}
-              </div>
-              <div className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
-                {col.distinctCount.toLocaleString()}
-                <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
-              </div>
-            </div>
+              <button type="button" style={hdrButtonStyle} onClick={() => toggleSort(sort.key === 'ordinal' ? 'name' : 'ordinal')}>
+                Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
+                {sort.key === 'ordinal' && <span style={{ fontSize: '0.55rem', marginLeft: 2, opacity: 0.7 }}>#</span>}
+              </button>
+            </th>
+            <th role="columnheader" scope="col" style={{ color: 'var(--ln-fg-muted)', fontWeight: 'inherit', textAlign: 'left' }}>Type</th>
+            <th
+              role="columnheader"
+              scope="col"
+              aria-sort={sort.key === 'null' ? ariaSortOf(sort.dir) : 'none'}
+              style={{ ...hdrStyle, fontWeight: 'inherit', textAlign: 'right' }}
+            >
+              <button type="button" style={hdrButtonStyle} onClick={() => toggleSort('null')}>
+                Null%{sort.key === 'null' && <SortArrow dir={sort.dir} />}
+              </button>
+            </th>
+            <th
+              role="columnheader"
+              scope="col"
+              aria-sort={sort.key === 'distinct' ? ariaSortOf(sort.dir) : 'none'}
+              style={{ ...hdrStyle, fontWeight: 'inherit', textAlign: 'right' }}
+            >
+              <button type="button" style={hdrButtonStyle} onClick={() => toggleSort('distinct')}>
+                Distinct{sort.key === 'distinct' && <SortArrow dir={sort.dir} />}
+              </button>
+            </th>
+          </tr>
+        </thead>
 
-            {/* Detail — labeled key-value grid (standard mode, collapsible) */}
-            {showDetail && <DetailGrid col={col} rowCount={stats.rowCount} />}
+        {sortedProfiled.map(col => {
+          const showDetail = isStandard && hasDetail(col) && isDetailVisible(col.name);
+          const canExpand = isStandard && hasDetail(col);
+          return (
+            <tbody key={col.name} style={{ display: 'block', borderBottom: '1px solid var(--ln-border-light)' }}>
+              <tr
+                role="row"
+                className="py-1"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: GRID_COLS,
+                  gap: '0 6px',
+                  alignItems: 'center',
+                  cursor: canExpand ? 'pointer' : 'default',
+                }}
+                onClick={canExpand ? () => toggleCol(col.name) : undefined}
+              >
+                <td role="cell" style={{ minWidth: 0 }}>
+                  <Tooltip content={col.name} asChild>
+                    {canExpand ? (
+                      <button
+                        type="button"
+                        aria-expanded={showDetail}
+                        className="font-mono flex items-center gap-1"
+                        style={{ ...hdrButtonStyle, ...cellClip, minWidth: 0, maxWidth: '100%', cursor: 'pointer' }}
+                      >
+                        <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)' }}>
+                          <ChevronIcon expanded={showDetail} />
+                        </span>
+                        <span style={cellClip}>{col.name}</span>
+                      </button>
+                    ) : (
+                      <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }}>
+                        <span style={{ flexShrink: 0, visibility: 'hidden' }}>
+                          <ChevronIcon expanded={false} />
+                        </span>
+                        <span style={cellClip}>{col.name}</span>
+                      </div>
+                    )}
+                  </Tooltip>
+                </td>
+                <td role="cell" style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></td>
+                <td role="cell" className="font-mono" style={{
+                  ...cellClip,
+                  textAlign: 'right',
+                  color: col.nullPercent !== null ? nullQualityColor(col.nullPercent) : 'var(--ln-fg-dim)',
+                  fontSize: col.nullPercent === null ? '0.65rem' : undefined,
+                }}>
+                  {col.nullPercent === null ? 'NN' : `${col.nullPercent.toFixed(1)}%`}
+                </td>
+                <td role="cell" className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
+                  {col.distinctCount.toLocaleString()}
+                  <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
+                </td>
+              </tr>
 
-            {/* Completeness bar — only shown when column has actual nulls */}
-            {col.completeness < 1.0 && (
-              <div className="flex items-center" style={{ paddingBottom: 3 }}>
-                <Tooltip content={`${Math.round(col.completeness * 100)}% of rows have a non-null value`} asChild>
-                  <div style={{ flex: 1 }}>
-                    <CompletenessBar value={col.completeness} />
-                  </div>
-                </Tooltip>
-                <span className="font-mono" style={{ width: 42, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
-                  {Math.round(col.completeness * 100)}% fill
-                </span>
-              </div>
-            )}
-          </div>
-        );
-      })}
+              {/* Detail — labeled key-value grid (standard mode, collapsible) */}
+              {showDetail && (
+                <tr role="row" style={{ display: 'block' }}>
+                  <td role="cell" colSpan={4} style={{ display: 'block' }}><DetailGrid col={col} rowCount={stats.rowCount} /></td>
+                </tr>
+              )}
+
+              {/* Completeness bar — only shown when column has actual nulls */}
+              {col.completeness < 1.0 && (
+                <tr role="row" style={{ display: 'block' }}>
+                  <td role="cell" colSpan={4} className="flex items-center" style={{ paddingBottom: 3 }}>
+                    <Tooltip content={`${Math.round(col.completeness * 100)}% of rows have a non-null value`} asChild>
+                      <div style={{ flex: 1 }}>
+                        <CompletenessBar value={col.completeness} />
+                      </div>
+                    </Tooltip>
+                    <span className="font-mono" style={{ width: 42, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
+                      {Math.round(col.completeness * 100)}% fill
+                    </span>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          );
+        })}
+      </table>
 
       {skipped.length > 0 && (
         <div style={{ marginTop: 8 }}>
@@ -341,17 +401,13 @@ function StatsResults({ stats, mode }: {
 
 
 interface StatsSectionProps {
-  /** The current state of table statistics (loading, error, or result). */
   statsState: TableStatsState;
-  /** Callback triggered when the user requests a specific profiling mode. */
   onRequestStats: (mode: StatsMode) => void;
   /** Whether standard-mode profiling (deeper scan) is enabled for the current connection. */
   standardModeEnabled: boolean;
 }
 
-/**
- * Requests and displays quick or standard column-level profiling metrics.
- */
+/** Requests and displays quick or standard column-level profiling metrics. */
 export function StatsSection({ statsState, onRequestStats, standardModeEnabled }: StatsSectionProps) {
   const isLoading = statsState.phase === 'loading';
 

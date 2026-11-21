@@ -20,6 +20,8 @@ const silentLogger = Logger.create(
   'Bridge',
 );
 
+const detailConfig = { isDbMode: false, statsEnabled: true, excludeExternalTables: true, standardModeEnabled: false };
+
 describe('bridge node fields', () => {
   it('declares every LineageNode field on the boundary schema', () => {
     expectTypeOf<keyof BridgeNode>().toEqualTypeOf<keyof LineageNode>();
@@ -43,14 +45,14 @@ describe('bridge node fields', () => {
       externalDatabase: 'Sales',
     };
 
-    await postToDetail(panel as never, { type: 'detail-update', node, config: {} }, silentLogger);
+    await postToDetail(panel as never, { type: 'detail-update', node, config: detailConfig }, silentLogger);
 
     expect(sent).toHaveLength(1);
     expect((sent[0] as { node: unknown }).node).toEqual(node);
   });
   it('accepts a node without definitionUnreadable and rejects a non-boolean one', () => {
     const node = { id: 'a', schema: 'dbo', name: 'a', fullName: '[dbo].[a]', type: 'procedure' };
-    const parse = (n: object) => ExtensionToDetailMsgSchema.safeParse({ type: 'detail-update', node: n, config: {} }).success;
+    const parse = (n: object) => ExtensionToDetailMsgSchema.safeParse({ type: 'detail-update', node: n, config: detailConfig }).success;
     expect(parse(node)).toBe(true);
     expect(parse({ ...node, definitionUnreadable: 'yes' })).toBe(false);
   });

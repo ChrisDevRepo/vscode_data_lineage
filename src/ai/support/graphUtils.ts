@@ -55,18 +55,14 @@ export function buildBareGraph(model: DatabaseModel): Graph {
   return graph;
 }
 
-/**
- * Builds a lookup map for nodes by their ID.
- */
+/** Builds a lookup map for nodes by their ID. */
 export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
   const m = new Map<string, LineageNode>();
   for (const n of model.nodes) m.set(n.id, n);
   return m;
 }
 
-/**
- * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
- */
+/** Column definitions of a node, preferring the ColumnStore when available. */
 export function getNodeColumns(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,
@@ -74,9 +70,7 @@ export function getNodeColumns(
   return (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
 }
 
-/**
- * Retrieves the stored DDL for a specific node (blank lines dropped, tabs expanded).
- */
+/** Retrieves the stored DDL for a specific node (blank lines dropped, tabs expanded). */
 export function getNodeDdl(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,

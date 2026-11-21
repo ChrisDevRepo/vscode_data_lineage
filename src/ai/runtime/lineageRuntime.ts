@@ -19,12 +19,12 @@ import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvel
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
-export interface LineageRuntimeRequest {
+interface LineageRuntimeRequest {
   /** Request identifier; must be unique among this session's currently active turns. */
   readonly id: string;
   /** Verbatim user prompt for this turn. */
   readonly prompt: string;
-  /** Optional prior-turn conversation, oldest first; when present the session transcript is cleared after the turn. */
+  /** Optional prior-turn conversation, oldest first; if given, the transcript is cleared after. */
   readonly priorMessages?: readonly ModelMessage[];
 }
 
@@ -32,7 +32,6 @@ export interface LineageRuntimeRequest {
 export interface LineageRuntimeRunInput {
   /** The exact native request model, already wrapped as a provider-neutral port. */
   readonly model: ModelPort;
-  /** Request identity, prompt, and optional history for this turn. */
   readonly request: LineageRuntimeRequest;
   /** Native event sink that receives this turn's events and its one terminal result. */
   readonly sink: TurnEventSink;
@@ -56,20 +55,18 @@ export interface LineageRuntimeDeps {
   readonly getSession: () => AiSession;
   /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
   readonly createRegistry: (lease: TurnLease, model: ModelPort) => IToolRegistry<string>;
-  /** Optional logger forwarded to the agent runtime. */
   readonly logger?: Logger;
   /** Optional per-turn model-step cap forwarded to the agent runtime. */
   readonly maxRounds?: number;
   /** Optional trace writer receiving this runtime's lifecycle and tool records. */
   readonly traceWriter?: AiTraceWriter;
+  readonly clearPreview?: () => void;
 }
 
 /**
- * Single production facade for native lineage turns.
- *
- * The facade owns turn setup and active-request coordination. The outer
- * LangGraph owns phase/hop routing and `AgentRuntime` owns interrupt/resume and
- * the one terminal event.
+ * Single production facade for native lineage turns: owns turn setup and active-request
+ * coordination, while the outer LangGraph owns phase/hop routing and `AgentRuntime` owns
+ * interrupt/resume and the one terminal event.
  */
 export class LineageRuntime {
   private readonly active = new Map<string, {
@@ -81,8 +78,6 @@ export class LineageRuntime {
 
   /**
    * Generates suggestions from compact facts without tools, history replay or session mutation.
-   *
-   * @remarks
    * Writes the same `turn-start`/`turn-terminal` lifecycle pair as {@link run}, so the trace joins
    * this turn's wire records to a turn like any other request.
    */
@@ -90,7 +85,7 @@ export class LineageRuntime {
     const session = this.deps.getSession();
     const runFingerprint = fingerprint(`${session.id}:${input.request.id}`);
     const startedAt = performance.now();
-    this.writeLifecycle({
+    void this.writeLifecycle({
       type: 'turn-start',
       requestId: input.request.id,
       runFingerprint,
@@ -103,7 +98,7 @@ export class LineageRuntime {
       onTextDelta: text => input.sink.stream(text),
     });
     const outcome = result.status === 'completed' ? 'ok' : result.status;
-    this.writeLifecycle({
+    await this.writeLifecycle({
       type: 'turn-terminal',
       requestId: input.request.id,
       runFingerprint,
@@ -163,13 +158,14 @@ export class LineageRuntime {
         })
       : registry;
     const traceSyntheticRejection = traceWriter
-      ? (rejection: { toolName: string; code: string }): void => {
+      ? (rejection: { callId?: string; toolName: string; code: string }): void => {
           void traceWriter.write({
             type: 'tool',
             requestId: input.request.id,
             runFingerprint,
             seq: ++toolSequence,
             phase,
+            ...(rejection.callId ? { callId: rejection.callId } : {}),
             toolName: rejection.toolName,
             status: 'rejected',
             rejectionCode: rejection.code,
@@ -189,12 +185,13 @@ export class LineageRuntime {
       priorMessages: input.request.priorMessages ?? session.getDiscoveryHistory(),
       logger: this.deps.logger,
       traceSyntheticRejection,
+      clearPreview: this.deps.clearPreview,
     });
     let completeRun!: () => void;
     const completed = new Promise<void>((resolve) => { completeRun = resolve; });
     const activeRun = { runtime, completed };
     this.active.set(requestKey, activeRun);
-    this.writeLifecycle({
+    void this.writeLifecycle({
       type: 'turn-start',
       requestId: input.request.id,
       runFingerprint,
@@ -205,7 +202,9 @@ export class LineageRuntime {
     try {
       const outcome = await runtime.run(input.request.prompt);
       const failure = runtime.lastFailureDetail;
-      this.writeLifecycle({
+      // The append chain is serial: awaiting the terminal record makes every earlier record durable
+      // before the turn settles, so a host that exits right after the turn keeps the trace tail.
+      await this.writeLifecycle({
         type: 'turn-terminal',
         requestId: input.request.id,
         runFingerprint,
@@ -243,9 +242,8 @@ export class LineageRuntime {
 
   private writeLifecycle(
     record: Parameters<NonNullable<LineageRuntimeDeps['traceWriter']>['write']>[0],
-  ): void {
-    if (!this.deps.traceWriter) return;
-    void this.deps.traceWriter.write(record).catch(() => {});
+  ): Promise<void> {
+    return (this.deps.traceWriter?.write(record) ?? Promise.resolve()).catch(() => {});
   }
 
   private writeEvent(
@@ -287,7 +285,7 @@ function instrumentRegistry(
     getTools: () => registry.getTools(),
     get: (name) => registry.get(name),
     has: (name) => registry.has(name),
-    invoke: async (name, payload) => {
+    invoke: async (name, payload, callId) => {
       const startedAt = performance.now();
       const sequence = instrumentation.nextSequence();
       const base = {
@@ -296,10 +294,11 @@ function instrumentRegistry(
         runFingerprint: instrumentation.runFingerprint,
         seq: sequence,
         phase: instrumentation.currentPhase(),
+        ...(callId ? { callId } : {}),
         toolName: name,
       };
       try {
-        const result = await registry.invoke(name, payload);
+        const result = await registry.invoke(name, payload, callId);
         const rejection = parseRejection(result);
         const issuePaths = rejection?.issuePaths ?? [];
         void instrumentation.writer.write({

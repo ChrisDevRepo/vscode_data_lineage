@@ -1,8 +1,5 @@
 /**
- * Shared test utilities for all unit test files.
- * NOT a test file itself — imported by tests/unit/*.test.ts files.
- *
- * Location: tests/unit/helpers/testUtils.ts
+ * Shared test utilities for all unit test files; not a test file itself.
  * - testPath() resolves paths relative to tests/fixtures/
  * - rootPath() resolves paths relative to project root
  */
@@ -42,13 +39,6 @@ export function rootPath(...segments: string[]): string {
 export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
   loadParseRules();
   const buffer = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  return extractDacpac(buffer);
-}
-
-/** Loads the public demo DACPAC the Extension Development Host opens via `openDemo`. */
-export async function loadDemoModel(): Promise<DatabaseModel> {
-  loadParseRules();
-  const buffer = readFileSync(rootPath('assets/demo.dacpac'));
   return extractDacpac(buffer);
 }
 

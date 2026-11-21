@@ -4,21 +4,12 @@ import { ANALYSIS_TYPE_INFO, ANALYSIS_TYPE_LABELS } from '../utils/analysisInfo'
 import { ModeBanner } from './ModeBanner';
 
 interface AnalysisBannerProps {
-  /** The current active analysis state, including the type and calculated result. */
   analysis: AnalysisMode;
-  /** Callback triggered when the user chooses to exit the analysis mode. */
   onClose: () => void;
-  /**
-   * Optional callback to save the current analysis result as a bookmark.
-   * @param name - The name for the bookmark.
-   * @param withPositions - Whether to save the current visual positions of nodes.
-   */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  onSaveAsBookmark?: (name: string) => void;
 }
 
-/**
- * Configures {@link ModeBanner} for the active structural analysis and selected group.
- */
+/** Configures {@link ModeBanner} for the active structural analysis and selected group. */
 export const AnalysisBanner = memo(function AnalysisBanner({
   analysis,
   onClose,

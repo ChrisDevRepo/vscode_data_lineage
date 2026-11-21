@@ -15,9 +15,8 @@ const LOG_DIR = join('test-results', 'gate');
  * @returns Exit status, spawn error, and the combined output.
  *
  * @remarks
- * `stdio: 'inherit'` cannot tee, so a failed step's diagnostics survived only in terminal
- * scrollback — worthless for an intermittent failure, which is the case that most needs them.
- * Streaming keeps the live view a long step depends on.
+ * `stdio: 'inherit'` cannot tee, so output is piped, streamed live and kept for the failure log
+ * of an intermittent step.
  */
 function runStep(step) {
   return new Promise((resolve) => {
@@ -40,18 +39,19 @@ const npmRun = (name, script) => ({ name, ...npmCommand('npm', ['run', script]) 
 const STEPS = [
   npmRun('typecheck', 'typecheck'),
   npmRun('typecheck:tests', 'typecheck:tests'),
+  npmRun('lint (errors only)', 'lint'),
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'test environment profiles', cmd: nodeBin, args: ['--test', 'tests/tools/load-test-env.test.mjs'] },
   {
     name: 'test tooling contracts',
     cmd: nodeBin,
-    args: ['--test', 'tests/tools/gui-test-host.test.mjs', 'tests/tools/chat-ui-replay-trace.test.mjs', 'tests/tools/gate-status.test.mjs'],
+    args: ['--test', 'tests/tools/gate-status.test.mjs'],
   },
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
   { name: 'layer direction', cmd: nodeBin, args: ['tests/tools/assert-layer-direction.mjs'] },
   { name: 'no tracked scratch files', cmd: nodeBin, args: ['tests/tools/assert-no-tracked-scratch.mjs'] },
-  { name: 'no new output truncation', cmd: nodeBin, args: ['tests/tools/assert-no-output-truncation.mjs', '--baseline', 'tests/tools/output-truncation-baseline.json'] },
+  { name: 'no new output truncation', cmd: nodeBin, args: ['tests/tools/assert-no-output-truncation.mjs'] },
   npmRun('unit: core (+ core coverage floors)', 'coverage:core'),
   npmRun('unit: agent runtime', 'test:runtime'),
 
@@ -106,7 +106,7 @@ process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; noth
 process.stdout.write(
   'Additional checks: npm run test:edh exercises the VS Code host with fixed responses; '
   + 'npm run test:ai:smoke optionally calls a configured provider through that host. '
-  + 'Review model answer correctness against the source SQL and graph. See docs/testing/README.md.\n',
+  + 'Review model answer correctness against the source SQL and graph. See docs/DEVELOPER_GUIDE.md.\n',
 );
 
 process.exit(failed.length === 0 ? 0 : 1);

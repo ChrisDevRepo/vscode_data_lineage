@@ -9,9 +9,7 @@ type SchemaNodeUiData = SchemaNodeData & {
   onMakeSchemaCenter?: (schemaName: string) => void;
 };
 
-/**
- * Renders a schema-level React Flow node with object counts and expansion controls.
- */
+/** Renders a schema-level React Flow node with object counts and expansion controls. */
 export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps) {
   const d = data as SchemaNodeUiData;
   const isExpandedSchemaViewCluster = d.isExpandedSchemaViewCluster === true;

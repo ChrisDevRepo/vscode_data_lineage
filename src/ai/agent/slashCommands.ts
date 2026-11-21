@@ -1,13 +1,11 @@
 /**
- * Deterministic slash-command routing for the entry detector.
- *
- * `/trace` and `/search` are the user *stating* intent — command parsing, not language guessing —
- * so the runtime routes them without a model classifier. Free-prose intent is exclusively the
- * structured entry detector's decision; regex or keyword matching over natural language never
- * selects a route.
- *
- * VS Code-free: imported only by the agent runtime.
+ * Deterministic slash-command routing for the entry detector. `/trace` and `/search` are the user
+ * *stating* intent (command parsing, not language guessing), so the runtime routes them without a
+ * model classifier; free-prose intent is exclusively the structured entry detector's decision and
+ * regex or keyword matching over natural language never selects a route. VS Code-free; imported
+ * only by the agent runtime.
  */
+import { stripBrackets } from '../../utils/sql';
 import type { AgentEntryRoute, AgentExecutionTrigger } from './state';
 
 /** A pinned entry route for a recognized deterministic command/intent. */
@@ -16,26 +14,26 @@ interface SlashRoute {
   readonly entry: AgentEntryRoute;
   /** Mechanical command source; separate from the semantic route. */
   readonly trigger: AgentExecutionTrigger;
-  /** Columns parsed from a `/trace [schema].[table].[column]` request; `null` when none were named. */
+  /** Columns parsed from a `/trace [schema].[table].[column]` request; `null` when none. */
   readonly targetColumns: string[] | null;
 }
 
 const SLASH_RE = /^\s*\/(trace|search)\b[ \t]*/i;
-const BRACKET_TOKEN_RE = /\[([^\]]+)\]/g;
+/** One bracketed identifier; `]]` inside is an escaped `]`. */
+const BRACKET_IDENTIFIER = String.raw`\[(?:[^\]]|\]\])+\]`;
+const BRACKET_TOKEN_RE = new RegExp(BRACKET_IDENTIFIER, 'g');
 /** One contiguous dot-joined bracket chain of 3+ parts, e.g. `[schema].[table].[column]`. */
-const BRACKET_CHAIN_RE = /(?:\[[^\]]+\]\.){2,}\[[^\]]+\]/g;
+const BRACKET_CHAIN_RE = new RegExp(`(?:${BRACKET_IDENTIFIER}\\.){2,}${BRACKET_IDENTIFIER}`, 'g');
 
 /**
  * Pins an entry route for a leading `/trace` or `/search` command, skipping the entry-detector
- * model call.
+ * model call. `/search` stays in discovery. `/trace` sets the explicit SM trigger and carries a
+ * `column_trace` route only when the text names a fully-qualified column; otherwise the neutral
+ * discovery verdict, so the command trigger, not a fabricated visual verdict, opens BB SM.
  *
  * @param prompt - The raw user prompt (the participant prepends `/<command> ` for chat commands).
- * @returns The pinned route, or `null` when no recognized command leads the prompt — the caller
- *   then runs the LLM entry detector as usual.
- * @remarks `/search` stays in discovery. `/trace` sets the explicit SM trigger and carries a
- *   `column_trace` semantic route only when the text names a fully-qualified column. Otherwise it
- *   carries the neutral discovery verdict; the command trigger, not a fabricated visual verdict,
- *   opens BB SM.
+ * @returns The pinned route, or `null` when no recognized command leads the prompt (the caller then
+ *   runs the LLM entry detector).
  */
 export function detectSlashRoute(prompt: string): SlashRoute | null {
   const match = SLASH_RE.exec(prompt);
@@ -49,16 +47,14 @@ export function detectSlashRoute(prompt: string): SlashRoute | null {
 
 /**
  * Extracts column names from `/trace` text: each contiguous dot-joined bracket chain of 3+ parts
- * (e.g. `[schema].[table].[column]`) contributes its last token as the column. A 2-part
- * `[schema].[object]` is a node id, and a bare `[X]` is an object — neither is a column, and two
- * such ids named separately in the same sentence never combine into a fabricated chain.
- *
- * @returns The column names, or `null` when none were named.
+ * (`[schema].[table].[column]`) contributes its last token. A 2-part `[schema].[object]` is a node
+ * id and a bare `[X]` an object, neither a column, and two ids named separately in one sentence
+ * never combine into a fabricated chain. `null` when none were named.
  */
 function parseTraceColumns(text: string): string[] | null {
   const columns = [...text.matchAll(BRACKET_CHAIN_RE)].map((chainMatch) => {
-    const tokens = [...chainMatch[0].matchAll(BRACKET_TOKEN_RE)].map(m => m[1].trim());
-    return tokens[tokens.length - 1];
+    const tokens = [...chainMatch[0].matchAll(BRACKET_TOKEN_RE)].map(m => m[0]);
+    return stripBrackets(tokens[tokens.length - 1]).trim();
   });
   return columns.length > 0 ? columns : null;
 }

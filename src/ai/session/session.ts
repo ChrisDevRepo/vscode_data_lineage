@@ -38,7 +38,7 @@ export interface PendingExplorationProposal {
   readonly discoverySummary?: string;
 }
 
-/** Serializes a JSON value with object keys sorted at every level, so key insertion order cannot affect equality. */
+/** Serializes a JSON value with keys sorted at every level, so key order cannot affect equality. */
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, val: unknown) =>
     val !== null && typeof val === 'object' && !Array.isArray(val)
@@ -56,32 +56,28 @@ export function sameExplorationProposal(
 }
 
 /**
- * Result of a turn-guarded session write ({@link AiSession.enterExploring} and its siblings).
- *
- * @remarks
- * `accepted` — the write committed. `dropped_stale_turn` — the epoch belonged to a turn already
- * superseded (a "zombie" that outlived its awaited promise); the caller must not treat it as applied
- * and should surface the drop at DEBUG, never discard it silently.
+ * Result of a turn-guarded session write ({@link AiSession.enterExploring} and siblings).
+ * `accepted`: committed. `dropped_stale_turn`: the epoch belonged to a superseded turn (a "zombie"
+ * that outlived its awaited promise); the caller must not treat the write as applied and should
+ * surface the drop at DEBUG.
  */
 export type SessionWriteOutcome =
   | { kind: 'accepted' }
   | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number };
 
-/** One recorded sliding-memory wipe: what fired it, at which hop, and how much history it discarded. */
+/** One recorded sliding-memory wipe: what fired it, at which hop, how much history it dropped. */
 interface MemoryWipeEvent {
-  /** Only `sliding` exists: the graph replaces history with a continuation anchor after an accepted hop submission. */
+  /**
+   * Only `sliding` exists: the graph swaps history for a continuation anchor after an accepted hop.
+   */
   kind: 'sliding';
-  /** What triggered the wipe. */
   trigger: string;
-  /** Hop at which the wipe fired. */
   hop: number;
   /** Threaded message count discarded by the wipe. */
   messagesBefore: number;
 }
 
-/**
- * Outcome of attempting to start or resume a navigation engine session.
- */
+/** Outcome of attempting to start or resume a navigation engine session. */
 export type ExplorationActivationOutcome =
   | { kind: 'accepted'; engine: IHopStateMachine }
   | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number }
@@ -97,8 +93,8 @@ const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
  * live in `support/tokenBudget.ts` (`contextBlockBytes()`, `storedEvidenceKindBytes()`).
  */
 /**
- * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn history
- * by turn count, independently of how large any single turn is.
+ * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn
+ * history by turn count, independently of how large any single turn is.
  */
 export const MAX_DISCOVERY_TRANSCRIPT_TURNS = 20;
 
@@ -110,7 +106,7 @@ export interface DiscoveryEvidenceObservation {
   readonly result: string;
 }
 
-/** Bounded accepted discovery evidence retained for cross-turn grounding, parsed JSON kept as-is. */
+/** Bounded accepted discovery evidence kept for cross-turn grounding, parsed JSON as-is. */
 interface RetainedDiscoveryEvidence {
   /** Name of the graph-owned tool that produced the result. */
   readonly toolName: string;
@@ -139,11 +135,9 @@ export class AiSession {
   public id: string;
   /**
    * Identifier of the exploration approved in this chat, or `null` before the first approval.
-   *
-   * @remarks
-   * Minted at {@link activatePendingExploration} — the sole publisher of an engine — and cleared by
-   * {@link resetExploration}. Distinguishes bookmarked runs that share one chat session id; a
-   * discovery-turn render with no approved exploration behind it falls back to {@link id}.
+   * Minted at {@link activatePendingExploration} (the sole engine publisher), cleared by
+   * {@link resetExploration}. Distinguishes bookmarked runs sharing one chat session id; a
+   * discovery-turn render with no approved exploration falls back to {@link id}.
    */
   public explorationRunId: string | null = null;
   /** Count of explorations approved in this chat; the suffix that makes each run id unique. */
@@ -155,7 +149,6 @@ export class AiSession {
   public model: DatabaseModel | null = null;
   /** Topology-only graph used for AI navigation. */
   public graph: Graph | null = null;
-  /** Active schema/object filters applied by the user. */
   public filter: SerializedFilterState | null = null;
   /** The name or ID of the language model active for the current turn. */
   public modelName?: string;
@@ -166,29 +159,21 @@ export class AiSession {
    * non-bridge writers may seed it.
    */
   public uiState: unknown = null;
-  /**
-   * Trace-mode snapshot lifted from `uiState.trace`, with no extension-host consumer beyond
-   * debug dumps.
-   */
+  /** Trace-mode snapshot lifted from `uiState.trace`; no host consumer beyond debug dumps. */
   public traceState: unknown = null;
   /**
    * Render-state snapshot from the webview's `render-state` message, validated at the bridge
    * against `RenderStateSnapshotSchema` and consumed by the screen-state presenter.
    */
   public renderState: unknown = null;
-  /** Current graph rendering mode: 'full' or 'overview'. */
   public graphMode: 'full' | 'overview' = 'full';
-  /** Total count of nodes after all active filters are applied (from webview). */
-  public filteredCount = 0;
   /** >0 when the render limit was exceeded (from webview). */
   public renderLimitHit = 0;
-  /** Friendly label for the currently loaded parse rules. */
   public parseRulesLabel = 'built-in rules';
   /** Human-readable label for the data source origin (filename or server/db). */
   public sourceLabel = 'N/A';
   /** Statistics from the last SQL parsing run. */
   public parseStats: { resolvedEdges: number; parsedRefs: number; droppedRefs: number } | null = null;
-  /** Human-readable name of the active project. */
   public projectName: string | null = null;
   /** Persistent identifier for the current project. */
   public currentProjectId: string | null = null;
@@ -201,13 +186,15 @@ export class AiSession {
   public stateMachine: IHopStateMachine | null = null;
   /** Latest AI/user-refined proposal awaiting approval; never an active RuntimeFrame. */
   public pendingExploration: PendingExplorationProposal | null = null;
-  /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
-  /** Latest bounded discovery scope walked with `lineage_get_scope_bundle`; backs the preview offer ({@link settleDiscoveryTurn}). */
+  /**
+   * Latest bounded discovery scope from `lineage_get_scope_bundle`; backs
+   * {@link settleDiscoveryTurn}.
+   */
   public discoveryScopeArtifact: DiscoveryScopeArtifact | null = null;
   /** Latest validated presentation, retained for graph replay without another model call. */
   public presentationArtifact: PresentationArtifact | null = null;
-  /** Exact LangGraph tool stage; the dispatcher must not infer this from the broader session phase. */
+  /** Exact LangGraph tool stage; the dispatcher must not infer it from the session phase. */
   public activeLmStage: LmStage | null = null;
   /**
    * Last `present_result` description string — consumed by `dataLineageViz.aiCreateView`
@@ -245,7 +232,6 @@ export class AiSession {
   private _presentResultFailureCountThisTurn = 0;
   /** Count of failed `present_result` invocations in the current turn. */
   public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
-  /** Last `present_result` failure reason captured this turn. */
   private _presentResultLastFailureReasonThisTurn: string | null = null;
   /** Last `present_result` failure reason captured in the current turn; `null` when none failed. */
   public get presentResultLastFailureReasonThisTurn(): string | null { return this._presentResultLastFailureReasonThisTurn; }
@@ -255,17 +241,17 @@ export class AiSession {
     PresentResultRepairAuthorization
   >();
 
-  /** Fields the held `present_result` repair draft authorizes a resend to patch, or `null` when none is held. */
+  /** Fields the held `present_result` repair draft lets a resend patch, or `null` if none. */
   public get presentResultRepairFields(): PresentResultRepairAuthorization['fields'] | null {
     return this.presentResultRepairDraft.getAuthorization()?.fields ?? null;
   }
 
-  /** Highlight label indexes authorized for leaf-only repair, or `null` for ordinary field repair. */
+  /** Highlight label indexes authorized for leaf-only repair, or `null` for ordinary repair. */
   public get presentResultRepairHighlightLabelIndexes(): readonly number[] | null {
     return this.presentResultRepairDraft.getAuthorization()?.highlightLabelIndexes ?? null;
   }
 
-  /** Held section text leaves authorized for indexed repair, or `null` for ordinary section repair. */
+  /** Held section text leaves authorized for indexed repair, or `null` for ordinary repair. */
   public get presentResultRepairSectionTextLeaves(): PresentResultRepairAuthorization['sectionTextLeaves'] | null {
     return this.presentResultRepairDraft.getAuthorization()?.sectionTextLeaves ?? null;
   }
@@ -278,7 +264,7 @@ export class AiSession {
    */
   private _synthesisRenderDegradedReason: string | null = null;
 
-  /** Records that a synthesis terminal path rendered the model's held text with no working render step. */
+  /** Records that a synthesis terminal path rendered the held text without a render step. */
   public markSynthesisRenderDegraded(reason: string): void {
     this._synthesisRenderDegradedReason = reason;
   }
@@ -286,9 +272,8 @@ export class AiSession {
   /**
    * Clears a render-degraded mark that a preview delivery set, leaving a mark from any other cause.
    *
-   * @remarks
-   * The latest present's delivery outcome decides: a post that went through (or a deferred one) supersedes
-   * an earlier failed post of the same turn.
+   * @remarks The latest present's delivery outcome decides: a post that went through (or a deferred
+   *   one) supersedes an earlier failed post of the same turn.
    */
   public clearPreviewDeliveryDegraded(): void {
     if (this._synthesisRenderDegradedReason === 'preview_post_failed'
@@ -297,7 +282,7 @@ export class AiSession {
     }
   }
 
-  /** Peeks the render-degraded reason without clearing it — read by the synthesis node's own chat line. */
+  /** Peeks the render-degraded reason without clearing it; the synthesis chat line reads it. */
   public get synthesisRenderDegradedReason(): string | null {
     return this._synthesisRenderDegradedReason;
   }
@@ -305,25 +290,23 @@ export class AiSession {
   private readonly _closingNotices = new Map<string, string>();
 
   /**
-   * Queues a user-visible notice for the turn's closing markdown, once per `key`.
-   *
-   * @remarks
-   * VS Code folds every response part before a completed response's last markdown into a collapsed
-   * disclosure, so a notice streamed ahead of the answer is never seen. Notices wait here until the
-   * node that writes the answer takes them with {@link takeClosingNotices}.
+   * Queues a user-visible notice for the turn's closing markdown, once per `key`. VS Code folds
+   * every response part before a completed response's last markdown into a collapsed disclosure, so
+   * a notice streamed ahead of the answer is never seen; notices wait until the answer-writing node
+   * takes them with {@link takeClosingNotices}.
    */
   public queueClosingNotice(key: string, notice: string): void {
     if (!this._closingNotices.has(key)) this._closingNotices.set(key, notice);
   }
 
-  /** Returns the queued notices in queue order, joined as markdown paragraphs, and clears the queue. */
+  /** Returns the queued notices as markdown paragraphs in queue order, and clears the queue. */
   public takeClosingNotices(): string {
     const notices = [...this._closingNotices.values()].map(notice => `\n\n${notice}`).join('');
     this._closingNotices.clear();
     return notices;
   }
 
-  /** Returns and clears the render-degraded reason — call exactly once, from the one-shot toast site. */
+  /** Returns and clears the render-degraded reason; call once, from the one-shot toast site. */
   public consumeSynthesisRenderDegraded(): string | null {
     const reason = this._synthesisRenderDegradedReason;
     this._synthesisRenderDegradedReason = null;
@@ -331,12 +314,10 @@ export class AiSession {
   }
 
   /**
-   * Origin node id walked during the most recent discovery walk.
-   *
-   * @remarks
-   * Captured by {@link settleDiscoveryTurn} from a walked scope of ≥2 nodes or ≥2 distinct
-   * `lineage_get_object_detail` reads; read by the post-discovery SM-offer pill to seed
-   * `lineage_start_exploration` without re-asking the user. Cleared in {@link resetExploration}.
+   * Origin node id of the most recent discovery walk. Captured by {@link settleDiscoveryTurn} from
+   * a scope of 2+ nodes or 2+ distinct `lineage_get_object_detail` reads; seeds
+   * `lineage_start_exploration` from the post-discovery SM-offer pill without re-asking. Cleared in
+   * {@link resetExploration}.
    */
   public lastDiscoveryOrigin: string | null = null;
 
@@ -354,12 +335,10 @@ export class AiSession {
   public lastDiscoveryQuestion: string | null = null;
 
   /**
-   * The verbatim prompt of the current turn, set at run start by the agent
-   * runtime. Host-seeded marker prompts (preview/trace re-entry) are not
-   * stored — those flows resolve their question from
-   * {@link lastDiscoveryQuestion} instead. Read by `start_exploration` to
-   * anchor the canonical user question to user-authored text for direct
-   * free-text entry rather than the model's paraphrase.
+   * Verbatim prompt of the current turn, set at run start by the agent runtime. Host-seeded marker
+   * prompts (preview/trace re-entry) are not stored; those flows use {@link lastDiscoveryQuestion}.
+   * Read by `start_exploration` to anchor the canonical question to user-authored text for direct
+   * free-text entry, not the model's paraphrase.
    */
   public currentTurnPrompt: string | null = null;
 
@@ -373,16 +352,13 @@ export class AiSession {
   public lastDiscoveryAnswer: string | null = null;
   /** Count- and byte-bounded canonical user/final-assistant discovery turns. */
   private discoveryTranscript: DiscoveryTranscriptTurn[] = [];
-  /** Bounded accepted tool evidence projected independently of provider-native transcript shapes. */
+  /** Bounded accepted tool evidence, independent of provider-native transcript shapes. */
   private discoveryEvidence: RetainedDiscoveryEvidence[] = [];
 
   /**
-   * Mission-type classification inferred at end of discovery.
-   *
-   * @remarks
-   * Drives which subsections fire at synthesis. `business` omits the Technical
-   * subsection; `technical` renders technical content only; `both` renders both.
-   * `undefined` means classification has not yet been resolved for this session.
+   * Mission-type classification inferred at end of discovery; drives which subsections fire at
+   * synthesis (`business` omits Technical, `technical` renders only technical, `both` both).
+   * `undefined` until resolved.
    */
   public classification?: ClassificationValue;
   /** YAML-loaded instructions for report generation. */
@@ -405,12 +381,9 @@ export class AiSession {
   /** Unix timestamp of session creation. Pinned at creation; used for result-graft windowing. */
   public startTime: number;
   /**
-   * Total number of tool execution rounds performed.
-   *
-   * @remarks
-   * Engine-derived shadow copy for UI/telemetry only — the host graph mirrors
-   * `engine.getHopDiagnostics().hop` here after each hop. The {@link NavigationEngine} is the
-   * source of truth; never branch control flow on this field.
+   * Total tool execution rounds: an engine-derived shadow copy for UI/telemetry, mirrored from
+   * `engine.getHopDiagnostics().hop` after each hop. The {@link NavigationEngine} is the source of
+   * truth; never branch control flow on this field.
    */
   public hopCount = 0;
   /** Monotonic round id incremented by the host runtime for same-round serial-tool guards. */
@@ -422,12 +395,10 @@ export class AiSession {
   public pendingUserNotice: Set<string> = new Set();
 
   /**
-   * Current finite-state-machine phase. Persists across VS Code chat turns.
-   *
-   * @remarks
-   * LangGraph routes discovery, exploration, synthesis, and completed follow-ups from `phase.kind`.
-   * Transitions go only through {@link enterGate}, {@link enterExploring}, {@link enterIdle}, and
-   * {@link enterCompleted} — never assign this field directly.
+   * Current finite-state-machine phase, persisted across chat turns. LangGraph routes discovery,
+   * exploration, synthesis and completed follow-ups from `phase.kind`. Transition only through
+   * {@link enterGate}, {@link enterExploring}, {@link enterIdle} and {@link enterCompleted}; never
+   * assign directly.
    */
   public phase: SessionPhase = { kind: 'idle' };
 
@@ -438,21 +409,16 @@ export class AiSession {
    */
   private _turnEpoch = 0;
 
-  /** The live turn-ownership epoch (see {@link beginTurn}); always valid for the current turn's own writes. */
+  /** The live turn-ownership epoch (see {@link beginTurn}); valid for the current turn's writes. */
   public get turnEpoch(): number {
     return this._turnEpoch;
   }
 
   /**
-   * Opens a new turn: bumps and returns the turn-ownership epoch the caller threads into this turn's
-   * guarded session writes.
-   *
-   * @remarks
-   * The ONLY site that bumps {@link turnEpoch}. Deliberately not called by {@link resetExploration}:
-   * a bump there would strand a still-running turn's captured epoch, turning its own later writes
-   * into dropped-stale no-ops.
-   *
-   * @returns The new epoch to capture for the duration of this turn.
+   * Opens a new turn: bumps and returns the turn-ownership epoch the caller threads into this
+   * turn's guarded session writes. The only site that bumps {@link turnEpoch};
+   * {@link resetExploration} deliberately does not, since a bump there would strand a running
+   * turn's epoch and turn its later writes into dropped-stale no-ops.
    */
   public beginTurn(): number {
     this._turnEpoch += 1;
@@ -473,12 +439,6 @@ export class AiSession {
     return { kind: 'accepted' };
   }
 
-  /**
-   * Creates a new AiSession.
-   *
-   * @param templates - Optional report generation templates.
-   * @param sections - Optional section labels declared by the capture recipes.
-   */
   constructor(templates?: AiOutputTemplates, sections?: AiOutputSections) {
     this.id = this.generateId();
     this.memory = new AiMemoryManager();
@@ -544,13 +504,11 @@ export class AiSession {
   }
 
   /**
-   * Resets the per-turn-scoped bookkeeping at the start of every chat turn.
-   *
-   * @remarks
-   * A held `present_result` repair draft, its single-shot flags, and the per-turn wipe counters must
-   * never survive into a later turn. {@link resetExploration} does not run on every exit path (a
-   * synthesis abort's bare `fail()` in `graph.ts` skips it), so this is the guaranteed turn-boundary
-   * clear `LineageRuntime.run` calls once instead of resetting each field at its own call site.
+   * Resets per-turn bookkeeping at the start of every chat turn: a held `present_result` repair
+   * draft, its single-shot flags and the per-turn wipe counters must not outlive a turn.
+   * {@link resetExploration} does not run on every exit path (a synthesis abort's bare `fail()` in
+   * `graph.ts` skips it), so this is the guaranteed turn-boundary clear `LineageRuntime.run` calls
+   * once.
    */
   public beginTurnState(): void {
     this.resetMemoryWipeDiagnostics();
@@ -560,17 +518,15 @@ export class AiSession {
   }
 
   /**
-   * The newest follow-up prose held back by `proseGate: 'buffer-until-tool'`, turn-scoped.
-   *
-   * @remarks
-   * `proseGate: 'buffer-until-tool'` suppresses prose until its paired tool call is known good, and a
-   * rejected call discards it — even when the prose alone already answered the question. Held here so
-   * the terminal path can still deliver it; each new generation supersedes the last.
+   * Newest follow-up prose held back by `proseGate: 'buffer-until-tool'`, turn-scoped. The gate
+   * suppresses prose until its paired tool call is known good and a rejected call discards it even
+   * if the prose already answered; holding it here lets the terminal path still deliver it. Each
+   * new generation supersedes the last.
    */
   private _bufferedFollowUpProse: string | null = null;
   /** The newest buffered follow-up prose, or null when this turn produced none. */
   public get bufferedFollowUpProse(): string | null { return this._bufferedFollowUpProse; }
-  /** Holds one generation's suppressed prose, replacing any earlier one. Blank text clears nothing. */
+  /** Holds one generation's suppressed prose, replacing any earlier; blank text clears nothing. */
   public bufferFollowUpProse(text: string): void {
     if (text.trim().length > 0) this._bufferedFollowUpProse = text;
   }
@@ -597,19 +553,13 @@ export class AiSession {
   }
 
   /**
-   * Settles the post-discovery offers once a discovery turn has its answer.
+   * Settles the post-discovery offers once a discovery turn has its answer. A scope of 2+ nodes
+   * walked this turn, else a detail walk of 2+ objects, becomes the recorded discovery seeding the
+   * "Start deeper hop-by-hop analysis" offer and `lineage_start_exploration`. A turn that read the
+   * catalog without walking a scope answered about something the stored scope does not show, so
+   * that scope and its "Show graph preview" offer are dropped. A direct answer (nothing read)
+   * changes neither. Cleared in {@link resetExploration}.
    *
-   * @remarks
-   * A scope of two or more nodes this turn walked, else a detail walk of two or more objects,
-   * becomes the recorded discovery that seeds the "Start deeper hop-by-hop analysis" offer and
-   * `lineage_start_exploration`. A turn that read the catalog without walking a scope answered
-   * about something the stored scope does not show, so that scope — and the "Show graph preview"
-   * offer it backs — is dropped. A turn that read nothing (a direct answer) changes neither, so the
-   * last walk's offers stay on the newest reply. Everything is cleared in {@link resetExploration}.
-   *
-   * @param token - Turn epoch of the discovery turn.
-   * @param question - The user's verbatim discovery prompt.
-   * @param answer - The AI's final discovery answer (markdown).
    * @param detailWalk - The turn's multi-object detail walk, or `null`.
    * @param readCatalog - Whether the turn accepted any tool observation.
    */
@@ -638,11 +588,9 @@ export class AiSession {
 
   /**
    * Whether the post-discovery SM-offer may render (idle phase, multi-object walk with an origin).
-   *
-   * @remarks
-   * The single predicate for every surface that renders the offer — call it, never re-state the
-   * three conditions at a render site. An oversized scope never reaches here: the discovery budget
-   * guard routes that turn straight into SM entry and the consent gate.
+   * The single predicate for every surface rendering the offer; do not restate its conditions at a
+   * render site. An oversized scope never reaches it: the discovery budget guard routes that turn
+   * into SM entry and the consent gate.
    */
   public smOfferAvailable(): boolean {
     return this.phase.kind === 'idle'
@@ -658,20 +606,16 @@ export class AiSession {
   }
 
   /**
-   * Appends canonical conversation text and bounded accepted discovery evidence.
+   * Appends canonical conversation text and bounded accepted discovery evidence. Provider-native
+   * tool calls and `tool` messages are never retained; evidence is accepted only as valid JSON from
+   * a successful graph-owned observation. Oldest evidence and transcript turns are evicted first on
+   * their byte/count bounds; every eviction or drop is normalize-with-log via `debugLog` when
+   * supplied.
    *
-   * @remarks
-   * Provider-native tool calls and `tool` messages are never retained; evidence is accepted only
-   * when it is valid JSON from a successful graph-owned observation. Oldest evidence and oldest
-   * transcript turns are evicted first on their byte/count bounds; every eviction or drop is
-   * NORMALIZE-WITH-LOG, reported through `debugLog` when the caller supplies one.
-   *
-   * @param budget - Budget of the turn that produced the messages; the session is shared by every
-   *   turn, so the bound comes from the caller rather than from session state.
-   * @param turnMessages - Canonical user/final-assistant messages for the completed turn.
-   * @param observations - Successful provider-neutral discovery observations from graph state.
-   * @param debugLog - Optional debug sink for a normalized eviction/drop; the session holds no
-   *   logger of its own, so the caller passes in the one it already holds.
+   * @param budget - Budget of the turn that produced the messages (the session is shared by every
+   *   turn).
+   * @param debugLog - Debug sink for a normalized eviction/drop; the session holds no logger of its
+   *   own.
    */
   public appendDiscoveryTurn(
     budget: TurnTokenBudget,
@@ -757,7 +701,8 @@ export class AiSession {
 
   /**
    * Clears cross-turn discovery memory: on model/project (re)load, on a new native chat, and after
-   * every turn that supplied native history (which then owns cross-turn conversation). Never on SM start.
+   * every turn that supplied native history (which then owns cross-turn conversation). Never on SM
+   * start.
    */
   public clearDiscoveryTranscript(): void {
     this.discoveryTranscript = [];
@@ -771,27 +716,19 @@ export class AiSession {
   }
 
   /**
-   * Stores the mission-type classification inferred at end of discovery.
-   *
-   * @remarks
-   * Zod-validates the value at the boundary. Invalid values are rejected
-   * mechanically — callers should pass only `'business' | 'technical' | 'both'`.
-   *
-   * @param value - One of `business` | `technical` | `both`.
+   * Stores the mission-type classification inferred at end of discovery. Zod-validated at the
+   * boundary; invalid values are rejected mechanically.
    */
   public setClassification(value: ClassificationValue): void {
     this.classification = ClassificationSchema.parse(value);
   }
 
   /**
-   * Returns the gate-locked classification required by active and synthesis model calls.
+   * Returns the gate-locked classification required by active and synthesis model calls. A missing
+   * classification after approval is corrupted runtime state, not a reason to guess `business`;
+   * failing before instruction-plan compilation leaves model call and engine state unchanged and
+   * makes drift observable.
    *
-   * @remarks
-   * Missing classification after exploration approval is corrupted runtime state, not a reason to
-   * guess `business`. Failing before instruction-plan compilation keeps the model call and engine
-   * state unchanged and makes checkpoint/session drift observable.
-   *
-   * @returns The validated locked classification.
    * @throws When no classification has been approved for the current exploration.
    */
   public requireLockedClassification(): ClassificationValue {
@@ -802,17 +739,11 @@ export class AiSession {
   }
 
   /**
-   * Transitions the session into `awaiting_gate` — the engine paused on a consent
-   * gate and the next user turn must resolve it (yes / no / redirect).
-   *
-   * @remarks
-   * Discovery context (`lastDiscoveryOrigin` and siblings) is left intact — the post-approval
-   * discovery-summary composition round reads it after the gate is approved. On cancel,
-   * {@link resetExploration} clears these fields.
-   *
-   * @param gate - The validated consent-gate envelope produced by the engine.
-   * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
-   * @returns Whether the transition committed or was dropped as a stale-turn no-op.
+   * Transitions into `awaiting_gate`: the engine paused on a consent gate and the next user turn
+   * must resolve it (yes / no / redirect). Discovery context (`lastDiscoveryOrigin` and siblings)
+   * is left intact because the post-approval summary composition reads it; on cancel
+   * {@link resetExploration} clears it. A stale `token` (see {@link beginTurn}) drops the write
+   * ({@link SessionWriteOutcome}).
    */
   public enterGate(gate: PendingGate, token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'enterGate');
@@ -836,12 +767,9 @@ export class AiSession {
   }
 
   /**
-   * Attaches the composed discovery-handoff memo to the pending proposal at `revision`.
-   *
-   * @remarks
-   * Runs after {@link storePendingExploration}, once the revision is known. A no-op when the
-   * proposal has since moved past `revision` (superseded by a newer refine mid-composition) — the
-   * caller degrades by omitting the memo rather than treating this as a failure.
+   * Attaches the composed discovery-handoff memo to the pending proposal at `revision`. Runs after
+   * {@link storePendingExploration}. A no-op when the proposal has moved past `revision`
+   * (superseded by a refine mid-composition); the caller omits the memo rather than failing.
    */
   public attachDiscoverySummary(revision: number, text: string, token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'attachDiscoverySummary');
@@ -852,7 +780,7 @@ export class AiSession {
     return guard;
   }
 
-  /** Cancels proposal review without discarding a completed engine/result already on the session. */
+  /** Cancels proposal review without discarding a completed engine/result on the session. */
   public cancelPendingExploration(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'cancelPendingExploration');
     if (guard.kind !== 'accepted') return guard;
@@ -884,6 +812,9 @@ export class AiSession {
     try {
       const classification = ClassificationSchema.parse(proposal.classification);
       built.publishMemoryTo(this.memory);
+      // A new exploration replaces any earlier result; it never extends it.
+      this.resultGraph = null;
+      this.resetPresentResultLifecycle();
       this.stateMachine = built;
       this.explorationCounter += 1;
       this.explorationRunId = `${this.id}:e${this.explorationCounter}`;
@@ -915,12 +846,9 @@ export class AiSession {
   }
 
   /**
-   * Transitions the session into `idle` — no exploration is active, next turn
-   * enters discovery. Use {@link resetExploration} when exploration state itself
-   * also needs clearing.
-   *
-   * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
-   * @returns Whether the transition committed or was dropped as a stale-turn no-op.
+   * Transitions into `idle`: no exploration active, the next turn enters discovery. Use
+   * {@link resetExploration} when exploration state also needs clearing. A stale `token` drops the
+   * write ({@link SessionWriteOutcome}).
    */
   public enterIdle(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'enterIdle');
@@ -930,13 +858,10 @@ export class AiSession {
   }
 
   /**
-   * Transitions the session into `completed` — synthesis finished, archive survives
-   * on the session singleton. Next user turn routes through the follow-up protocol
-   * (refinement without a fresh exploration). Call only when
-   * `stateMachine?.status === 'complete'`.
-   *
-   * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
-   * @returns Whether the transition committed or was dropped as a stale-turn no-op.
+   * Transitions into `completed`: synthesis finished, the archive survives on the session
+   * singleton, and the next user turn routes through follow-up refinement. Call only when
+   * `stateMachine?.status === 'complete'`. A stale `token` drops the write
+   * ({@link SessionWriteOutcome}).
    */
   public enterCompleted(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'enterCompleted');
@@ -945,21 +870,17 @@ export class AiSession {
     return guard;
   }
 
-  /**
-   * Rotates the session identifier and resets the start timer.
-   */
+  /** Rotates the session identifier and resets the start timer. */
   public regenerateSessionId(): void {
     this.id = this.generateId();
     this.startTime = Date.now();
   }
 
   /**
-   * Starts a new native chat session as one atomic session-owned transition.
-   *
-   * @remarks
-   * Preserves the established exploration reset semantics while also clearing
-   * the bounded discovery transcript via {@link clearDiscoveryTranscript}.
-   * `AiMemoryManager` continues to be reset only through {@link resetExploration}.
+   * Starts a new native chat session as one atomic session-owned transition: the established
+   * exploration reset plus clearing the bounded discovery transcript
+   * ({@link clearDiscoveryTranscript}). `AiMemoryManager` is reset only through
+   * {@link resetExploration}.
    */
   public beginNativeChatSession(): void {
     this.regenerateSessionId();
@@ -968,19 +889,17 @@ export class AiSession {
   }
 
   /**
-   * Clears the single-shot `present_result` guard for the current follow-up turn.
-   *
-   * @remarks
-   * Persists from synthesis into the completed phase so the participant can stream the summary
-   * after the turn; `followUpNode` clears it at the start of each follow-up turn so a Route A
-   * `present_result` adjust fires fresh. Assign only through this method, never directly.
+   * Clears the single-shot `present_result` guard for the current follow-up turn. It persists from
+   * synthesis into the completed phase so the participant can stream the summary afterwards;
+   * `followUpNode` clears it at the start of each follow-up turn so a Route A `present_result`
+   * adjust fires fresh. Assign only through this method.
    */
   public clearPresentResultFlag(): void {
     this._presentResultCalledThisTurn = false;
     this._presentResultAutoDispatched = false;
   }
 
-  /** Counts one `present_result` invocation at tool-handler entry, if the calling turn still owns the session. */
+  /** Counts one `present_result` call at handler entry, if the calling turn owns the session. */
   public beginPresentResultAttempt(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'beginPresentResultAttempt');
     if (guard.kind !== 'accepted') return guard;
@@ -988,7 +907,9 @@ export class AiSession {
     return guard;
   }
 
-  /** Records one failed `present_result` invocation and its reason, if the calling turn still owns the session. */
+  /**
+   * Records one failed `present_result` call and its reason, if the calling turn owns the session.
+   */
   public recordPresentResultFailure(token: number, reason: string): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'recordPresentResultFailure');
     if (guard.kind !== 'accepted') return guard;
@@ -997,7 +918,10 @@ export class AiSession {
     return guard;
   }
 
-  /** Commits a validated presentation — artifact plus single-shot success flags — if the calling turn still owns the session. */
+  /**
+   * Commits a validated presentation (artifact, single-shot success flags) if the turn owns the
+   * session.
+   */
   public commitPresentResultSuccess(
     token: number,
     artifact: PresentationArtifact,
@@ -1013,17 +937,11 @@ export class AiSession {
   }
 
   /**
-   * Transmutes state-machine findings into the visual `ResultGraph` format.
-   *
-   * @remarks
-   * Maps navigation-engine output to the `ResultGraph` contract consumed by `present_result` and the
-   * webview; `source` reflects the engine's `columnAspect` flag at call time. Synthesized body
-   * fields (`description`/`summary`/`title`/etc.) carry forward from the prior `resultGraph` until a
-   * new `present_result` call overwrites them, so a supplement round never blanks an already-rendered one.
-   *
-   * @param fullResult - The raw completion result from the state machine.
-   * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
-   * @returns Whether the result committed or was dropped as a stale-turn no-op.
+   * Maps state-machine output to the `ResultGraph` contract consumed by `present_result` and the
+   * webview; `source` reflects the engine's `columnAspect` flag at call time. Body fields
+   * (`description`/`summary`/`title`) carry forward from the prior `resultGraph` until a new
+   * `present_result` overwrites them, so a supplement round never blanks a rendered result. A stale
+   * `token` drops the write ({@link SessionWriteOutcome}).
    */
   public storeSmResult(fullResult: SmResult, token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'storeSmResult');
@@ -1056,13 +974,9 @@ export class AiSession {
   }
 
   /**
-   * The committed report sections a further render of this same run may keep instead of resending.
-   *
-   * @remarks
-   * Three facts must hold together: sections exist, an approved exploration is behind them, and
-   * that run is still the one rendering. The last is load-bearing — {@link storeSmResult} carries
-   * sections forward across a fresh exploration, so an unstamped check would leak the previous
-   * run's report. A discovery-turn render has no run id and never retains.
+   * The committed report sections a further render of this run may keep instead of resending.
+   * Requires sections, an approved exploration behind them, and that run still being the one
+   * rendering. A discovery-turn render has no run id and never retains.
    *
    * @returns The retainable sections, or `null` when this render must author its own.
    */
@@ -1073,17 +987,9 @@ export class AiSession {
   }
 
   /**
-   * Mirrors the engine-derived hop count into {@link hopCount} for UI/telemetry, guarded by the
-   * turn epoch.
-   *
-   * @remarks
-   * `hopCount` is an engine-derived shadow copy (see {@link hopCount}); a superseded "zombie" turn
-   * must not clobber the diagnostics a newer turn now owns, so the write lands only while
-   * {@link token} still matches the live {@link turnEpoch}.
-   *
-   * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
-   * @param count - The engine-derived hop count to mirror.
-   * @returns Whether the write committed or was dropped as a stale-turn no-op.
+   * Mirrors the engine-derived hop count into {@link hopCount} for UI/telemetry. Epoch-guarded: a
+   * superseded "zombie" turn must not clobber diagnostics a newer turn owns, so the write lands
+   * only while `token` matches the live {@link turnEpoch} ({@link SessionWriteOutcome}).
    */
   public setHopCount(token: number, count: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'setHopCount');
@@ -1093,17 +999,9 @@ export class AiSession {
   }
 
   /**
-   * Records one per-turn memory wipe and updates its matching aggregate counter, guarded by the
-   * turn epoch.
-   *
-   * @remarks
-   * Feeds the analytics layer's per-wipe waste basis (see {@link memoryWipeEventsThisTurn}); a
-   * superseded "zombie" turn must not append to the event log a newer turn now owns, so the push
-   * lands only while {@link token} still matches the live {@link turnEpoch}.
-   *
-   * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
-   * @param event - The wipe event (kind / trigger / hop / messages-before-wipe).
-   * @returns Whether the write committed or was dropped as a stale-turn no-op.
+   * Records one per-turn memory wipe and updates its aggregate counter, feeding the analytics
+   * per-wipe waste basis ({@link memoryWipeEventsThisTurn}). Epoch-guarded like
+   * {@link setHopCount}: a superseded "zombie" turn must not append to the log a newer turn owns.
    */
   public recordMemoryWipeEvent(
     token: number,
@@ -1118,15 +1016,7 @@ export class AiSession {
 
 const GLOBAL_SESSION_KEY = '__VSCODE_DL_AI_SESSION__';
 
-/**
- * Retrieves the global singleton instance of the `AiSession`.
- *
- * @remarks
- * Uses `globalThis` to ensure state persistence across different entry points
- * (Extension Host vs. Integration Tests).
- *
- * @returns The active `AiSession` instance.
- */
+/** The global `AiSession` singleton on `globalThis`, so state spans entry points and tests. */
 export function getSession(): AiSession {
   return getGlobalSingleton(GLOBAL_SESSION_KEY, () => new AiSession());
 }

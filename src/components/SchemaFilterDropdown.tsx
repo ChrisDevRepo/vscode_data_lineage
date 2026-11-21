@@ -9,31 +9,15 @@ interface SchemaFilterDropdownProps {
   selectedSchemas: Set<string>;
   /** Set of schema names currently "focused" (highlighted/prioritized) in the view. */
   focusSchemas: Set<string>;
-  /**
-   * Optional callback to toggle a schema's visibility.
-   * @param schema - Name of the schema to toggle.
-   */
   onToggleSchema?: (schema: string) => void;
-  /**
-   * Optional callback to select multiple schemas at once (e.g., "Select All").
-   * @param schemas - Schemas to select.
-   */
+  /** Optional callback to select several schemas at once (e.g. "Select All"). */
   onSelectAll?: (schemas: string[]) => void;
-  /**
-   * Optional callback to deselect multiple schemas at once.
-   * @param schemas - Schemas to deselect.
-   */
   onSelectNone?: (schemas: string[]) => void;
-  /**
-   * Callback to toggle a schema's focus state.
-   * @param schema - Name of the schema to focus or unfocus.
-   */
   onToggleFocusSchema: (schema: string) => void;
   /** Whether the current filter state is "narrowed" (affects visual indicators). */
   isNarrowed?: boolean;
   /** When true, the trigger renders disabled and never opens the panel. */
   disabled?: boolean;
-  /** Tooltip text shown on the trigger while {@link disabled}. */
   disabledReason?: string;
 }
 
@@ -43,9 +27,7 @@ const SCHEMA_ICON = (
   </svg>
 );
 
-/**
- * Filters and focuses graph schemas with individual and bulk selection controls.
- */
+/** Filters and focuses graph schemas with individual and bulk selection controls. */
 export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   schemas,
   selectedSchemas,

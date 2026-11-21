@@ -1,93 +1,112 @@
 # Table Profiling
 
-Table profiling is an opt-in, live-database feature. It does not run for DACPAC
+Table profiling runs on demand against a live database. It does not run for DACPAC
 sources and does not start until the user opens table details and requests
-statistics. The current SQL generation lives in
-[`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts); this document
-covers the user-visible and operational contract rather than duplicating that
-implementation.
+statistics. This document describes the SQL a request sends and what it costs.
 
 ## Prerequisites and safety
 
 - The active database connection needs `SELECT` permission on profiled tables
   and catalog visibility for row-count metadata.
-- A built-in connection is opened for each profiling request and closed when
-  it finishes. Through the SQL Server (mssql) extension, profiling opens one
-  connection on first use and reuses it until the main lineage panel closes or
-  another saved project is loaded; a query error does not disconnect it.
+- A connection is opened for each profiling request and closed when it
+  finishes. See [Connections](../SECURITY.md#connections).
 - External tables can query remote systems. They are excluded by default and
-  should be enabled only when their cost and latency are understood.
+  should be enabled only when their cost and latency are understood. The
+  exclusion hides the statistics section for external tables in the detail
+  panel, and a request for one is refused.
 - Approximate distinct counts require a database version that supports
   `APPROX_COUNT_DISTINCT`. Disable
   `dataLineageViz.tableStatistics.useApproxDistinct` on older SQL Server
   versions.
 
-Profiling issues read-only row-count and aggregate `SELECT` queries. Custom DMV
-configuration does not alter profiling SQL.
+Profiling issues read-only row-count and aggregate `SELECT` queries. Before
+them, every request runs the `platform-info` query from the DMV queries YAML
+(the custom file, if configured). Its `engine_edition` decides between `TOP` and
+`TABLESAMPLE` sampling, so `platform-info` is required for table statistics. See
+[`DMV_QUERIES.md`](DMV_QUERIES.md). The row-count and aggregate SQL is built
+into the extension and is not in the YAML.
 
 ## Modes and metrics
 
 Quick mode reports row count, null count, distinct count, completeness, and
 uniqueness. Standard mode adds type-appropriate detail such as numeric range,
 mean and standard deviation, string length and empty-string counts, and date
-range.
+range. Completeness and uniqueness are calculated in the extension from the row
+count and the per-column aggregates.
 
-Completeness and uniqueness percentages are calculated in the extension from
-the reported table row count and per-column aggregates. Distinct counts use the
-approximate or exact function selected in settings.
+Non-profileable types and computed columns are shown as not profiled and do not
+count towards the column limit. Profileable columns beyond
+`dataLineageViz.tableStatistics.maxColumns` are left out of the SQL and also
+shown as not profiled.
 
-Intrinsic non-profileable types and computed columns are shown as not profiled
-and do not consume the column budget. Profilable columns beyond
-`dataLineageViz.tableStatistics.maxColumns` are omitted from the SQL, but the
-current UI can still render them with zero/default metrics; those rows are not
-measurements.
+## Query shapes
+
+Row count, from the catalog (`index_id` 0 is a heap, 1 the clustered index):
+
+```sql
+SELECT SUM(p.rows) AS row_count
+FROM sys.partitions p
+WHERE p.object_id = OBJECT_ID(N'[schema].[table]')
+  AND p.index_id IN (0, 1)
+```
+
+Aggregates, one row from a single `SELECT` over the table. Each profiled column
+adds the fragments for its type:
+
+| Mode | Fragments per column |
+|------|----------------------|
+| Quick | distinct count (`APPROX_COUNT_DISTINCT` or `COUNT(DISTINCT)`); null count when the column is nullable |
+| Standard, numeric | Quick, plus `MIN`, `MAX`, `AVG`, `STDEV`; zero count when nullable |
+| Standard, date and time | Quick, plus `MIN`, `MAX` |
+| Standard, string | Quick, plus `MIN` and `MAX` of `LEN`; empty-string count |
+
+```sql
+SELECT [TOP n] [COUNT_BIG(*) AS __rows,]
+  APPROX_COUNT_DISTINCT([col]) AS c0_d,
+  SUM(CASE WHEN [col] IS NULL THEN 1 ELSE 0 END) AS c0_n
+  -- more fragments per column
+FROM [schema].[table] [TABLESAMPLE(n PERCENT)]
+```
+
 
 ## Sampling
 
 Tables above the configured threshold use a platform-specific sampling clause:
 
-- Fabric Data Warehouse uses a `TOP` clause.
+- Fabric Data Warehouse uses a `TOP` clause, which in practice scans the whole
+  table (see the limitation below).
 - Other detected editions use `TABLESAMPLE`.
 - A sampled query that fails with a `TABLESAMPLE` error is retried once as a
   full scan.
 
-The target sample size is converted into the clause required by the detected
-platform. Row-count headers show the catalog row count. On a `TABLESAMPLE` run the
-query also returns the number of rows it read, and NULL %, completeness and
-uniqueness are computed against that sample size, so they describe the sample when at least one row is read. An empty sample
-currently falls back to the catalog row count as the denominator.
+With `TABLESAMPLE`, the target sample size is converted to a whole percent of
+the table: `ceil(sampleSize / rowCount * 100)`, at least 1 and at most 100. The
+sample is therefore approximate and can read more rows than `sampleSize`.
+On a `TABLESAMPLE` run the query also returns the number of rows it read, and
+NULL %, completeness and uniqueness are computed against that number.
 
-Current limitation: Fabric's generated `TOP` aggregate query limits result rows
-rather than the aggregate input. Treat those metrics as full-scan aggregates
-despite the sampling indicator. After a `TABLESAMPLE` retry, the indicator
-also retains the original sampling status even though the retry scans the full table.
+Limitation: on Fabric the `TOP` clause limits result rows rather than the
+aggregate input, so the query scans the full table.
 
 ## Settings
 
-The maintained defaults, ranges, and descriptions are in VS Code Settings and
-the `contributes.configuration` section of [`package.json`](../package.json).
-The profiling controls cover:
+Defaults and ranges are listed in
+[`FEATURES.md`](FEATURES.md#table-statistics). The profiling controls cover:
 
 - enabling the feature and Standard mode;
 - excluding external tables;
 - per-query timeout;
 - sampling threshold and target size;
-- approximate versus exact distinct counts; and
+- approximate or full distinct counts; and
 - maximum profiled columns.
-
-See [`FEATURES.md`](FEATURES.md#table-profiling) for the user-facing settings
-summary.
 
 ## Diagnostics
 
 Open **View -> Output -> Data Lineage Viz** and set the channel log level to
-**Debug**. `[Stats]` entries describe profiling lifecycle and `[DB]` entries
-show bounded query previews. Review logs before sharing because object and
-column identifiers may be present.
+**Debug**. `[Stats]` entries describe the profiling lifecycle and `[DB]` entries
+show the first 300 characters of each query. Object and column identifiers may
+appear in the log.
 
 ## Reference
 
-- Engine: [`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts)
-- Bridge handler: [`src/bridge/messageHandlers.ts`](../src/bridge/messageHandlers.ts)
-- UI: [`src/components/StatsSection.tsx`](../src/components/StatsSection.tsx)
 - User-facing feature guide: [`FEATURES.md`](FEATURES.md#table-profiling)

@@ -17,13 +17,11 @@ const SEARCH_EXECUTION_DEADLINE_MS = 1000;
 const SEARCH_WORKER_STARTUP_TIMEOUT_MS = 5000;
 
 /**
- * Executes one complete native-regexp search outside the extension host thread.
- *
- * @remarks
- * Cancellation, deadline and worker failure terminate the isolated job and reject without partial
- * results. The worker asset is adjacent both in extension bundles and in the compiled harness.
- * The execution watchdog starts when the worker is online, excluding worker startup from matching
- * time; a separate startup watchdog rejects with reason `worker` if it never comes online.
+ * Executes one complete native-regexp search outside the extension host thread. Cancellation,
+ * deadline and worker failure terminate the isolated job and reject without partial results. The
+ * worker asset is adjacent in extension bundles and in the compiled harness. The execution watchdog
+ * starts when the worker is online, excluding startup from matching time; a separate startup
+ * watchdog rejects with reason `worker` if it never comes online.
  */
 export function executeIsolatedRegexSearch(job: RegexSearchJob, signal?: AbortSignal): Promise<RegexSearchReply> {
   if (signal?.aborted) return Promise.reject(new RegexSearchExecutionError('cancelled', 'Search cancelled.'));

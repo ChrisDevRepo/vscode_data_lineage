@@ -4,25 +4,27 @@ import { Tooltip } from './ui/Tooltip';
 import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface InlineTraceControlsProps {
-  /** ID of the node starting the trace. */
   startNodeId: string;
-  /** Display name of the start node. */
   startNodeName: string;
   /** Initial upstream depth to show in the input. */
   defaultUpstream?: number;
   /** Initial downstream depth to show in the input. */
   defaultDownstream?: number;
-  /** Callback fired when the user applies the trace configuration. */
   onApply: (config: {
     startNodeId: string;
     upstreamLevels: number;
     downstreamLevels: number;
   }) => void;
-  /** Callback fired to cancel the trace configuration. */
   onClose: () => void;
-  /** BFS-only probe for the object count the current upstream/downstream choice would produce — "count before the click". Omitted when the caller cannot resolve a graph yet. */
+  /**
+   * BFS-only probe of the object count the current upstream/downstream choice would produce (count
+   * before the click); omitted when the caller cannot resolve a graph yet.
+   */
   estimateCount?: (upstreamLevels: number, downstreamLevels: number) => number;
-  /** Render limit the count is checked against for the "over limit" hint; the choice stays clickable regardless — the render-limit notice handles it once applied. */
+  /**
+   * Render limit the count is checked against for the "over limit" hint; the choice stays
+   * clickable, and the render-limit notice handles it once applied.
+   */
   renderLimit?: number;
 }
 

@@ -17,13 +17,9 @@ const LIT_STROKE_WIDTH = 1.6;
 const DIM_STROKE_WIDTH = 1;
 
 /**
- * Dash pattern of an edge that only shaped which rows arrive, never the value.
- *
- * @remarks
- * The one drawing convention column-lineage tools actually share: OpenLineage splits every column
- * relation into DIRECT and INDIRECT, and a lineage viewer draws the indirect one broken — a column
- * used in a WHERE or a JOIN predicate reaches the output without its value ever landing in it. The
- * `COLUMN_TRANSFORM_DIRECTION` map classifies each class; an INDIRECT-only edge is drawn dashed.
+ * Dash pattern of an edge that only shaped which rows arrive, never the value (OpenLineage's
+ * INDIRECT class, e.g. a WHERE or JOIN predicate column). An INDIRECT-only edge in
+ * `COLUMN_TRANSFORM_DIRECTION` is drawn dashed.
  */
 const INDIRECT_DASH_PATTERN = '5 4';
 
@@ -37,18 +33,15 @@ const CHIP_GLYPH_SIZE = 20;
 const CHIP_MAX_GLYPHS = 2;
 
 /**
- * Payload a column-view edge carries to its renderer.
- *
- * @remarks
- * Indexed to satisfy React Flow's edge-data constraint. `lit` is resolved by the canvas, which
- * owns the hovered column path, so the edge renders the effect without recomputing it.
+ * Payload a column-view edge carries to its renderer; indexed to satisfy React Flow's edge-data
+ * constraint. `lit` is resolved by the canvas, which owns the hovered column path.
  */
 export interface ColumnTraceEdgeData extends Record<string, unknown> {
   /** Whether the value changed between the two endpoints. */
   state: ColumnLineState;
-  /** Whether this edge is inside the lit set — the hovered column path, or the selected node's edges. */
+  /** Inside the lit set: the hovered column path, or the selected node's edges. */
   lit: boolean;
-  /** Whether the edge is lit by a narrowing — a hovered or selected column path, or a selected node — so its marker chip takes the line's highlight. */
+  /** Lit by a narrowing (hovered or selected column path or node): the chip takes the highlight. */
   focused?: boolean;
   /** Source column name as recorded, for the marker's hover text. */
   sourceColumn: string;
@@ -59,18 +52,13 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
   /** One-clause model note for the edge; absent whenever the model offered none. */
   note?: string;
   /**
-   * Whether the edge is an object-level dependency rather than a column thread: drawn broken, since
-   * no column value crosses it, and never marked with a chip.
+   * Object-level dependency rather than a column thread: drawn broken (no column value crosses it)
+   * and never marked with a chip.
    */
   objectLevel?: boolean;
 }
 
-/**
- * Display name of one transform class, as the tooltip's first line spells it.
- *
- * @remarks
- * The chip's tooltip is the only surface that names the class, so these strings are user-facing.
- */
+/** Display name of a transform class, as the first line of the chip tooltip; user-facing. */
 const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
   pass_through: 'Pass through',
   compute: 'Compute',
@@ -85,14 +73,13 @@ function markedTransformClasses(transforms: readonly ColumnTransformClass[] | un
 }
 
 /**
- * Builds the marker chip's tooltip text: the class names first, then the model's own one-clause
- * note when it offered one, else the structural description of the line.
+ * Tooltip text of the marker chip: the class names, then the model's one-clause note when it gave
+ * one, else the structural description.
  *
- * @remarks
- * A `pass_through`-only edge never reaches here — it renders no chip, because identity is what an
- * unmarked line already says. `filter`/`combine` are INDIRECT: no value crosses the edge, so the
- * structural fallback says what the edge does to the row set rather than claiming a value changed.
- * Exported so the tooltip contract is testable without simulating hover.
+ * A `pass_through`-only edge never reaches here (it renders no chip). `filter`/`combine` are
+ * INDIRECT, so the fallback describes what the edge does to the row set, not a value change.
+ * Exported so the contract is testable without hover.
+ * @internal
  */
 export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
   const classes = markedTransformClasses(data.transforms);
@@ -125,14 +112,10 @@ function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransfor
 }
 
 /**
- * The mark drawn for one transform class.
- *
- * @remarks
- * Inline SVG, since the webview ships no icon library. One mark per class, each the symbol its
- * operation already carries in data tooling: arrow copies, `fx` computes, sigma aggregates,
- * overlapping circles join, funnel filters. All are stroked primitives in the shared 24-unit box
- * so they render as one family at chip scale. DIRECT vs INDIRECT is carried by the line itself
- * (an indirect edge is drawn broken), never by the chip.
+ * Mark drawn for one transform class, as inline SVG (the webview ships no icon library): arrow
+ * copies, `fx` computes, sigma aggregates, overlapping circles join, funnel filters. Stroked
+ * primitives in the shared 24-unit box, so they read as one family; DIRECT vs INDIRECT is the
+ * line's dash, never the chip.
  */
 function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransformClass }) {
   switch (transformClass) {
@@ -185,12 +168,10 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
 }
 
 /**
- * The mark drawn inside an unclassified chip: an open ring.
- *
- * @remarks
- * The ring carries no orientation, so it cannot be misread as a direction on a canvas where
- * direction is the primary semantic, and it stays unfilled because the object-type legend uses a
- * filled dot for a view. r=7 in the 24-unit box lands as a ~5.8px ring inside the 20px glyph box.
+ * Open ring drawn in an unclassified chip. It has no orientation, so it cannot read as a direction,
+ * and stays unfilled because the legend uses a filled dot for a view. r=7 in the 24-unit box lands
+ * as a ~5.8px ring in the 20px glyph box.
+ * @internal
  */
 export function ColumnTransformGlyph() {
   return (
@@ -211,16 +192,10 @@ export function ColumnTransformGlyph() {
 /**
  * Renders one column-view edge and, where the trace recorded a transformation, its marker chip.
  *
- * @remarks
- * A custom edge rather than React Flow's `label` prop because the marker has to be a hover target:
- * `label` renders inert text with no pointer callback, so the transformation could be seen but not
- * interrogated. The chip is the trigger — hovering the bare line does nothing, matching how every
- * comparable lineage tool exposes transform detail.
- *
- * The chip's content follows the classification: a model-classified edge shows one glyph per class
- * (capped, the remainder collapsed into a count), an unclassified transformation keeps the neutral
- * ring. A `pass_through`-only edge renders no chip at all — identity is what an unmarked line
- * already says, so marking it would spend the reader's attention to say nothing.
+ * A custom edge, not React Flow's `label` (inert text, no pointer callback), because the chip is
+ * the hover trigger; the bare line does nothing. A model-classified edge shows one glyph per class
+ * (capped, the rest collapsed into a count), an unclassified one the neutral ring, and a
+ * `pass_through`-only edge no chip.
  */
 export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   sourceX,

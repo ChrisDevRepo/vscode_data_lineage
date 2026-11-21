@@ -2,16 +2,12 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { AutocompleteNode } from '../utils/autocomplete';
 
 /**
- * Custom hook to manage the state and interactions of an autocomplete dropdown.
+ * Manages an autocomplete dropdown: visibility (by input length), arrow-key navigation and
+ * click-outside closing. Meant to be composed with the component's own selection logic.
  *
- * @remarks
- * This hook handles the visibility of the dropdown (based on input length),
- * keyboard navigation (arrow keys), and "click outside" detection to close the menu.
- * It is designed to be composed with custom selection logic in the component.
- *
- * @param suggestions - The list of matching nodes to display in the dropdown.
- * @param inputValue - The current raw value of the search input.
- * @returns An object containing indices, open state, refs, and key handlers.
+ * @param suggestions - Matching nodes to display.
+ * @param inputValue - Raw value of the search input.
+ * @returns Indices, open state, refs and key handlers.
  */
 export function useAutocomplete(suggestions: AutocompleteNode[], inputValue: string) {
   const [selectedIndex, setSelectedIndex] = useState(0);

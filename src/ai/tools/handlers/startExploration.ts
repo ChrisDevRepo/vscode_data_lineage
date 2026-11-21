@@ -1,9 +1,7 @@
 /**
- * Executes the approval-gated `lineage_start_exploration` lifecycle.
- *
- * @remarks
- * Proposal validation and preview construction stay local to this handler.
- * Turn-lease validation and effect serialization remain in the registry wrapper.
+ * Executes the approval-gated `lineage_start_exploration` lifecycle. Proposal validation and
+ * preview construction stay local; turn-lease validation and effect serialization stay in the
+ * registry wrapper.
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
@@ -11,14 +9,13 @@ import { DEFAULT_EXPLORATION_QUESTION, type DepthIntent } from '../../sm/smTypes
 import { depthSidesDiffer, directionFromDepth } from '../../../engine/shared/explorationDepthContract';
 import { sanitizeForLog, trunc } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
-import { StartExplorationInputSchema } from '../../tools/toolSchemas';
+import { parseToolInput, StartExplorationInputSchema } from '../../tools/toolSchemas';
 import { PendingGateSchema } from '../../session/sessionPhase';
-import { nodeFiltersRemovedByOrigin, renderScopeSummaryMd, schemaFiltersRemovedByOrigin } from '../../prompting/scopeSummaryRenderer';
+import { renderScopeSummaryMd } from '../../prompting/scopeSummaryRenderer';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
 import { isCancellationOutcome } from '../../support/cancellation';
 import {
-  buildStartExplorationReject,
   evaluateBbTargetColumnsRule,
   evaluateAlreadyStartedRule,
   evaluateParallelStartRule,
@@ -31,7 +28,7 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
 import { makeRejection } from '../../support/toolErrorEnvelope';
 
-/** Validates an exploration proposal and either opens its approval gate or resumes an approved supplement. */
+/** Validates an exploration proposal, then opens its approval gate or resumes an approved one. */
 export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);
@@ -55,11 +52,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         }
       }
 
-      const parsed = StartExplorationInputSchema.safeParse(input);
-      if (!parsed.success) {
-        const rawObject = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
-        return s.logAndReturn('lineage_start_exploration', buildStartExplorationReject(parsed.error, rawObject), loggedInput);
-      }
+      const parsed = parseToolInput(StartExplorationInputSchema, input);
+      if (!parsed.ok) return s.logAndReturn('lineage_start_exploration', parsed.error, loggedInput);
       const data = parsed.data;
       if (data.mission_brief !== undefined) {
         s.logger.debug(`[Mission] provenance=tool_payload len=${data.mission_brief.length}`);
@@ -180,9 +174,14 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       const pendingInit = sess.pendingExploration?.init;
       const listOr = (sent: readonly string[] | undefined, fallback: readonly string[] = []): string[] => [...(sent ?? fallback)];
-      const excludeTypes = listOr(data.excludeTypes, pendingInit?.excludeTypes ?? engine.getGuiHiddenTypes());
-      const excludeSchemas = listOr(data.excludeSchemas, pendingInit?.excludeSchemas ?? engine.getGuiHiddenSchemas());
-      const excludeNodeIds = listOr(data.excludeNodeIds, pendingInit?.excludeNodeIds ?? engine.getGuiExcludedNodeIds());
+      // Exclusions start from the view's filters: a first proposal only adds to them, since
+      // the AI never widens the scope by itself; a revision's lists replace them (the user's Change).
+      const exclusions = (sent: readonly string[] | undefined, pending: readonly string[] | undefined, view: readonly string[],
+        key: (value: string) => string): string[] =>
+        isRefining ? listOr(sent, pending ?? view) : [...new Map([...view, ...(sent ?? [])].map(value => [key(value), value])).values()];
+      const excludeTypes = exclusions(data.excludeTypes, pendingInit?.excludeTypes, engine.getGuiHiddenTypes(), type => type.toLowerCase());
+      const excludeSchemas = exclusions(data.excludeSchemas, pendingInit?.excludeSchemas, engine.getGuiHiddenSchemas(), identifierKey);
+      const excludeNodeIds = exclusions(data.excludeNodeIds, pendingInit?.excludeNodeIds, engine.getGuiExcludedNodeIds(), identifierKey);
       const passNodeIds = listOr(data.passNodeIds, pendingInit?.passNodeIds);
       const scopeNotes = listOr(data.scopeNotes, pendingInit?.scopeNotes);
       const refineOrigin = isRefining ? (data.origin ?? pendingInit?.origin ?? '') : (data.origin ?? '');
@@ -285,7 +284,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (isRefining && sess.pendingExploration && sameExplorationProposal(nextProposal, sess.pendingExploration)) {
         s.logger.debug(`[AI] [Proposal] no-op refine rejected revision=${sess.pendingExploration.revision}`);
         return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: 'no_op_refine',
+          code: REJECTION_CODES.noOpRefine,
           hint: 'The refinement did not change the reviewed proposal. Apply at least one requested scope, mode, classification, column, or filter change; if the request needs no change to the plan, reply to the user in text instead.',
         }), loggedInput);
       }
@@ -299,11 +298,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed' || isRefining) {
         const classes = ['sliding_memory'];
-        const removedSchemaFilters = schemaFiltersRemovedByOrigin(excludeSchemas, summary.activeFilters.schemas, m.identifierCaseSensitive);
-
-        const removedNodeFilters = nodeFiltersRemovedByOrigin(excludeNodeIds, summary.origin, summary.activeFilters.nodeIds, m.identifierCaseSensitive);
-
-        const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification, removedSchemaFilters, removedNodeFilters);
+        const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification);
         let discoverySummary: string | undefined;
         if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
           discoverySummary = await composeDiscoverySummaryText(

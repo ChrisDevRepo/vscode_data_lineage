@@ -25,10 +25,8 @@ let outputChannel: vscode.LogOutputChannel;
 let activeTraceWriter: AiTraceWriter | undefined;
 
 /**
- * Activates extension services in dependency order.
- *
- * @param context - VS Code extension context.
- * @returns An API object for testing and internal integration.
+ * Activates extension services in dependency order; returns an API object for testing and
+ * integration.
  */
 export async function activateRuntime(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
@@ -44,21 +42,24 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
   const projectLogger = Logger.create(outputChannel, 'Project');
   let droppedProjectsReported = false;
-  const reportDroppedProjects = ({ dropped, issuePaths }: ProjectStoreDropReport): void => {
-    if (dropped <= 0) return;
+  const reportDroppedProjects = ({ dropped, droppedViews = 0, issuePaths }: ProjectStoreDropReport): void => {
+    if (dropped <= 0 && droppedViews <= 0) return;
     if (droppedProjectsReported) {
       projectLogger.debug(
-        `Project store validation — dropped=${dropped} fields=${issuePaths.join(', ') || 'unknown'} (already reported this session)`,
+        `Project store validation — dropped=${dropped} views=${droppedViews} fields=${issuePaths.join(', ') || 'unknown'} (already reported this session)`,
       );
       return;
     }
     droppedProjectsReported = true;
-    const noun = dropped === 1 ? 'project' : 'projects';
+    const skipped = [
+      dropped > 0 ? `${dropped} saved ${dropped === 1 ? 'project' : 'projects'}` : '',
+      droppedViews > 0 ? `${droppedViews} saved ${droppedViews === 1 ? 'view' : 'views'}` : '',
+    ].filter(Boolean).join(' and ');
     notifyWarning(
       projectLogger,
       'Project store validation',
-      `Data Lineage: ${dropped} saved ${noun} could not be read and ${dropped === 1 ? 'was' : 'were'} skipped. See the Data Lineage Viz output channel for details.`,
-      { droppedProjects: dropped, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
+      `Data Lineage: ${skipped} could not be read and ${dropped + droppedViews === 1 ? 'was' : 'were'} skipped. See the Data Lineage Viz output channel for details.`,
+      { droppedProjects: dropped, droppedViews, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
     );
   };
 
@@ -81,7 +82,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     context,
     getSession,
     outputChannel,
-    (ctx, title, demo) => {
+    (ctx, title, demo, replace) => {
       Logger.create(outputChannel, 'Bridge').debug(`Command executed: openPanel (demo=${demo})`);
       return openPanel(
         ctx,
@@ -91,7 +92,8 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         loadStore,
         saveStore,
         async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel, reportDroppedProjects); },
-        demo
+        demo,
+        replace
       );
     },
     (ctx) => buildDebugDump(ctx, getSession),
@@ -132,12 +134,17 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
     );
 
+    const aiLogger = Logger.create(outputChannel, 'AI');
     lineageRuntime = new LineageRuntime({
       getSession,
       createRegistry: (lease, model) =>
         buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, { ...aiToolHost, model, signal: lease.signal, budget: model.budget }),
-      logger: Logger.create(outputChannel, 'AI'),
+      logger: aiLogger,
       traceWriter,
+      clearPreview: () => {
+        const panel = getActivePanel();
+        if (panel) void postToWebview(panel, { type: 'ai-view-clear' }, aiLogger);
+      },
     });
 
     participant = new LineageParticipant(
@@ -258,15 +265,10 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 }
 
 /**
- * Extension Deactivation Lifecycle.
- *
- * @remarks
- * No explicit cleanup is required — every disposable from {@link activateRuntime}
- * (output channel, command registrations, tree provider, chat participant,
- * config-change listener, AI tools) is pushed onto `context.subscriptions`
- * and torn down by VS Code automatically. Panel-specific resources such as
- * database connections are released through each panel's own `onDidDispose`
- * handler, again outside this function's responsibility.
+ * Deactivation needs no cleanup: every disposable from {@link activateRuntime} (output channel,
+ * commands, tree provider, chat participant, config listener, AI tools) is on
+ * `context.subscriptions` and torn down by VS Code. Panel resources such as database connections
+ * are released by each panel's own `onDidDispose`.
  */
 export async function deactivate(): Promise<void> {
   const traceWriter = activeTraceWriter;
@@ -277,15 +279,10 @@ export async function deactivate(): Promise<void> {
 export default { activateRuntime, deactivate };
 
 /**
- * Loads AI Output Templates from built-in assets and optional user overrides.
- *
- * These templates provide the structural instructions used by the AI to generate
- * summaries, section titles, and highlighted badges in the UI.
- *
- * @param outputChannel - The log channel for reporting load status.
- * @param extensionUri - The root URI of the extension.
- * @returns A promise resolving to the validated and merged `AiOutputTemplates` and the section labels
- *   declared by the capture recipes (a custom file's list replaces the built-in list of the same recipe).
+ * Loads AI Output Templates (structural instructions for summaries, section titles and badges) from
+ * built-in assets and optional user overrides. Resolves to the validated, merged templates and the
+ * section labels the capture recipes declare (a custom file's list replaces the built-in list of
+ * the same recipe).
  */
 async function loadAiOutputTemplates(
   outputChannel: vscode.LogOutputChannel,
@@ -401,14 +398,8 @@ async function loadAiOutputTemplates(
 }
 
 /**
- * Loads and installs SQL parsing rules for DDL analysis.
- *
- * Rules are loaded from the built-in `defaultParseRules.yaml` and can be
- * overridden by a custom file specified in settings.
- *
- * @param outputChannel - The log channel.
- * @param extensionUri - The root URI of the extension.
- * @returns A promise that resolves when the rules are loaded and applied to the engine.
+ * Loads and installs SQL parsing rules for DDL analysis from the built-in `defaultParseRules.yaml`,
+ * overridable by a custom file set in settings.
  */
 async function loadParseRules(
   outputChannel: vscode.LogOutputChannel,
@@ -433,6 +424,7 @@ async function loadParseRules(
     );
   }
 
+  const builtIn = config ?? undefined;
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
   const customPath = cfg.get<string>('parseRulesFile', '');
   if (customPath) {
@@ -463,7 +455,8 @@ async function loadParseRules(
         );
       }
     } else {
-      logger.warn(`Fallback parse rules custom → built-in: reason=cannot resolve path "${customPath}"`);
+      logger.warn('Fallback parse rules custom → built-in: reason=cannot resolve path');
+      logger.debug(`Fallback parse rules custom → built-in: path "${customPath}"`);
     }
   }
 
@@ -472,7 +465,8 @@ async function loadParseRules(
     return;
   }
 
-  const result = loadRules(config);
+  const result = loadRules(config, source === 'custom' ? builtIn : undefined);
+  const appliedFrom = result.usedDefaults && source === 'custom' ? 'built-in (fallback)' : source;
   const sess = getSession();
   if (result.usedDefaults) {
     sess.parseRulesLabel = 'built-in rules (fallback)';
@@ -481,18 +475,19 @@ async function loadParseRules(
   }
 
   for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
-  logger.info(`Applied parse rules: ${result.loaded} loaded from ${source}, ${result.skipped.length} skipped`);
-  if (result.skipped.length > 0) {
-    const allSkipped = result.loaded === 0;
+  logger.info(`Applied parse rules: ${result.loaded} loaded from ${appliedFrom}, ${result.skipped.length} skipped`);
+  if (result.skipped.length > 0 || result.usedDefaults) {
     notifyWarning(
       logger,
       'Apply parse rules',
-      allSkipped
+      result.loaded === 0
         ? 'Data Lineage: Parse rules config invalid — check Output channel.'
-        : `Data Lineage: ${result.skipped.length} parse rule(s) skipped as invalid — extraction runs with the remaining ${result.loaded}. Check Output channel.`,
+        : result.usedDefaults
+          ? 'Data Lineage: the custom parse rules file has no valid rule — extraction uses the built-in rules. Check Output channel.'
+          : `Data Lineage: ${result.skipped.length} parse rule(s) skipped as invalid — extraction runs with the remaining ${result.loaded}. Check Output channel.`,
       {
-        source,
-        reason: allSkipped ? 'no valid rules in config' : 'invalid rules skipped',
+        source: appliedFrom,
+        reason: result.loaded === 0 || result.usedDefaults ? 'no valid rules in config' : 'invalid rules skipped',
         skipped: result.skipped.length,
         loaded: result.loaded,
       },

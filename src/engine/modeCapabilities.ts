@@ -1,10 +1,7 @@
 import type { TraceState } from './types';
 
-/**
- * UI mode policy inputs derived by the app shell.
- */
+/** UI mode policy inputs derived by the app shell. */
 export interface ModeCapabilityInput {
-  /** Current trace state mode from the graph session. */
   traceMode: TraceState['mode'];
   /** Whether a graph analysis result currently owns the scoped surface. */
   hasAnalysisMode: boolean;
@@ -25,15 +22,13 @@ export interface ModeCapabilities {
   isModeLocked: boolean;
   /** Whether the interactive-trace hook's traced subset (not the raw base graph) should render. */
   isTraceActive: boolean;
-  /** Whether the Delete key adds the highlighted node to the exclusion filters (plain graph only). */
+  /** Whether Delete adds the highlighted node to the exclusion filters (plain graph only). */
   canExcludeHighlightedNode: boolean;
-  /** Whether a node can be removed from the current allowlist-backed view. */
   canRemoveNodeFromScopedView: boolean;
   /** Whether direct-neighbor add/prune controls are enabled for the trace. */
   canEditTraceScope: boolean;
   /** Whether a new trace, analysis, or saved scoped mode may be started. */
   canStartNewScopedMode: boolean;
-  /** Whether the user may switch between Object View and Schema View. */
   canSwitchGraphMode: boolean;
 }
 
@@ -68,7 +63,7 @@ export function deriveModeCapabilities(input: ModeCapabilityInput): ModeCapabili
   };
 }
 
-/** The concrete action Delete (or its menu/button equivalents) performs, per {@link ModeCapabilities}. */
+/** The action Delete (or its menu/button equivalents) performs, per {@link ModeCapabilities}. */
 export type RemoveAction =
   | { kind: 'exclude' }
   | { kind: 'trace-prune' }

@@ -1,12 +1,9 @@
 /**
- * Executes validation, assembly, and persistence for `lineage_present_result`.
- *
- * @remarks
- * Provider-neutral validation and assembly helpers remain in the sibling
- * `presentResult.ts`; this handler owns session persistence and the validated
- * webview effect. Raw arguments are admitted once against the same live stage/repair schema the
- * provider sees, before normalization or held-content merge. Turn-lease validation and effect
- * serialization remain in the registry wrapper.
+ * Executes validation, assembly and persistence for `lineage_present_result`. Provider-neutral
+ * validation and assembly helpers stay in the sibling `presentResult.ts`; this handler owns session
+ * persistence and the validated webview effect. Raw arguments are admitted once against the same
+ * live stage/repair schema the provider sees, before normalization or held-content merge.
+ * Turn-lease validation and effect serialization stay in the registry wrapper.
  */
 import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
@@ -38,11 +35,11 @@ import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
-import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import { isCancellationOutcome } from '../../support/cancellation';
 
 function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
@@ -65,16 +62,13 @@ function findUncoveredCtChainNodes(
 }
 
 /**
- * Fills a render that amends a committed report back out to a complete section array.
+ * Fills a render that amends a committed report back out to a complete section array. An omitted
+ * `sections` array or empty section text retains the committed body under that label, and omitted
+ * `node_ids` retain its committed links, narrowed to nodes this render still shows so a retained
+ * section cannot re-link a node the same call pruned. Supplied node ids are left alone. Committed
+ * text is stored with evidence references already expanded, so a retained body keeps its SQL
+ * verbatim.
  *
- * @remarks
- * An omitted `sections` array or empty section text asks to retain the committed body under that
- * label, and omitted section `node_ids` ask to retain its committed links; inherited `node_ids` are
- * narrowed to nodes this render still shows so a retained section cannot re-link a node the same
- * call pruned. Supplied node ids are left alone. Committed text is stored with its evidence
- * references already expanded, so a retained body keeps its SQL verbatim.
- *
- * @param committed - Sections of the report this run already rendered.
  * @returns The complete sections, or the labels that asked to retain a body that does not exist.
  */
 function resolveRetainedSections(
@@ -106,9 +100,8 @@ function resolveRetainedSections(
 
 /**
  * The notes an amendment renders: the committed captions for nodes still shown, overlaid by this
- * call's notes by node id — the one merge both the rendered view and the committed
- * `resultGraph.notes` take, so a follow-up that edits one caption does not blank every other
- * caption on the graph.
+ * call's notes by node id. The one merge both the rendered view and the committed
+ * `resultGraph.notes` take, so editing one caption does not blank every other.
  */
 function mergeAmendedNotes(
   committed: ReadonlyArray<{ nodeId: string; summary: string }> | undefined,
@@ -246,7 +239,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           : null;
         if (!previewNarrative?.summary || !scope) {
           return reject(makeRejection({
-            code: 'preview_source_unavailable',
+            code: REJECTION_CODES.previewSourceUnavailable,
             hint: 'Run the discovery question again, then request its graph preview.',
           }));
         }
@@ -287,14 +280,19 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       } : null;
       const resultGraph = previewGraph ?? sess.resultGraph;
       if (!resultGraph) {
-        return reject(evaluatePresentResultPreconditionsRule(false)!);
+        return reject(makeRejection({
+          code: REJECTION_CODES.missingResultGraph,
+          reason: 'No presentation source is available.',
+          hint: 'Load one bounded scope for a visual preview or complete the active exploration first.',
+        }));
       }
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
       let resolvedEdges: [string, string, string][] = [...resultGraph.edges];
       const graphSource = resultGraph.source;
       const modelNodeMap = getModelNodeMap(model);
-      // A completed-phase graph edit changes the rendered view, so its ids and edges commit with it.
+      // A completed-phase graph edit changes the rendered view, so its ids and edges commit with
+      // it.
       let graphEdited = false;
 
       const canonicalNodeId = (id: string, field: string): string => {
@@ -347,8 +345,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (outOfScope.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope)}.`,
-            hint: 'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
+            reason: `add_node_ids names objects outside the approved exploration scope: ${quoteIds(outOfScope)}.`,
+            hint: 'If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
             issuePaths: ['add_node_ids'],
           }));
         }
@@ -356,7 +354,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const newSet = new Set(resolvedNodeIds);
         resolvedEdges = model.edges
           .filter(e => newSet.has(e.source) && newSet.has(e.target))
-          .map(e => [e.source, e.target, edgeApiType(e.type, modelNodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
+          .map(e => [e.source, e.target, edgeApiType(e, modelNodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
         graphEdited = true;
       }
 
@@ -430,9 +428,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               paths: [fieldPath],
             });
           }
-          for (const entry of expanded.normalized) {
-            s.logger.debug(`presentResult normalization: evidence reference ${entry} — ${fieldLabel}`);
-          }
           return expanded.text;
         };
         const expandOptional = (text: string | undefined, fieldLabel: string): string | undefined =>
@@ -478,7 +473,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (renderInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
         const columnChainPreface = resultGraph.columnAspect
-          ? buildColumnChainPreface(resultGraph.columnAspect.edges)
+          ? buildColumnChainPreface(resultGraph.columnAspect.edges, nodeMap)
           : undefined;
         const assembled = orderAndAssemble(
           renderInput.sections,
@@ -603,16 +598,21 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       let autoDispatched = false;
       let previewFailure: 'preview_post_failed' | 'preview_dispatch' | null = null;
+      s.signal?.throwIfAborted();
       try {
         const delivery = await s.deliverPreview(
           { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
         );
         autoDispatched = delivery === 'delivered';
+        // A cancel ends the turn, but a preview the canvas already shows is committed first so the
+        // session matches the screen; an undrawn preview is dropped.
+        if (!autoDispatched) s.signal?.throwIfAborted();
         if (delivery === 'post_failed') {
           s.logger.warn('AI preview post failed');
           previewFailure = 'preview_post_failed';
         }
       } catch (error) {
+        if (isCancellationOutcome(error, s.signal)) throw error;
         s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
         previewFailure = 'preview_dispatch';
       }
@@ -625,7 +625,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           reason: 'The turn no longer owns this session; the result was not committed.',
         }), rawInput);
       }
-      // The delivery outcome is recorded only once the turn still owns the session, and the latest present decides it.
+      // The delivery outcome is recorded only once the turn still owns the session, and the latest
+      // present decides it.
       if (previewFailure) sess.markSynthesisRenderDegraded(previewFailure);
       else sess.clearPreviewDeliveryDegraded();
       if (isAmendment || graphEdited) {
@@ -652,18 +653,19 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       s.logger.debug(`AI view name="${trunc(validation.name, 60)}"`);
       s.logger.info(`AI view displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
       return s.logAndReturn('lineage_present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
-    } catch (err) { return s.toolError('present_result', err); }
+    } catch (err) {
+      if (isCancellationOutcome(err, s.signal)) throw err;
+      return s.toolError('present_result', err);
+    }
 }
 
 /**
  * Maps merged-sections validation issues to the indexed `label`/`text` leaves a repair may replace.
- *
- * @remarks
  * Only issues under `sections[<number>]` qualify; the leaf is `text` when the issue path names it,
- * otherwise `label` (the only other leaf the merged schema validates). Leaves are deduped per index.
+ * else `label`. Leaves are deduped per index.
  *
  * @returns The leaves, or `undefined` when no issue addresses an indexed section, so the caller
- * holds a fields-only repair instead of an indexless/NaN leaf.
+ *   holds a fields-only repair instead of an indexless/NaN leaf.
  */
 function sectionTextLeavesFromIssues(
   issues: readonly { readonly path: readonly PropertyKey[] }[],

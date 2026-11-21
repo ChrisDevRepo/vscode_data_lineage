@@ -9,17 +9,13 @@ import { z } from 'zod';
 import type { Logger } from '../../utils/log';
 import { DATABASE_CONFIG_SECTION } from './dbSession';
 
-/** Setting key, relative to {@link DATABASE_CONFIG_SECTION}, that holds the built-in connection list. */
-export const CONNECTIONS_SETTING = 'connections';
+/** Setting key, relative to {@link DATABASE_CONFIG_SECTION}, of the built-in connection list. */
+const CONNECTIONS_SETTING = 'connections';
 
 /** Secret-store key prefix; the connection id is appended. */
 const PASSWORD_SECRET_PREFIX = 'dataLineageViz.database.password.';
 
-/**
- * Secret-store key holding the SQL login password of one built-in connection.
- *
- * @param id - The connection id.
- */
+/** Secret-store key holding the SQL login password of one built-in connection. */
 export function passwordSecretKey(id: string): string {
   return `${PASSWORD_SECRET_PREFIX}${id}`;
 }
@@ -35,23 +31,12 @@ function bindingOf(connection: PasswordBinding): { server: string; port?: number
   return { server: dropTcpPrefix(connection.server).toLowerCase(), port: connection.port, user: connection.user ?? '' };
 }
 
-/**
- * Secret-store value for a password, bound to the server, port and user it was entered for.
- *
- * @param connection - The connection the password belongs to.
- * @param password - The SQL login password.
- */
+/** Secret-store value for a password, bound to the server, port and user it was entered for. @internal */
 export function encodeSavedPassword(connection: PasswordBinding, password: string): string {
   return JSON.stringify({ ...bindingOf(connection), password });
 }
 
-/**
- * Stores the SQL login password of a connection, bound to its server, port and user.
- *
- * @param secrets - VS Code secret storage.
- * @param connection - The connection the password belongs to.
- * @param password - The SQL login password.
- */
+/** Stores the SQL login password of a connection, bound to its server, port and user. */
 export async function savePassword(
   secrets: Pick<vscode.SecretStorage, 'store'>, connection: PasswordBinding, password: string,
 ): Promise<void> {
@@ -59,15 +44,9 @@ export async function savePassword(
 }
 
 /**
- * Reads the saved SQL login password of a connection.
- *
- * @remarks
- * A password saved for another server, port or user — for example after `settings.json` was edited
- * to point the connection elsewhere — or an unreadable value counts as no saved password, so it is
- * never sent to a host it was not entered for.
- *
- * @param secrets - VS Code secret storage.
- * @param connection - The connection to read the password for.
+ * Reads the saved SQL login password of a connection. A password saved for another server, port or
+ * user (e.g. after `settings.json` was edited to point the connection elsewhere) or an unreadable
+ * value counts as no saved password, so it is never sent to a host it was not entered for.
  */
 export async function readSavedPassword(
   secrets: Pick<vscode.SecretStorage, 'get'>, connection: PasswordBinding,
@@ -83,12 +62,12 @@ export async function readSavedPassword(
   return matches ? saved.data.password : undefined;
 }
 
-const MAX_TCP_PORT = 65535;
+/** Highest valid TCP port. */
+export const MAX_TCP_PORT = 65535;
 
 /** SQL Server `sysname` length: bounds logins and database names. */
 export const MAX_SYSNAME_LENGTH = 128;
-/** SQL Server maximum password length. */
-export const MAX_PASSWORD_LENGTH = 128;
+const MAX_PASSWORD_LENGTH = 128;
 /** Input-box validation message for a password SQL Server cannot accept, or `undefined`. */
 export function passwordTooLong(value: string): string | undefined {
   return value.length > MAX_PASSWORD_LENGTH ? `A password has at most ${MAX_PASSWORD_LENGTH} characters.` : undefined;
@@ -99,13 +78,7 @@ export const MAX_SERVER_LENGTH = 512;
 /** Room for the suggested display name `server,port / database` built from the longest of each. */
 export const MAX_NAME_LENGTH = 1024;
 
-/**
- * Input-box validation message for a value longer than `max`, or `undefined`.
- *
- * @param value - The typed value.
- * @param max - The longest accepted value.
- * @param what - The field, as it reads in "A <what> has at most …".
- */
+/** Input-box message for a value over `max`, or `undefined`; `what` names the field. */
 export function tooLong(value: string, max: number, what: string): string | undefined {
   return value.trim().length > max ? `A ${what} has at most ${max} characters.` : undefined;
 }
@@ -120,19 +93,15 @@ function unbracket(host: string): string {
   return host.replace(BRACKETED_HOST, '$1');
 }
 
-/** Removes the leading `tcp:` protocol prefix of a server address, as the Azure portal connection strings carry it. */
+/** Removes a leading `tcp:` from a server address, as Azure portal connection strings carry it. */
 export function dropTcpPrefix(server: string): string {
   return server.trim().replace(TCP_PREFIX, '').trim();
 }
 
 /**
- * Splits a server address the way SqlClient and the mssql extension read it.
- *
- * @remarks
- * A leading `tcp:` prefix is dropped, a bracketed IPv6 address `[fe80::1]` loses its brackets, and
- * `host\instance` becomes the host and the named instance the SQL Browser service resolves to a port.
- *
- * @param server - The address as typed or stored.
+ * Splits a server address the way SqlClient and the mssql extension read it: a leading `tcp:` is
+ * dropped, a bracketed IPv6 address `[fe80::1]` loses its brackets, and `host\instance` becomes the
+ * host and the named instance the SQL Browser service resolves to a port.
  */
 export function resolveServerAddress(server: string): { host: string; instanceName?: string } {
   const address = dropTcpPrefix(server);
@@ -147,7 +116,7 @@ const connectionFields = {
   server: z.string().min(1).max(MAX_SERVER_LENGTH),
   port: z.number().int().min(1).max(MAX_TCP_PORT).optional(),
   database: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
-  /** Windows authentication is not supported: the bundled driver has no integrated Windows sign-in. */
+  /** Windows authentication is unsupported: the bundled driver has no integrated sign-in. */
   authenticationType: z.enum(['sqlLogin', 'entraId']),
   user: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
   accountId: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
@@ -157,18 +126,15 @@ const connectionFields = {
 };
 
 /**
- * A built-in connection as stored in settings.
- *
- * @remarks
- * Not `.strict()`: an unrecognized property, `password` above all, is dropped on parse rather than
- * kept, so a hand-edited entry can never route a credential from settings into a connection.
+ * A built-in connection as stored in settings. Not `.strict()`: an unrecognized property,
+ * `password` above all, is dropped on parse, so a hand-edited entry can never route a credential
+ * from settings into a connection.
  */
 export const BuiltInConnectionSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH), ...connectionFields });
 
-/** {@link BuiltInConnectionSchema} with the id optional, for callers that let the extension assign one. */
-export const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(), ...connectionFields });
+/** {@link BuiltInConnectionSchema} with an optional id, for callers letting the host assign one. */
+const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(), ...connectionFields });
 
-/** A validated built-in connection. */
 export type BuiltInConnection = z.infer<typeof BuiltInConnectionSchema>;
 
 /** Argument of `dataLineageViz.addDatabaseConnection` that skips every prompt. */
@@ -178,13 +144,8 @@ export const AddConnectionArgsSchema = z.object({
 });
 
 /**
- * Reads the saved built-in connections.
- *
- * @remarks
- * Tolerant: an entry that fails validation is skipped with a debug log naming its position and the
- * failing fields, never its values.
- *
- * @param logger - Receives one debug line per skipped entry or ignored property.
+ * Reads the saved built-in connections, tolerantly: an entry that fails validation is skipped with
+ * a debug log (`logger`) naming its position and the failing fields, never its values.
  */
 export function readBuiltInConnections(logger?: Pick<Logger, 'debug'>): BuiltInConnection[] {
   const raw = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<unknown>(CONNECTIONS_SETTING);
@@ -216,16 +177,14 @@ function rawId(entry: unknown): unknown {
   return entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined;
 }
 
-/** Tail of the connection-list rewrites; each read-modify-write starts after the previous one settles. */
+/** Tail of the connection-list rewrites; each read-modify-write starts after the last settles. */
 let rewriteTail: Promise<unknown> = Promise.resolve();
 
 /**
- * Rewrites the connection list in the user (global) settings, one rewrite at a time.
- *
- * @remarks
- * The setting is application-scoped, so a workspace can neither hold nor override it. `change` reads
- * the list only after every earlier rewrite has landed, so concurrent saves never drop each other's
- * entries. A failed rewrite rejects its own caller and does not block the next one.
+ * Rewrites the connection list in the user (global) settings, one rewrite at a time. The setting is
+ * application-scoped, so a workspace can neither hold nor override it. `change` reads the list only
+ * after every earlier rewrite has landed, so concurrent saves never drop each other's entries; a
+ * failed rewrite rejects its own caller and does not block the next.
  */
 function rewriteConnections(change: (entries: unknown[]) => unknown[]): Promise<void> {
   const run = async (): Promise<void> => {
@@ -238,11 +197,9 @@ function rewriteConnections(change: (entries: unknown[]) => unknown[]): Promise<
 }
 
 /**
- * Adds a connection, or replaces the saved one with the same id.
- *
- * @remarks
- * Every other entry is written back as stored, including a hand-edited one that fails validation.
- * Serialized with {@link deleteBuiltInConnection}, so concurrent calls never drop an entry.
+ * Adds a connection, or replaces the saved one with the same id. Every other entry is written back
+ * as stored, including a hand-edited one that fails validation. Serialized with
+ * {@link deleteBuiltInConnection}, so concurrent calls never drop an entry.
  */
 export function upsertBuiltInConnection(connection: BuiltInConnection): Promise<void> {
   return rewriteConnections((entries) => {

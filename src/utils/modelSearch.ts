@@ -19,9 +19,7 @@ export interface SearchableNode {
   columns?: ColumnDef[];
 }
 
-/**
- * Represents a match found within a DDL body script or column list.
- */
+/** A match inside a DDL body script or column list. */
 interface DdlMatch {
   /** The node that contains the match. */
   node: SearchableNode;
@@ -30,11 +28,8 @@ interface DdlMatch {
 }
 
 /**
- * One match inside a body script, in the shape a grep-style tool reports.
- *
- * @remarks
- * `line` and `text` carry the location and the matched line itself; `snippet` adds the surrounding
- * context lines. A body with several matches produces one entry per match, never one per object.
+ * One match in a body script, shaped like a grep result. A body with several matches yields one
+ * entry per match; `snippet` adds the context lines around `line`/`text`.
  */
 export interface BodyMatch extends DdlMatch {
   /** 1-based line number of the match within the body script. */
@@ -42,46 +37,35 @@ export interface BodyMatch extends DdlMatch {
   /** The matching line, right-trimmed. */
   text: string;
   /**
-   * Present, and always `true`, when the match itself sits inside a SQL comment.
-   *
-   * @remarks
-   * Omitted when the match is executable, so a live hit's reported shape is unchanged. Never a
-   * filter — a comment can carry the answer, so a commented match is reported like any other.
+   * Always `true` when present: the match sits inside a SQL comment. Omitted for executable
+   * matches, and never a filter, since a comment can carry the answer.
    */
   commented?: true;
   /**
-   * The innermost `IF`/`WHILE` condition whose `BEGIN…END` block contains the matched line, or the
-   * single statement it governs when written without `BEGIN…END`. Omitted when the match is not
-   * inside such a block.
+   * Innermost `IF`/`WHILE` condition whose `BEGIN…END` block (or single ungrouped statement)
+   * contains the matched line; omitted outside such a block.
    *
-   * @remarks
-   * The reported context is a few lines wide, so a hit's controlling condition usually sits outside
-   * the window. Restores that one structural bit for `IF`/`WHILE` only — `CASE`, a `WHERE`-clause
-   * guard and `GOTO` flow are out of scope and stay unexpressed.
+   * Restores the controlling condition that the short context window usually cuts off. `CASE`,
+   * `WHERE` guards and `GOTO` flow are not expressed.
    */
   enclosingPredicate?: string;
 }
 
-/** Context lines placed around a match by {@link searchBodyScripts} — the one governor; both callers take it. */
+/** Context lines around a match from {@link searchBodyScripts}; one governor for both callers. */
 const DEFAULT_SNIPPET_CONTEXT_LINES = 2;
 
-/** Width, in characters, the detail sidebar can render on one line before a match needs a window. */
+/** Characters the detail sidebar renders on one line before a match needs a window. */
 const SIDEBAR_LINE_CAP = 50;
 
 /**
- * Prefix a snippet line carries when every non-whitespace character on it sits inside a comment.
- *
- * @remarks
- * The reported `commented` flag answers for the matched line only, so a dead context line would
- * otherwise arrive byte-indistinguishable from live code. States it per line instead.
+ * Prefix of a snippet line whose non-whitespace characters all sit inside a comment. `commented`
+ * covers only the matched line, so context lines get their own marker.
  */
 const DEAD_LINE_PREFIX = '--';
 
 /**
- * Outcome of syntax compilation without executing the expression.
- *
- * @remarks
- * Untrusted expression execution belongs in the isolated AI search worker.
+ * Outcome of compiling a regex's syntax without executing it; execution belongs in the isolated AI
+ * search worker.
  */
 type SearchRegexResult =
   /** The pattern compiled; execution must be isolated for untrusted input. */
@@ -93,18 +77,14 @@ type SearchRegexResult =
 type SearchRegexRejection = Extract<SearchRegexResult, { ok: false }>;
 
 /**
- * Longest body line, in characters, a search result serves as text.
- *
- * @remarks
- * Matching runs over the whole line. A matching line longer than this is not served as a result
- * row: {@link scanBodyMatches} reports it as an {@link OversizedLineHit} locator (line number,
- * length, match offset) and the caller names the DDL read that shows the line whole — a line is
- * never cut to an excerpt.
+ * Longest body line, in characters, served as result text. Matching runs over the whole line; a
+ * longer matching line yields no row but an {@link OversizedLineHit} locator from
+ * {@link scanBodyMatches}, so a line is never cut to an excerpt.
  */
 export const SEARCH_LINE_MAX_CHARS = 1000;
 
 /** Locator for a matching body line longer than {@link SEARCH_LINE_MAX_CHARS}. */
-export interface OversizedLineHit {
+interface OversizedLineHit {
   /** 1-based line number in the body. */
   readonly line: number;
   /** Length of the line in characters. */
@@ -117,18 +97,12 @@ export interface OversizedLineHit {
 const SEARCH_REGEX_FLAGS = 'im';
 
 /**
- * Strips a leading inline-flag group whose flags are a subset of {@link SEARCH_REGEX_FLAGS}.
+ * Strips a leading inline-flag group whose flags are a subset of {@link SEARCH_REGEX_FLAGS}, or
+ * returns `null` when there is nothing to strip.
  *
- * @param pattern - The raw regex string as received.
- * @returns The pattern with the redundant group removed, or `null` when there is nothing to strip.
- *
- * @remarks
- * `compileSearchRegex` always compiles with `i` and `m`, so a leading `(?i)`, `(?m)` or `(?im)` asks
- * for behavior already in force — a lossless no-op to strip. Any other flag letter, and the scoped
- * form `(?i:...)`, are left untouched and reach the engine byte-for-byte, since rewriting the scoped
- * form would require re-deriving the subgroup boundary. When the group is the entire pattern,
- * stripping it would leave an empty regex that matches every string, so that case is left unstripped
- * on purpose and falls through to the normal syntax rejection below.
+ * `compileSearchRegex` always compiles with `i` and `m`, so a leading `(?i)`, `(?m)` or `(?im)` is
+ * a lossless no-op. Other flags and the scoped form `(?i:...)` reach the engine untouched. A group
+ * that is the whole pattern stays, so the normal syntax rejection reports the empty regex.
  */
 function stripRedundantInlineFlags(pattern: string): string | null {
   const match = /^\(\?([im]+)\)/.exec(pattern);
@@ -138,16 +112,11 @@ function stripRedundantInlineFlags(pattern: string): string | null {
 }
 
 /**
- * Compiles the syntax of a search pattern into a regular expression with grep's flags ({@link SEARCH_REGEX_FLAGS}).
+ * Compiles a search pattern with grep's flags ({@link SEARCH_REGEX_FLAGS}); returns the regex or
+ * the rejection reason {@link regexRejectHint} turns into advice.
  *
- * @param pattern - The raw regex string to compile.
- * @param onNormalize - Optional sink for a debug line when a redundant flag group is stripped.
- * @returns The compiled regex, or the rejection reason {@link regexRejectHint} turns into advice.
- *
- * @remarks
- * Does not execute the pattern or classify its runtime cost. A
- * redundant leading `(?i)`/`(?m)`/`(?im)` is normalized away before compiling rather than rejected —
- * see {@link stripRedundantInlineFlags} for what qualifies and why.
+ * Never executes the pattern or classifies its cost. A redundant leading `(?i)`/`(?m)`/`(?im)` is
+ * normalized away (reported to `onNormalize`), see {@link stripRedundantInlineFlags}.
  */
 export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) => void): SearchRegexResult {
   const stripped = stripRedundantInlineFlags(pattern);
@@ -165,17 +134,10 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
 }
 
 /**
- * Names the edit that fixes a pattern {@link compileSearchRegex} refused.
+ * Names the edit that fixes a pattern {@link compileSearchRegex} refused, keyed on V8's own
+ * message.
  *
- * @param pattern - The raw regex string that was refused.
- * @param rejection - The refusal, carrying the reason and — for a syntax failure — V8's `SyntaxError`.
- * @returns A hint describing the concrete repair.
- *
- * @remarks
- * A redundant `(?i)`/`(?m)`/`(?im)` never reaches this function: `compileSearchRegex` strips it
- * before compiling, so what lands here asks for semantics the engine does not otherwise apply, or
- * syntax it does not recognize at all — which forms those are is the engine's answer, not a fixed
- * list, so the advice below is keyed on V8's own message.
+ * A redundant `(?i)`/`(?m)`/`(?im)` never arrives here; `compileSearchRegex` strips it first.
  */
 export function regexRejectHint(pattern: string, rejection: SearchRegexRejection): string {
   const message = rejection.error.message;
@@ -219,20 +181,10 @@ export function regexRejectHint(pattern: string, rejection: SearchRegexRejection
 }
 
 /**
- * Searches the flat node catalog by object name with ranking and filtering.
+ * Searches the flat node catalog by object name, ranked and filtered; `limit` defaults to 20 and
+ * `mode` to 'substring'.
  *
- * @param nodes - The catalog of nodes to search.
- * @param query - The search query string.
- * @param types - Optional set of allowed object types.
- * @param schemas - Optional set of allowed schema names.
- * @param limit - Maximum number of results to return (default: 20).
- * @param mode - Search mode: 'substring' (default) or 'regex'.
- *
- * @returns A ranked and filtered array of matching nodes.
- *
- * @remarks
- * In substring mode, results are ranked such that objects whose names
- * START with the query appear before objects that merely contain the query.
+ * In substring mode, names that START with the query rank before names that merely contain it.
  */
 export function searchCatalog(
   nodes: SearchableNode[],
@@ -273,24 +225,13 @@ export function searchCatalog(
 }
 
 /**
- * Searches the SQL DDL body scripts for a specific term.
+ * Searches SQL DDL body scripts for a term; `limit` omitted means unbounded.
  *
- * @param nodes - The catalog of nodes to search.
- * @param query - The term to search for (minimum 2 chars), or a compiled pattern.
- * @param types - Optional set of allowed object types.
- * @param contextLines - Number of context lines to include in the snippet.
- * @param limit - Maximum number of matches to return; omitted means unbounded.
- *
- * @returns An array of matches, each carrying its node, 1-based line, matched line and context.
- *
- * @remarks
- * The two query forms are two callers with two contracts. A string is the detail sidebar's
- * case-insensitive substring: one match per object, the panel's line width applied, and its own
- * display cap. A RegExp is the pattern `compileSearchRegex` accepted for `lineage_search_ddl`,
- * whose contract is grep's: every match in every body, with its line number, and no truncation —
- * neither a per-line window nor a result cap. A RegExp matches one whole line at a time; a
- * matching line longer than {@link SEARCH_LINE_MAX_CHARS} yields no row here, and
- * {@link scanBodyMatches} locates it.
+ * The two query forms are two contracts. A string is the detail sidebar's case-insensitive
+ * substring: one match per object, the panel's line width and its own display cap. A RegExp is a
+ * pattern `compileSearchRegex` accepted for `lineage_search_ddl`, with grep's contract: every match
+ * in every body with its line number, no truncation. A matching line longer than
+ * {@link SEARCH_LINE_MAX_CHARS} yields no row here; {@link scanBodyMatches} locates it.
  */
 export function searchBodyScripts(
   nodes: SearchableNode[],
@@ -343,24 +284,17 @@ export interface BodyScanResult {
 }
 
 /**
- * Sweeps a compiled pattern over every body once, building match rows only while their count
- * stays admissible and counting the rest.
+ * Sweeps a compiled pattern over every body once, building rows only while `admits(count)` holds
+ * and counting the rest. Once `admits` is `false` for a count it must be `false` for every larger
+ * one.
  *
- * @param nodes - The catalog of nodes to search.
- * @param regex - A pattern {@link compileSearchRegex} accepted.
- * @param types - Optional set of allowed object types.
- * @param admits - Whether a given match count may still be built; once it returns `false` for a
- * count it must return `false` for every larger one.
- * @returns The rows, the total match count, how many objects produced at least one match, and
- * every matching body line longer than {@link SEARCH_LINE_MAX_CHARS} as a locator (per object, in
- * body order); such a line adds no row and no count to `matches`/`total`. `matches` holds every match exactly when `admits(total)` holds; otherwise it holds
- * only the rows built before the count first failed, which the caller must not serve.
+ * Returns the rows, the total match count, the number of objects with a match, and every matching
+ * line longer than {@link SEARCH_LINE_MAX_CHARS} as a locator in `oversized` (no row, no count).
+ * `matches` is complete exactly when `admits(total)` holds; otherwise it holds only the rows built
+ * before the count failed and must not be served.
  *
- * @remarks
- * Lets `lineage_search_ddl` answer an over-budget pattern from counts alone in the same regex pass
- * that builds a fitting result: a pattern that matches nearly every character would otherwise
- * allocate one row, snippet and mask set per character of every body, only for the budget check to
- * discard them all. `oversized` holds the locators the rows cannot show.
+ * Lets `lineage_search_ddl` answer an over-budget pattern from counts alone in the same pass,
+ * instead of allocating a row per match only to discard it.
  */
 export function scanBodyMatches(
   nodes: SearchableNode[],
@@ -392,12 +326,8 @@ export function scanBodyMatches(
 }
 
 /**
- * Binds one body's line split, line offsets and comment, dead-line and predicate masks to a match
- * builder.
- *
- * @remarks
- * Every piece is built on the first match and reused by the rest: a body nobody hits is never split
- * or scanned.
+ * Binds one body's line split, offsets and comment, dead-line and predicate masks to a match
+ * builder. Each piece is built on the first match, so a body nobody hits is never split or scanned.
  */
 function bodyMatcher(
   node: SearchableNode,
@@ -416,7 +346,7 @@ function bodyMatcher(
       lineStarts = buildLineStarts(lines);
       commentMask = sqlCommentMask(body);
       deadMask = markDeadLines(lines, lineStarts, commentMask);
-      predicateMask = deriveEnclosingPredicates(lines, lineStarts, sqlCommentMask(body, { markLiterals: true }));
+      predicateMask = deriveEnclosingPredicates(lines, lineStarts, commentMask, sqlCommentMask(body, { markLiterals: true }));
     }
     return makeMatch(node, lines, lineStarts, index, matchText, contextLines, lineCap, commentMask, deadMask, predicateMask);
   };
@@ -428,16 +358,14 @@ function globalScanner(regex: RegExp): RegExp {
 }
 
 /**
- * Visits every non-empty match of a `g`-flagged `scanner` in `body`, one line at a time and in
- * order, until `visit` returns `false`.
+ * Visits every non-empty match of a `g`-flagged `scanner` in `body`, line by line in order, until
+ * `visit` returns `false`. No match spans a line break (grep's contract).
  *
- * @param visit - Receives the match's offset in `body` and the matched text.
- * @param onOversized - Receives one locator for each matching line longer than
- * {@link SEARCH_LINE_MAX_CHARS}; `visit` is not called for that line.
+ * A zero-length match (`x*`, `^`) skips its position, not the line, or it would hide the real
+ * matches later on that line.
  *
- * @remarks
- * Per line is grep's contract: no match spans a line break. A zero-length match (`x*`, `^`) advances nothing on its own: the position is skipped
- * rather than the line, or the first empty match would hide every real match later on it.
+ * @param onOversized - Receives a locator for each matching line longer than
+ * {@link   SEARCH_LINE_MAX_CHARS}; `visit` is not called for it.
  */
 function forEachLineMatch(
   scanner: RegExp,
@@ -467,7 +395,7 @@ function forEachLineMatch(
   }
 }
 
-/** Start offset of every line, so a match index resolves to its line without rescanning the body. */
+/** Start offset of every line, so a match index resolves to its line without rescanning. */
 function buildLineStarts(lines: string[]): number[] {
   const starts = new Array<number>(lines.length);
   let offset = 0;
@@ -515,39 +443,35 @@ function makeMatch(
   return match;
 }
 
-/** Matches an `IF`/`WHILE` keyword opening a line, capturing the rest of the line as its condition. */
+/** Matches an `IF`/`WHILE` keyword opening a line, capturing the rest as its condition. */
 const IF_WHILE_LINE_RE = /^(IF|WHILE)\b(.*)$/i;
 
 /**
- * Every block-opening `BEGIN`, block-closing `END` or `CASE` keyword on a line, live-code only — see
- * {@link deriveEnclosingPredicates}. `BEGIN TRAN[SACTION]`, `BEGIN DISTRIBUTED TRANSACTION` and
- * `BEGIN DIALOG`/`CONVERSATION` start statements no `END` closes, and `END CONVERSATION` closes no
- * block, so none of them moves the frame stack.
+ * Block-opening `BEGIN`, block-closing `END` or `CASE` on a live-code line, see
+ * {@link deriveEnclosingPredicates}. `BEGIN TRAN[SACTION]`, `BEGIN DISTRIBUTED TRANSACTION`, `BEGIN
+ * DIALOG`/`CONVERSATION` and `END CONVERSATION` open or close no block, so they are excluded.
  */
 const BLOCK_KEYWORD_RE = /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|CONVERSATION)\b)|END(?!\s+CONVERSATION\b)|CASE)\b/gi;
 
 /**
- * Derives, per line, the innermost `IF`/`WHILE` condition governing that line.
+ * Derives, per line, the innermost `IF`/`WHILE` condition governing it, or `undefined` outside one.
  *
- * @param lines - The body split on newlines, as {@link searchBodyScripts} already holds it.
+ * One pass tracks a stack of open blocks. `BEGIN` and `CASE` open frames; only a `BEGIN` right
+ * after an `IF`/`WHILE` carries that condition, so it never leaks past its block. `CASE` is tracked
+ * only so its `END` is not taken for an outer `BEGIN`'s, and is never reported (it guards an
+ * expression). An `IF`/`WHILE` without `BEGIN…END` governs the next live line only. Comments and
+ * string or bracketed literals are never scanned for keywords.
+ *
  * @param lineStarts - Start offset of each line, as {@link buildLineStarts} computes it.
- * @param commentMask - The per-character mask {@link sqlCommentMask} already produced for this body.
- * @returns One entry per line: the text of the nearest enclosing `IF`/`WHILE`, or `undefined` when
- *   the line sits outside any such condition.
- *
- * @remarks
- * A single pass tracks a stack of open blocks. `BEGIN` and `CASE` each open a frame; only a `BEGIN`
- * immediately preceded by an `IF`/`WHILE` carries that condition as its frame's predicate, so a
- * predicate never leaks past the block it actually governs. `CASE` is tracked only so its own `END`
- * cannot be mistaken for closing an outer `BEGIN` — a `CASE WHEN` condition is not itself reported,
- * since it guards an expression, not a statement. An `IF`/`WHILE` without `BEGIN…END` governs
- * exactly the next live line and is then spent. Text inside a comment or a string/bracketed literal
- * is never scanned for a keyword, so a literal containing the word "BEGIN" cannot open a block.
+ * @param commentMask - The per-character mask {@link sqlCommentMask} produced for this body.
+ * @param literalMask - Also marks string and bracketed-identifier spans: no keyword is scanned
+ *   there, but the reported predicate keeps that text.
  */
 function deriveEnclosingPredicates(
   lines: string[],
   lineStarts: number[],
   commentMask: Uint8Array,
+  literalMask: Uint8Array,
 ): (string | undefined)[] {
   const result = new Array<string | undefined>(lines.length);
   /** One entry per open `BEGIN`/`CASE` frame; the predicate it carries, or `undefined`. */
@@ -559,12 +483,16 @@ function deriveEnclosingPredicates(
     const line = lines[i];
     const base = lineStarts[i];
     let live = '';
-    for (let c = 0; c < line.length; c++) live += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
+    let code = '';
+    for (let c = 0; c < line.length; c++) {
+      live += literalMask[base + c] !== SQL_CODE ? ' ' : line[c];
+      code += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
+    }
     const trimmed = live.trim();
     const isLive = trimmed.length > 0;
 
     const ifWhile = IF_WHILE_LINE_RE.exec(trimmed);
-    const ownPredicate = ifWhile ? trimmed.replace(/\bBEGIN\b\s*$/i, '').trim() : undefined;
+    const ownPredicate = ifWhile ? code.trim().replace(/\bBEGIN\b\s*$/i, '').trim() : undefined;
     let ownConsumed = false;
     let pendingConsumed = false;
 
@@ -600,15 +528,7 @@ function deriveEnclosingPredicates(
   return result;
 }
 
-/**
- * Searches for nodes by matching column names.
- *
- * @param nodes - The catalog of nodes to search.
- * @param query - The column name term to search for.
- * @param limit - Maximum number of results to return.
- *
- * @returns An array of matches containing the node and a list of matching columns.
- */
+/** Finds nodes by column name; returns each node with its matching columns. */
 export function searchColumns(
   nodes: SearchableNode[],
   query: string,
@@ -629,18 +549,14 @@ export function searchColumns(
   return matches;
 }
 
-/** Characters of lead-in kept before the match when a line is windowed to {@link SIDEBAR_LINE_CAP}. */
+/**
+ * Characters of lead-in kept before the match when a line is windowed to {@link SIDEBAR_LINE_CAP}.
+ */
 const SIDEBAR_WINDOW_LEAD = 10;
 
 /**
- * Builds a formatted context snippet for a match found in a body script.
- *
- * @param lines - The body split on newlines.
- * @param matchLine - Zero-based index of the line holding the match.
- * @param matchText - The text that matched, used to place the window on an over-wide line.
- * @param contextLines - The number of lines around the match to include.
- * @param lineCap - Width at which a line is windowed around the match; `Infinity` never windows.
- * @returns A multi-line string containing the match context.
+ * Builds the formatted context snippet for a match. `lineCap` is the width at which a line is
+ * windowed around `matchText`; `Infinity` never windows.
  */
 function buildSnippet(
   lines: string[],
@@ -670,18 +586,14 @@ function buildSnippet(
 }
 
 /**
- * Projects the per-character comment mask onto whole lines.
+ * Projects the per-character comment mask onto lines: `1` when the line has content and all its
+ * non-whitespace characters lie in comments, else `0`.
  *
- * @param lines - The body split on newlines.
+ * A line mixing live code with a trailing `--` is not dead (part of it executes), and a blank line
+ * is not dead (nothing to mislabel). Classification stays in the mask; T-SQL is not re-read here.
+ *
  * @param lineStarts - Start offset of each line, as {@link buildLineStarts} computes it.
- * @param commentMask - The per-character mask {@link sqlCommentMask} already produced for this body.
- * @returns One byte per line: `1` when the line carries content and every non-whitespace character
- *   of it lies inside a comment, `0` otherwise.
- *
- * @remarks
- * Reads a mask it does not create — there is no character classification here and no second view of
- * T-SQL. A line mixing live code with a trailing `--` is NOT dead: part of it executes, and calling
- * it dead would hide that. A blank line is not dead either; it carries nothing to mislabel.
+ * @param commentMask - The per-character mask {@link sqlCommentMask} produced for this body.
  */
 function markDeadLines(lines: string[], lineStarts: number[], commentMask: Uint8Array): Uint8Array {
   const dead = new Uint8Array(lines.length);

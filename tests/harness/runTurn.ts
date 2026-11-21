@@ -39,7 +39,7 @@ function bookmarkIdFromUiState(uiState: unknown): string | undefined {
  * entry *N*, clamped to the last entry once the list is exhausted, so a trailing `approve` or `deny`
  * terminates any further round without needing one entry per possible gate.
  */
-export type GateRoundPolicy =
+type GateRoundPolicy =
   | { readonly kind: 'approve'; readonly expect?: string }
   | { readonly kind: 'deny' }
   | { readonly kind: 'refine'; readonly instruction: string };
@@ -55,7 +55,7 @@ export type GateRoundPolicy =
  * the finished graph: approving a proposal that contradicts the instruction and then scoring the
  * result conflates a wrong proposal with a wrongly accepted one.
  */
-export function evaluateGateExpectation(expr: string, session: AiSession): boolean {
+function evaluateGateExpectation(expr: string, session: AiSession): boolean {
   const proposal = session.pendingExploration;
   if (!proposal) return false;
   const negated = expr.startsWith('!');
@@ -123,7 +123,7 @@ export interface HarnessTurnOptions {
 }
 
 /** One consent gate and the decision the run policy applied to it. */
-export interface HarnessGateDecision {
+interface HarnessGateDecision {
   readonly gateId: string;
   readonly gate: string;
   readonly decision: 'approve' | 'deny' | 'refine';
@@ -175,7 +175,6 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     if ('renderState' in buffer) options.session.renderState = buffer.renderState;
     if ('filter' in buffer) options.session.filter = buffer.filter as AiSession['filter'];
     if (buffer.graphMode === 'full' || buffer.graphMode === 'overview') options.session.graphMode = buffer.graphMode;
-    if (typeof buffer.filteredCount === 'number') options.session.filteredCount = buffer.filteredCount;
   }
   const bookmarkId = bookmarkIdFromUiState(options.uiState);
   const storedRun = options.storedRun;
@@ -202,13 +201,9 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
         ...(storedRun ? { getStoredRun: (id: string) => (id === bookmarkId ? storedRun : undefined) } : {}),
       },
     ),
-    // Without this the graph's `deps.logger` is undefined, so every debugLog in
-    // toolAttempt.ts is optional-chained away and four rejection codes
-    // (invalid_tool_input, missing_required_tool_call, duplicate_read,
-    // empty_generation) are counted in run.json but never written to host.log.
-    // The product wires the same logger at extensionRuntime.ts; only the harness
-    // omitted it, which made those rejections diagnosable solely from the NDJSON
-    // trace. Observability only — no tool, score, or answer path is affected.
+    // Without a logger the graph's `deps.logger` is undefined, so toolAttempt.ts debugLog calls
+    // are optional-chained away and rejection codes are counted in run.json but never written to
+    // host.log.
     logger: Logger.create(options.logger as unknown as import('vscode').LogOutputChannel, 'AI'),
     ...(options.maxRounds !== undefined ? { maxRounds: options.maxRounds } : {}),
     ...(options.traceWriter ? { traceWriter: options.traceWriter } : {}),

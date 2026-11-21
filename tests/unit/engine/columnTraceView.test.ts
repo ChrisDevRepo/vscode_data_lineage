@@ -1,5 +1,5 @@
 /**
- * Tests for the pure column-trace-view derivation: relation normalisation, row/shape derivation,
+ * Tests for the pure column-trace-view derivation: relation normalisation, row derivation,
  * verdict-to-state resolution, deterministic ordering, and handle id uniqueness.
  */
 
@@ -184,54 +184,6 @@ describe('columnTraceView', () => {
     expect(node.width).toBe(COLUMN_TRANSFORM_NODE_WIDTH);
   });
 
-  it('derives renamed when endpoint column names differ', () => {
-    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t'));
-    const relations: ColumnTraceRelation[] = [
-      { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' },
-    ];
-
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
-    const row = findRow(view, 'dbo.t', 'Amount');
-    expect(row.shape).toBe('renamed');
-  });
-
-  it('derives incoming with the correct contributor count', () => {
-    const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.t'));
-    const relations: ColumnTraceRelation[] = [
-      { hopNode: 'dbo.t', fromNode: 'dbo.s1', fromCol: 'A', toNode: 'dbo.t', toCol: 'X' },
-      { hopNode: 'dbo.t', fromNode: 'dbo.s2', fromCol: 'A', toNode: 'dbo.t', toCol: 'X' },
-    ];
-
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
-    const row = findRow(view, 'dbo.t', 'X');
-    expect(row.shape).toBe('incoming');
-    expect(row.contributors).toBe(2);
-  });
-
-  it('derives outgoing when one upstream column feeds multiple targets', () => {
-    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t1'), mkObj('dbo.t2'));
-    const relations: ColumnTraceRelation[] = [
-      { hopNode: 'dbo.s', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t1', toCol: 'X' },
-      { hopNode: 'dbo.s', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t2', toCol: 'Y' },
-    ];
-
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
-    const row = findRow(view, 'dbo.s', 'A');
-    expect(row.shape).toBe('outgoing');
-    expect(row.contributors).toBe(2);
-  });
-
-  it('marks a column with no inbound relation as terminal', () => {
-    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t'));
-    const relations: ColumnTraceRelation[] = [
-      { hopNode: 'dbo.s', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t', toCol: 'A' },
-    ];
-
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
-    const row = findRow(view, 'dbo.s', 'A');
-    expect(row.shape).toBe('terminal');
-  });
-
   describe('resolveVerdictLineState', () => {
     it('resolves passthrough verdict to passthrough state', () => {
       expect(resolveVerdictLineState('dbo.p', new Map([['dbo.p', 'passthrough']]))).toBe('passthrough');
@@ -357,10 +309,9 @@ describe('columnTraceView', () => {
 /**
  * Lane for the transform node's place in the chain.
  *
- * A relation names the hop that produced it. Drawing the source straight to the target left that
- * hop with no inbound edge, so dagre ranked the procedure as a source and parked it at the left
- * margin with a single line spanning the canvas to its own output. The procedure is on the path, so
- * the path is drawn through it.
+ * A relation names the hop that produced it, so the path is drawn through that hop: a source
+ * drawn straight to the target would leave the hop with no inbound edge and dagre would rank it
+ * as a source.
  */
 describe('buildColumnTraceView — routing through the analysing hop', () => {
   const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
@@ -390,22 +341,6 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     const outbound = view.edges.filter((e) => e.source === 'dbo.p' && e.target === 'dbo.t');
     expect(outbound).toHaveLength(1);
     expect(new Set(view.edges.map((e) => e.id)).size).toBe(view.edges.length);
-  });
-
-  it('keeps the target incoming shape on the original endpoints, not on the legs', () => {
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
-    const row = findRow(view, 'dbo.t', 'Total');
-    expect(row.shape).toBe('incoming');
-    expect(row.contributors).toBe(2);
-  });
-
-  it('keeps the rename signal across the split', () => {
-    const view = buildColumnTraceView({
-      relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' }],
-      objects,
-      config: DEFAULT_CONFIG,
-    });
-    expect(findRow(view, 'dbo.t', 'Amount').shape).toBe('renamed');
   });
 
   it('gives the hop one port per name the column carries, so a rename shows two', () => {

@@ -1,13 +1,9 @@
 /**
- * Cancellation bridge from VS Code to the provider adapter.
- *
- * @remarks
- * `LineageParticipant.handleChatRequest` receives the request's `vscode.CancellationToken` and
- * hands it here to obtain a standard `AbortSignal` for the model port. We do **not** invent a
- * separate cancellation channel — this is the one adapter between the two shapes.
- *
- * VS Code-free: it depends only on the structural shape of a `CancellationToken`
- * ({@link CancellationTokenLike}), so the bridge is unit-testable in the offline `ai` project.
+ * Cancellation bridge from VS Code to the provider adapter: `LineageParticipant.handleChatRequest`
+ * hands the request's `vscode.CancellationToken` here to obtain a standard `AbortSignal` for the
+ * model port. This is the one adapter between the two shapes; there is no separate cancellation
+ * channel. VS Code-free (depends only on the structural {@link CancellationTokenLike}), so it is
+ * unit-testable in the offline `ai` project.
  */
 
 /** The structural subset of `vscode.CancellationToken` this bridge needs. */
@@ -26,15 +22,10 @@ interface BridgedAbort {
 }
 
 /**
- * Bridges a {@link CancellationTokenLike} to an `AbortSignal`.
- *
- * @remarks
- * If the token is already cancelled the returned signal is already aborted. Otherwise the
- * signal aborts the first time the token fires; the returned {@link BridgedAbort.dispose}
- * detaches the listener (idempotent), which the host calls when the turn settles.
- *
- * @param token - The platform cancellation token (from a `CancellationTokenSource`).
- * @returns The `AbortSignal` to pass to the adapter plus a `dispose` to unsubscribe.
+ * Bridges a {@link CancellationTokenLike} to an `AbortSignal`: already aborted when the token is
+ * already cancelled, else aborting the first time the token fires. The returned
+ * {@link BridgedAbort.dispose} detaches the listener (idempotent); the host calls it when the turn
+ * settles.
  */
 export function tokenToAbortSignal(token: CancellationTokenLike): BridgedAbort {
   const controller = new AbortController();

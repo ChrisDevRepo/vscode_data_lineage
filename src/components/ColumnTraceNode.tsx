@@ -31,12 +31,9 @@ function lineStateColor(state: ColumnLineState | undefined): string {
 }
 
 /**
- * Row hover/focus transition.
- *
- * @remarks
- * Not conditioned on the reduced-motion preference here: `index.css` drops every transition under
- * both VS Code's `workbench.reduceMotion` class and the OS `prefers-reduced-motion` query, so a
- * second check in the render path could only disagree with the rule that actually applies.
+ * Row hover/focus transition. Not conditioned on reduced motion here: `index.css` drops every
+ * transition under VS Code's `workbench.reduceMotion` class and the OS `prefers-reduced-motion`
+ * query, so a second check could only disagree.
  */
 const ROW_TRANSITION = 'background-color 120ms ease, opacity 120ms ease';
 
@@ -48,12 +45,9 @@ function rowCenter(index: number): number {
 }
 
 /**
- * Handle anchor and circle geometry for a transform super node.
- *
- * @remarks
- * The circle is the node's whole body with a fixed size, so port handles fan across its arc — at
- * {@link COLUMN_TRANSFORM_PORT_SPREAD} apart while that fits, closer as more ports run through the
- * hub — so every handle sits ON the circle and each edge meets the visible stroke, not the box edge.
+ * Handle anchor and circle geometry for a transform super node. The circle is the whole body at a
+ * fixed size, so port handles fan across its arc ({@link COLUMN_TRANSFORM_PORT_SPREAD} apart while
+ * that fits, closer with more ports) and each edge meets the visible stroke, not the box edge.
  */
 function transformPortGeometry(portCount: number, width: number, height: number) {
   const cx = width / 2;
@@ -69,12 +63,9 @@ function transformPortGeometry(portCount: number, width: number, height: number)
 const HANDLE_HALF = 4;
 
 /**
- * Absolute offset of one row's edge-attachment handle.
- *
- * @remarks
- * A transform node's ports fan across the circle arc, so `left` places the handle at that row's arc
- * x — what makes the line meet the visible stroke rather than the invisible box edge. A table card's
- * ports sit on the row centre alone; either way the handle itself stays invisible.
+ * Absolute offset of one row's edge-attachment handle. A transform node's ports fan across the
+ * circle arc (`left` is that row's arc x); a table card's ports sit on the row centre. The handle
+ * itself stays invisible.
  */
 function portHandleStyle(view: ColumnTraceNodeData['view'], index: number, side: 'source' | 'target'): CSSProperties {
   if (!view.isTransformNode) return { top: rowCenter(index) };
@@ -201,12 +192,10 @@ function GearGlyph() {
 }
 
 /**
- * The transform super node: a circle-and-gear hub for a procedure or scalar function.
- *
- * @remarks
- * The circle is the whole node with no card drawn around it, so its stroke carries the selection
- * colour; it keeps its id, click/context-menu wiring and invisible port handles so neighbours, SQL
- * and the column thread behave exactly as on a column card. The name strip sits under the circle.
+ * The transform super node: a circle-and-gear hub for a procedure or scalar function. The circle is
+ * the whole node, so its stroke carries the selection colour; it keeps its id, click/context-menu
+ * wiring and invisible port handles, so neighbours, SQL and the column thread behave as on a column
+ * card. The name strip sits under it.
  */
 function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow, schemaColor }: {
   view: ColumnTraceNodeData['view'];
@@ -436,8 +425,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 }
 
 /**
- * Renders one traced column-trace node — an object's traced columns, or a transform's ports —
- * inside the React Flow canvas, one row per {@link ColumnTraceRow} with a handle pair on each
- * traced row.
+ * Renders one column-trace node (an object's traced columns, or a transform's ports) in the React
+ * Flow canvas: a {@link ColumnTraceRow} per row, a handle pair on each traced row.
  */
 export const ColumnTraceNode = memo(ColumnTraceNodeComponent);

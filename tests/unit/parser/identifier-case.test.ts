@@ -31,9 +31,10 @@ describe('checked identifier comparison',()=>{
 });
 
 import JSZip from 'jszip';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas } from '../../../src/engine/dacpacExtractor';
+import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../../../src/engine/dacpacExtractor';
+import { filterBySchemas } from '../../../src/engine/modelFilters';
 import { buildModelFromDmv, buildSchemaPreview } from '../../../src/engine/dmvExtractor';
-import type { SimpleExecuteResult } from '../../../src/types/mssql';
+import type { SimpleExecuteResult } from '../../../src/types/database';
 import { loadParseRules } from '../helpers/testUtils';
 loadParseRules();
 function rows(names:string[], values:string[][]):SimpleExecuteResult{return {columnInfo:names.map(columnName=>({columnName,dataType:'string',dataTypeName:'varchar'})),rowCount:values.length,rows:values.map(row=>row.map(displayValue=>({displayValue,isNull:displayValue===''}))) };}

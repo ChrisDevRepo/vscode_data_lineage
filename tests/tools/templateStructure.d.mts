@@ -3,4 +3,3 @@ export type TemplateStructure = Record<string, Record<string, string>>;
 export function templateStructure(text: string): TemplateStructure;
 export function structureFingerprint(text: string): string;
 export function structureDiff(before: TemplateStructure, after: TemplateStructure): string[];
-export function breakingStructureChanges(diff: string[]): string[];

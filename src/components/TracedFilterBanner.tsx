@@ -4,7 +4,6 @@ import { Tooltip } from './ui/Tooltip';
 import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface TracedFilterBannerProps {
-  /** The display name of the starting node for the lineage trace. */
   startNodeName: string;
   /** The number of levels to traverse upstream (parents). */
   upstreamLevels: number;
@@ -15,20 +14,15 @@ interface TracedFilterBannerProps {
   /** Total number of edges currently visible in the traced graph. */
   totalEdges: number;
   /**
-   * The current trace mode:
-   * - 'applied': The trace is actively being calculated or shown as a temporary view.
-   * - 'filtered': The trace is acting as a persistent filter on the global graph.
+   * Trace mode: 'applied' shows the trace as a temporary view; 'filtered' makes it a persistent
+   * filter on the global graph.
    */
   mode: 'applied' | 'filtered';
-  /** Optional callback to end the tracing mode. */
   onEnd?: () => void;
-  /** Callback to reset/clear the trace filter. */
   onReset: () => void;
-  /** Optional callback to save the current traced view as a persistent bookmark. */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  onSaveAsBookmark?: (name: string) => void;
   /** Whether the trace should ignore existing schema/type filters and use the full model. */
   useFullModel: boolean;
-  /** Callback triggered when the "Include objects outside the filters" checkbox is toggled. */
   onToggleFullModel: () => void;
   /** The number of nodes that are hidden due to active schema/type filters. */
   filteredOutCount: number;
@@ -37,9 +31,7 @@ interface TracedFilterBannerProps {
 /** SVG path for the trace/lineage icon, shared with the tree focus banner. */
 export const TRACE_ICON = 'M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5';
 
-/**
- * Configures {@link ModeBanner} with active-trace scope, counts, and filter controls.
- */
+/** Configures {@link ModeBanner} with active-trace scope, counts, and filter controls. */
 export const TracedFilterBanner = memo(function TracedFilterBanner({
   startNodeName,
   upstreamLevels,

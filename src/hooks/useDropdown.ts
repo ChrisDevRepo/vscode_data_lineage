@@ -15,14 +15,11 @@ import {
 const DROPDOWN_OPEN_EVENT = 'ln:dropdown:open';
 
 /**
- * Provides positioned dropdown state, dismissal, and mutual exclusion with other dropdowns.
- *
- * @remarks
- * A window event closes other active dropdowns when one opens. Floating UI supplies placement,
- * collision handling, dismissal, and interaction props.
+ * Positioned dropdown state, dismissal, and mutual exclusion with other dropdowns: a window event
+ * closes other active dropdowns when one opens. Floating UI supplies placement, collision handling,
+ * dismissal and interaction props.
  *
  * @param placement - Floating UI placement; defaults to `bottom-start`.
- * @returns Visibility controls, positioning refs/styles, and interaction prop getters.
  */
 export function useDropdown(placement: Placement = 'bottom-start') {
   const [isOpen, setIsOpen] = useState(false);

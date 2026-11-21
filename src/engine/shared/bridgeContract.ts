@@ -3,66 +3,66 @@ import { ExplorationDepthSelectionSchema } from './explorationDepthContract';
 import { OBJECT_TYPES, type ExtensionConfig, type SchemaPreview, type TraceAffordanceSnapshot } from '../types';
 
 /**
- * ─── Bridge Contract ────────────────────────────────────────────────────────
- *
- * This module defines the strict type-safe contract for all IPC messages
- * between the Extension Host and the Webview.
+ * Bridge contract: the strict, type-safe contract for every IPC message between the Extension Host
+ * and the Webview.
  *
  * @packageDocumentation
  */
 
-/** Zod schema defining the valid types of database objects in the lineage graph. */
 const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 
-/** Upper bound on a list of object ids carried in a tool call or across the bridge — an input-size check, never a scope limit. */
+/** Upper bound on object ids in a tool call or bridge message: an input-size check, not a scope. */
 export const MAX_ID_LIST_LENGTH = 500;
 
 /**
- * Upper bound, in characters, on the assembled AI report markdown the webview hands back to the
- * host for "Open in editor".
- *
- * @remarks
- * Bounds the `ai-open-in-editor` payload, which is otherwise the one unbounded string the webview
- * can post — no field-level cap composes into a total. A report is the prose of a single
- * language-model turn; a payload above this ceiling is a malformed or hostile frame, not a long answer.
+ * Upper bound, in characters, on the AI report markdown the webview hands back for "Open in
+ * editor". The `ai-open-in-editor` payload is otherwise the one unbounded string the webview can
+ * post (no field cap composes into a total); a report is one model turn's prose, so a larger
+ * payload is a malformed or hostile frame.
+ * @internal
  */
 export const AI_REPORT_MARKDOWN_MAX_CHARS = 200_000;
 
 /**
- * Link destination scheme of the engine-assembled object links in AI report markdown:
- * `[label](#focus-node:<encoded id>)`. It resolves only inside the graph webview's click handler.
+ * Upper bound, in characters, on the file text the webview hands to the host for `export-file`.
+ * Draw.io export measured about 1.6 KB per object (236,627 chars for 148 nodes and 164 edges,
+ * 396,332 for 249 and 303): 8-10 MB at the 5000-object limit, so 50 MB keeps at least 5x margin.
+ * @internal
+ */
+export const EXPORT_FILE_MAX_CHARS = 50 * 1024 * 1024;
+
+/** Upper bound, in characters, on one webview `log` line; real lines are a few hundred. */
+const WEBVIEW_LOG_MAX_CHARS = 100_000;
+
+/**
+ * Link scheme of the engine-assembled object links in AI report markdown,
+ * `[label](#focus-node:<encoded id>)`; resolves only inside the graph webview's click handler.
  */
 export const FOCUS_NODE_HREF_PREFIX = '#focus-node:';
 
 const FOCUS_NODE_LINK_RE = new RegExp(String.raw`\[([^\]]*)\]\(${FOCUS_NODE_HREF_PREFIX}[^)]*\)`, 'g');
 
 /**
- * Rewrites every `[label](#focus-node:<id>)` to plain `label`, for a surface outside the graph
- * webview where the scheme has no target.
- *
- * @param markdown - AI report markdown.
- * @returns The markdown with every focus-node link reduced to its label; other links untouched.
+ * Rewrites every `[label](#focus-node:<id>)` to plain `label` for a surface outside the graph
+ * webview, where the scheme has no target; other links are untouched.
  */
 export function stripFocusNodeLinks(markdown: string): string {
   return markdown.replace(FOCUS_NODE_LINK_RE, '$1');
 }
 
 /**
- * Maximum object ids one screen-state list carries: the cap the presenter applies when it renders
- * a screen-fact id list (the overflow is reported as a count) and, identically, the cap on the ids
- * a `lineage_get_screen_state` recall may name — a recall reads back what the screen card listed,
- * so one governor sizes both ends. `package.json`'s `maxItems` is generated from the schema by
- * `scripts/generate-tool-manifest.mjs`, never maintained by hand.
+ * Maximum object ids one screen-state list carries: the cap the presenter applies when rendering a
+ * screen-fact id list (overflow is reported as a count) and, identically, the cap on the ids a
+ * `lineage_get_screen_state` recall may name, so one governor sizes both ends. `package.json`'s
+ * `maxItems` is generated from the schema by `scripts/generate-tool-manifest.mjs`, never by hand.
  */
 export const SCREEN_STATE_MAX_IDS = 20;
 
 /**
  * Sentinel `upstreamLevels`/`downstreamLevels` value meaning "every level", not a literal depth.
- *
- * @remarks
- * The trace controls encode an unbounded side as this value and the banner decodes it back to
- * "All", so it crosses the bridge as an ordinary number. Every producer and consumer must use
- * this constant: a surface that treats it as a depth reports nine quadrillion levels.
+ * The trace controls encode an unbounded side as this value and the banner decodes it to "All", so
+ * it crosses the bridge as an ordinary number. Every producer and consumer must use this constant:
+ * a surface treating it as a depth reports nine quadrillion levels.
  */
 export const TRACE_ALL_LEVELS = Number.MAX_SAFE_INTEGER;
 
@@ -94,12 +94,9 @@ export const AiGateRefineSchema = z.object({
 export type AiGateRefine = z.infer<typeof AiGateRefineSchema>;
 
 /**
- * Zod schema mirroring the runtime `ColumnDef` shape (`src/engine/types.ts`).
- *
- * @remarks
- * Field names and types must stay aligned with `engine/types.ts#ColumnDef`. `nullable` and `extra`
- * are string columns carrying raw extractor metadata; primary-key participation is signalled by
- * `pkOrdinal`, not a boolean.
+ * Zod schema mirroring the runtime `ColumnDef` (`engine/types.ts`); names and types must stay
+ * aligned with it. `nullable` and `extra` are string columns of raw extractor metadata; primary-key
+ * participation is `pkOrdinal`, not a boolean.
  */
 const ColumnDefSchema = z.object({
   name: z.string(),
@@ -127,11 +124,9 @@ const ForeignKeyInfoSchema = z.object({
 });
 
 /**
- * Strict IPC boundary schema for lineage nodes sent between the extension host and webview.
- *
- * @remarks
- * Declares every `LineageNode` field: Zod strips undeclared keys, so a field missing here is
- * silently dropped from every model the host sends (external-reference icons, detail-panel FKs).
+ * Strict IPC boundary schema for lineage nodes. Declares every `LineageNode` field: Zod strips
+ * undeclared keys, so a field missing here is silently dropped from every model the host sends
+ * (external-reference icons, detail-panel FKs).
  */
 const LineageNodeSchema = z.object({
   id: z.string(),
@@ -150,14 +145,13 @@ const LineageNodeSchema = z.object({
   definitionUnreadable: z.boolean().optional(),
 });
 
-/** Zod schema defining a directed dependency or execution relationship between two lineage nodes. */
+/** Zod schema of a directed dependency or execution relationship between two lineage nodes. */
 const LineageEdgeSchema = z.object({
   source: z.string(),
   target: z.string(),
   type: z.enum(['body', 'dependency', 'exec']).optional(),
 });
 
-/** Zod schema for a schema's node counts and object-type breakdown, used for UI filtering. */
 const SchemaInfoSchema = z.object({
   name: z.string(),
   nodeCount: z.number(),
@@ -203,17 +197,12 @@ const DatabaseModelSchema = z.object({
 });
 
 /**
- * Zod schema carrying the host's settings snapshot across the bridge.
- *
- * @remarks
- * Pinned to {@link ExtensionConfig} so a parsed message keeps its field types instead of degrading
- * to `any`. `Partial` is the honest shape: the host is the sole producer, so a mismatch here is a
- * host refactor bug that must fail at the boundary. `parseRules` alone stays structural.
+ * Zod schema carrying the host's settings snapshot across the bridge, pinned to
+ * {@link ExtensionConfig} so a parsed message keeps its field types instead of degrading to `any`.
+ * `Partial` is the honest shape: the host is the sole producer, so a mismatch is a host refactor
+ * bug that must fail at the boundary.
  */
 const ExtensionConfigSchema: z.ZodType<Partial<ExtensionConfig>> = z.object({
-  parseRules: z.custom<NonNullable<ExtensionConfig['parseRules']>>(
-    (v) => typeof v === 'object' && v !== null && Array.isArray((v as { rules?: unknown }).rules),
-  ).optional(),
   excludePatterns: z.array(z.string()).optional(),
   maxNodes: z.number().optional(),
   dmvQueryTimeout: z.number().optional(),
@@ -257,29 +246,24 @@ const ExtensionConfigSchema: z.ZodType<Partial<ExtensionConfig>> = z.object({
 });
 
 /**
- * Bidirectional shape equality, used only by {@link extensionConfigSchemaMatchesInterface} below.
- * Tuple-wrapped (`[A] extends [B]`) so the comparison covers the whole object shape at once instead
- * of TS distributing the check per-property over a union.
+ * Bidirectional shape equality for {@link extensionConfigSchemaMatchesInterface}; tuple-wrapped
+ * (`[A] extends [B]`) so the whole object shape is compared instead of distributing per property
+ * over a union.
  */
 type AssertExact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 /**
- * Compile-time drift guard for {@link ExtensionConfigSchema}: fails to typecheck the moment the
- * schema's inferred shape and `Partial<ExtensionConfig>` (declared in `../types`, not owned here)
- * diverge in either direction — a field added, removed, or retyped on one side without the other.
- * The one-directional `z.ZodType<Partial<ExtensionConfig>>` annotation on the schema itself already
- * catches the schema being too loose; this also catches the schema being too narrow (missing a field
- * the interface has).
+ * Compile-time drift guard for {@link ExtensionConfigSchema}: fails to typecheck when the schema's
+ * inferred shape and `Partial<ExtensionConfig>` diverge in either direction. The one-directional
+ * `z.ZodType<...>` annotation catches a schema too loose; this also catches one too narrow (missing
+ * a field the interface has).
  */
 const extensionConfigSchemaMatchesInterface: AssertExact<z.infer<typeof ExtensionConfigSchema>, Partial<ExtensionConfig>> = true;
 void extensionConfigSchemaMatchesInterface;
 
 /**
- * Zod schema defining the serialized visual filter configuration state.
- *
- * @remarks
- * Specifies inclusion and exclusion parameters for rendering graph nodes.
- * Used for persisting and restoring view states.
+ * Zod schema of the serialized visual filter configuration (inclusion/exclusion parameters for
+ * graph nodes), used to persist and restore view states.
  */
 const SerializedFilterStateSchema = z.object({
   schemas: z.array(z.string()),
@@ -296,7 +280,6 @@ const SerializedFilterStateSchema = z.object({
 /** Serialized visual filter configuration state, persisted and restored across sessions. */
 export type SerializedFilterState = z.infer<typeof SerializedFilterStateSchema>;
 
-/** Semantic highlight color applied to an AI-flagged node or edge. */
 const AIHighlightColorSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 const AIHighlightGroupSchema = z.object({
@@ -311,27 +294,21 @@ const AINodeTextSchema = z.object({
 }).strict();
 
 /**
- * Column-transform classes carried on a column-lineage edge.
- *
- * @remarks
- * Aligned to OpenLineage's `ColumnLineageDatasetFacet` transformation types so an exported facet
- * needs no translation table. Multi-select, because one edge is routinely several at once (an
- * aggregate over a computed expression). The single home for the value set — ai, engine and webview
- * all read it here, so no surface can carry a value the others reject.
+ * Column-transform classes carried on a column-lineage edge, aligned to OpenLineage's
+ * `ColumnLineageDatasetFacet` transformation types so an exported facet needs no translation table.
+ * Multi-select: one edge is routinely several at once (an aggregate over a computed expression).
+ * The single home for the value set (ai, engine and webview all read it here), so no surface
+ * carries a value the others reject.
  */
 export const COLUMN_TRANSFORM_CLASSES = ['pass_through', 'compute', 'aggregate', 'combine', 'filter'] as const;
 
-/** One column-transform class from {@link COLUMN_TRANSFORM_CLASSES}. */
 export type ColumnTransformClass = typeof COLUMN_TRANSFORM_CLASSES[number];
 
 /**
  * Whether a transform class carries the upstream value into the output (DIRECT) or only shaped
- * which rows appear (INDIRECT), in OpenLineage's own terms.
- *
- * @remarks
- * Load-bearing and exhaustive: no class is both, so a renderer can key a distinct edge treatment
- * off this map alone. Adding a class to {@link COLUMN_TRANSFORM_CLASSES} without an entry here
- * fails to typecheck.
+ * which rows appear (INDIRECT), in OpenLineage's terms. Exhaustive and load-bearing: no class is
+ * both, so a renderer can key a distinct edge treatment off this map alone; a class added to
+ * {@link COLUMN_TRANSFORM_CLASSES} without an entry fails to typecheck.
  */
 export const COLUMN_TRANSFORM_DIRECTION: Readonly<Record<ColumnTransformClass, 'DIRECT' | 'INDIRECT'>> = {
   pass_through: 'DIRECT',
@@ -342,10 +319,8 @@ export const COLUMN_TRANSFORM_DIRECTION: Readonly<Record<ColumnTransformClass, '
 };
 
 /**
- * Whether a classified column only shaped which rows appear — every class is INDIRECT.
- *
- * @param transforms - The column's transform classes; absent or empty means unclassified.
- * @returns `true` only for a non-empty list with no DIRECT class.
+ * Whether a classified column only shaped which rows appear (every class INDIRECT). `transforms`
+ * absent or empty means unclassified; `true` only for a non-empty list with no DIRECT class.
  */
 export function isIndirectOnly(transforms: readonly ColumnTransformClass[] | undefined): boolean {
   return !!transforms?.length && transforms.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
@@ -360,17 +335,16 @@ const ColumnAspectEdgeSchema = z.object({
   toNode:   z.string(),
   fromCol:  z.string(),
   toCol:    z.string(),
-  /** Absent whenever the model did not classify the edge; the engine never fills it in with a guess. */
+  /** Absent whenever the model did not classify the edge; the engine never guesses one. */
   transforms: z.array(ColumnTransformClassSchema).optional(),
   /**
-   * Optional one-clause model note for the edge ("SUM of line totals"), absent whenever the model
-   * offered none. Surface text only: the webview prints it in the edge tooltip and nothing parses
-   * it, so an old edge without one reads the structural description instead.
+   * Optional one-clause model note for the edge ("SUM of line totals"). Surface text only: the
+   * webview prints it in the edge tooltip and nothing parses it, so an edge without one reads the
+   * structural description.
    */
   note: z.string().optional(),
 }).strict();
 
-/** Inferred shape of {@link ColumnAspectEdgeSchema}. */
 export type ColumnAspectEdge = z.infer<typeof ColumnAspectEdgeSchema>;
 
 const ColumnAspectSchema = z.object({
@@ -382,36 +356,30 @@ const NodeVerdictSchema = z.object({
   verdict: z.enum(['analyze', 'passthrough', 'prune']),
 }).strict();
 
-/** Inferred shape of {@link NodeVerdictSchema}. */
 export type NodeVerdict = z.infer<typeof NodeVerdictSchema>;
 
-/**
- * Zod schema defining AI-generated metadata for enhancing the lineage graph UI.
- *
- * @remarks
- * Contains custom grouping, badging, highlighting, and descriptive text generated by the AI agent.
- */
+/** Zod schema of AI-generated lineage metadata: grouping, badging, highlighting, descriptions. */
 const AIViewMetadataSchema = z.object({
   summary: z.string().optional(),
   description: z.string().optional(),
   createdAt: z.string(),
   modelName: z.string(),
-  /** Identifier of the AI run that authored the view; pairs the bookmark with its persisted run record. */
+  /** Id of the AI run that authored the view; pairs the bookmark with its persisted run record. */
   runId: z.string().optional(),
   highlightGroups: z.array(AIHighlightGroupSchema),
   badges: z.array(AINodeTextSchema),
   notes: z.array(AINodeTextSchema).optional(),
   layoutDirection: z.enum(['LR', 'TB']).optional(),
-  /** Column trace edges. Each edge carries the analyzing hop node plus source/destination so every result node can show column flow data. Only present during CT sessions. */
+  /**
+   * Column trace edges. Each edge carries the analyzing hop node plus source/destination so every
+   * result node can show column flow data. Only present during CT sessions.
+   */
   columnAspect: ColumnAspectSchema.optional(),
-  /** Per-node CT verdict, so the webview can mark column lines without an AI-contract change. Only present during CT sessions. */
+  /** Per-node CT verdict so the webview marks column lines without an AI-contract change. */
   nodeVerdicts: z.array(NodeVerdictSchema).optional(),
 }).strict();
 
-/** AI-generated metadata layered onto the lineage graph UI: grouping, badges, highlights, and descriptive text. */
 export type AIViewMetadata = z.infer<typeof AIViewMetadataSchema>;
-
-const NodePositionSchema = z.object({ x: z.number(), y: z.number() }).strict();
 
 const ExpandedSchemaViewSchema = z.object({
   focusNodeId: z.string().nullable(),
@@ -419,12 +387,9 @@ const ExpandedSchemaViewSchema = z.object({
 }).strict();
 
 /**
- * Zod schema defining a saved filter profile snapshot.
- *
- * @remarks
- * `graphMode`, `expandedSchemaView` and `showExpandedSchemaClusters` are the view shape — schema
- * clusters, individual objects, or the mixed state where some schemas are expanded. They stay
- * optional so a profile missing them still restores.
+ * Zod schema of a saved filter profile snapshot. `graphMode`, `expandedSchemaView` and
+ * `showExpandedSchemaClusters` are the view shape (schema clusters, individual objects, or a mix);
+ * they stay optional so a profile missing them still restores.
  */
 const FilterProfileSchema = z.object({
   id: z.string(),
@@ -432,7 +397,6 @@ const FilterProfileSchema = z.object({
   createdAt: z.string(),
   filter: SerializedFilterStateSchema,
   source: z.enum(['user', 'trace', 'analysis', 'ai']).optional(),
-  positions: z.record(z.string(), NodePositionSchema).optional(),
   aiMetadata: AIViewMetadataSchema.optional(),
   graphMode: z.enum(['overview', 'full']).optional(),
   expandedSchemaView: ExpandedSchemaViewSchema.optional(),
@@ -442,7 +406,7 @@ const FilterProfileSchema = z.object({
 /** A saved filter profile snapshot: layout, filter rules, and optional AI metadata. */
 export type FilterProfile = z.infer<typeof FilterProfileSchema>;
 
-/** Human-readable labels for bookmark-view sources. Single owner; banner + info card both read it. */
+/** Labels of bookmark-view sources; the single owner, read by the banner and the info card. */
 export const BOOKMARK_SOURCE_LABELS: Record<NonNullable<FilterProfile['source']>, string> = {
   ai: 'AI',
   trace: 'Trace',
@@ -466,22 +430,23 @@ export const BOOKMARK_SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['sou
   user: 'Saved view',
 };
 
-/** Identifier of the implementation that opens database connections. */
-export const ConnectionProviderIdSchema = z.enum(['mssqlExtension', 'builtIn']);
+/**
+ * Identifier of the implementation that opens database connections. `mssqlExtension` is read only
+ * to detect a project saved with the retired mssql extension connection.
+ */
+const ConnectionProviderIdSchema = z.enum(['mssqlExtension', 'builtIn']);
 export type ConnectionProviderId = z.infer<typeof ConnectionProviderIdSchema>;
 
 /**
- * Stored database connection metadata.
+ * Stored database connection metadata. `provider` and `connectionId` identify how it is reopened: a
+ * record without `provider` was written for the mssql extension and reads as `mssqlExtension`;
+ * `connectionId` names a `dataLineageViz.database.connections` entry and never carries a
+ * credential.
  *
- * @remarks
- * `provider` and `connectionId` identify how the connection is reopened: a record without
- * `provider` was written for the mssql extension and reads as `mssqlExtension`; `connectionId`
- * names a `dataLineageViz.database.connections` entry and never carries a credential.
- *
- * `.strict()` is load-bearing: unknown fields — a leaked `password` above all — are rejected
- * rather than persisted or replayed to the webview. Tolerance is granted per named field only,
- * because `migrateProjectStore` discards any stored record that fails this schema, and Integrated,
- * Entra and legacy connections omit `user`/`authenticationType`/typed `port` respectively.
+ * `.strict()` is load-bearing: unknown fields (a leaked `password` above all) are rejected rather
+ * than persisted or replayed to the webview. Tolerance is granted per named field only, because
+ * `migrateProjectStore` discards any record that fails this schema, and Integrated, Entra and
+ * legacy connections omit `user`/`authenticationType`/typed `port` respectively.
  */
 export const StoredConnectionInfoSchema = z.object({
   server: z.string(),
@@ -498,7 +463,7 @@ export const StoredConnectionInfoSchema = z.object({
   connectionId: z.string().optional(),
 }).strict();
 
-/** Stored database connection metadata. See {@link StoredConnectionInfoSchema} for the persistence-tolerance contract. */
+/** Stored database connection metadata; see {@link StoredConnectionInfoSchema} for tolerance. */
 export type StoredConnectionInfo = z.infer<typeof StoredConnectionInfoSchema>;
 
 const DacpacConnectionSchema = z.object({
@@ -526,12 +491,7 @@ const ProjectConnectionSchema = z.discriminatedUnion('type', [
   DatabaseConnectionSchema,
 ]);
 
-/**
- * Zod schema defining a workspace project configuration.
- *
- * @remarks
- * Groups related database connections and persistent filter profiles together.
- */
+/** Zod schema of a workspace project: related database connections plus filter profiles. */
 export const ProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -545,13 +505,17 @@ export const ProjectSchema = z.object({
 export type Project = z.infer<typeof ProjectSchema>;
 
 /**
- * Reading counterpart of {@link ProjectSchema} for records already on disk.
- *
- * @remarks
- * Same fields, but unknown ones are dropped instead of rejecting the record: a record written by an
- * older build legitimately carries keys this one never declared, and discarding the whole project
- * over one of them is silent user-data loss. Rebuilt level by level from the strict schemas' own
- * shapes, so a field added above is carried here without a second declaration to keep in step.
+ * The project a `save-project` frame carries. The webview saves only dacpac projects; a database
+ * connection record is written by the host alone, through `stripSensitiveFields`.
+ */
+const DacpacProjectSchema = ProjectSchema.extend({ connection: DacpacConnectionSchema });
+
+/**
+ * Reading counterpart of {@link ProjectSchema} for records already on disk. Same fields, but
+ * unknown ones are dropped instead of rejecting the record: an older build's record legitimately
+ * carries keys this one never declared, and discarding the whole project over one is silent
+ * user-data loss. Rebuilt level by level from the strict schemas' shapes, so an added field needs
+ * no second declaration.
  */
 const StoredConnectionInfoReadSchema = z.object(StoredConnectionInfoSchema.shape);
 
@@ -575,42 +539,44 @@ const AIViewMetadataReadSchema = z.object({
 const FilterProfileReadSchema = z.object({
   ...FilterProfileSchema.shape,
   filter: z.object(SerializedFilterStateSchema.shape),
-  positions: z.record(z.string(), z.object(NodePositionSchema.shape)).optional(),
   aiMetadata: AIViewMetadataReadSchema.optional(),
   expandedSchemaView: z.object(ExpandedSchemaViewSchema.shape).optional(),
 });
 
-/** Persisted-record counterpart of {@link ProjectSchema}; see {@link StoredConnectionInfoReadSchema}. */
+/**
+ * Persisted counterpart of {@link ProjectSchema}; see {@link StoredConnectionInfoReadSchema}. A
+ * saved view that fails its schema is skipped alone, so one unreadable view never drops its
+ * project.
+ */
 export const ProjectReadSchema = z.object({
   ...ProjectSchema.shape,
   connection: ProjectConnectionReadSchema,
-  filterProfiles: z.array(FilterProfileReadSchema).optional(),
+  filterProfiles: z.array(z.unknown()).transform(profiles => profiles.flatMap(profile => {
+    const parsed = FilterProfileReadSchema.safeParse(profile);
+    return parsed.success ? [parsed.data] : [];
+  })).optional(),
 });
 
 /**
- * Envelope version stamped on every host→webview frame by the `postValidated` send choke point.
- *
- * @remarks
- * Deliberately an *envelope* field, not a schema field, so the message unions below stay untouched.
- * Bump it whenever a message shape changes in a way an older peer bundle would misread — a stale
- * webview then fails loudly at the receive site instead of silently mis-rendering.
+ * Envelope version stamped on every host→webview frame by the `postValidated` choke point. An
+ * *envelope* field, not a schema field, so the message unions stay untouched. Bump it when a
+ * message shape changes in a way an older peer bundle would misread; a stale webview then fails
+ * loudly at the receive site instead of silently mis-rendering.
  */
-export const BRIDGE_PROTOCOL_VERSION = 1;
+export const BRIDGE_PROTOCOL_VERSION = 2;
 
 /** Envelope shape read at receive sites before the payload union is parsed. */
 export type BridgeEnvelope = { protocolVersion?: unknown };
 
 /**
- * Validated host→webview frame: either the parsed payload or a classified rejection.
- *
- * @remarks
- * Single owner for the receive-side seam both webviews repeat: Zod-parse the raw frame, then
- * compare the envelope version. Parse failures stay silent (foreign frames are ignored); version
- * mismatches are loud (stale bundle).
+ * Validated host→webview frame: the parsed payload or a classified rejection. The single owner of
+ * the receive-side seam both webviews repeat: Zod-parse the raw frame, then compare the envelope
+ * version. A parse failure carries its Zod issues; a version mismatch means a stale bundle.
  */
 export type ValidatedBridgeFrame<S extends z.ZodTypeAny> =
   | { ok: true; data: z.infer<S>; msgType: string }
-  | { ok: false; reason: 'parse' | 'version'; msgType: string; version: unknown };
+  | { ok: false; reason: 'parse'; msgType: string; version: unknown; issues: z.core.$ZodIssue[] }
+  | { ok: false; reason: 'version'; msgType: string; version: unknown };
 
 /** Validates one host→webview frame against `schema` plus {@link BRIDGE_PROTOCOL_VERSION}. */
 export function validateBridgeFrame<S extends z.ZodTypeAny>(
@@ -623,13 +589,30 @@ export function validateBridgeFrame<S extends z.ZodTypeAny>(
     const msgType = typeof (raw as { type?: unknown } | undefined)?.type === 'string'
       ? String((raw as { type: string }).type)
       : '?';
-    return { ok: false, reason: 'parse', msgType, version };
+    return { ok: false, reason: 'parse', msgType, version, issues: parsed.error.issues };
   }
   const msgType = String((parsed.data as { type: string }).type);
   if (version !== BRIDGE_PROTOCOL_VERSION) {
     return { ok: false, reason: 'version', msgType, version };
   }
   return { ok: true, data: parsed.data, msgType };
+}
+
+/**
+ * Host-log lines for a frame that failed the Zod parse, in the webview `log` message shape. The
+ * warn line carries the message type and the distinct issue codes; the key paths and issue texts,
+ * which name payload fields, go to the debug line only.
+ */
+export function parseRejectionLogs(
+  tag: string,
+  frame: { msgType: string; issues: readonly z.core.$ZodIssue[] },
+): Array<{ type: 'log'; level: 'warn' | 'debug'; text: string }> {
+  const codes = [...new Set(frame.issues.map((issue) => issue.code))].join(',');
+  const paths = frame.issues.slice(0, 5).map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`);
+  return [
+    { type: 'log', level: 'warn', text: `[${tag}] Host message "${frame.msgType}" rejected — issues=${codes}` },
+    { type: 'log', level: 'debug', text: `[${tag}] Host message "${frame.msgType}" issue paths — ${paths.join('; ')}` },
+  ];
 }
 
 const TraceAffordanceSideSnapshotSchema = z.looseObject({
@@ -666,15 +649,12 @@ const RenderTraceScopeSchema = z.looseObject({
 
 /**
  * Zod schema of the `render-state` buffer the main webview mirrors to the host after each render.
- *
- * @remarks
- * Validated at the bridge like every other frame. Fields a host reader walks structurally — the
- * highlighted node, its add/prune affordances, the trace scope id lists, the rendered connectivity —
- * are typed; every other key the webview adds (graph error context) is kept literally, so an
- * unrecognized field never fails the frame. A frame whose walked fields are malformed is rejected
- * and logged at the receive site and never reaches a reader.
+ * Fields a host reader walks structurally (highlighted node, its add/prune affordances, trace scope
+ * id lists, rendered connectivity) are typed; every other key the webview adds is kept literally,
+ * so an unrecognized field never fails the frame. A frame whose walked fields are malformed is
+ * rejected and logged at the receive site and never reaches a reader.
  */
-export const RenderStateSnapshotSchema = z.looseObject({
+const RenderStateSnapshotSchema = z.looseObject({
   highlightedNodeId: z.string().nullable().optional(),
   affordances: TraceAffordanceSnapshotSchema.nullable().optional(),
   traceScope: RenderTraceScopeSchema.nullable().optional(),
@@ -685,12 +665,10 @@ export const RenderStateSnapshotSchema = z.looseObject({
 export type RenderStateSnapshot = z.infer<typeof RenderStateSnapshotSchema>;
 
 /**
- * Zod schema of the analytics/bookmark extras carried on `uiState.screenState`, not in `render-state`.
- *
- * @remarks
- * Same tolerance terms as {@link RenderStateSnapshotSchema}: walked fields typed, extras kept.
+ * Zod schema of the analytics/bookmark extras on `uiState.screenState`, not in `render-state`. Same
+ * tolerance as {@link RenderStateSnapshotSchema}: walked fields typed, extras kept.
  */
-export const ScreenStateExtrasSchema = z.looseObject({
+const ScreenStateExtrasSchema = z.looseObject({
   analytics: z.looseObject({
     type: z.string(),
     activeGroupId: z.string().nullable(),
@@ -709,14 +687,12 @@ export const ScreenStateExtrasSchema = z.looseObject({
 export type ScreenStateExtras = z.infer<typeof ScreenStateExtrasSchema>;
 
 /**
- * Zod schema of the `filter-changed` ui-state buffer the main webview posts on every view change.
- *
- * @remarks
- * The host lifts `filter`, `graphMode`, `filteredCount` and `renderLimitHit` onto typed session
- * fields, and the screen-state readers walk `trace` and `screenState`, so those are typed; the filter
- * reuses the persisted {@link SerializedFilterState} contract. Unknown keys are kept literally.
+ * Zod schema of the `filter-changed` ui-state buffer posted on every view change. The host lifts
+ * `filter`, `graphMode`, `filteredCount` and `renderLimitHit` onto typed session fields and the
+ * screen-state readers walk `trace` and `screenState`, so those are typed; the filter reuses the
+ * persisted {@link SerializedFilterState} contract. Unknown keys are kept literally.
  */
-export const UiStateSnapshotSchema = z.looseObject({
+const UiStateSnapshotSchema = z.looseObject({
   filter: SerializedFilterStateSchema,
   expandedSchemaView: ExpandedSchemaViewSchema.nullable().optional(),
   trace: z.looseObject({
@@ -732,43 +708,45 @@ export const UiStateSnapshotSchema = z.looseObject({
 });
 
 /**
- * Zod schema representing the complete discriminated union of message types
- * sent from the VS Code Extension Host to the React Webview.
- *
- * @remarks
- * All outgoing communication from the extension is validated against this schema.
+ * Host→webview message types that answer one load and so carry that load's `loadId`. The webview
+ * names a load with the `loadId` on its request; the host stamps results with it and
+ * `cancel-load{loadId}` stops it. The webview drops a result of a load it cancelled or replaced.
+ * The id is optional on the wire: a request without one is answered unstamped, and a result the
+ * host posts on its own (session restore, the external-project command) names no load and always
+ * applies.
+ */
+export const LOAD_RESULT_TYPES = [
+  'dacpac-schema-preview', 'dacpac-model', 'db-schema-preview', 'db-model',
+  'db-progress', 'db-error', 'db-cancelled', 'last-dacpac-gone',
+] as const;
+
+/**
+ * Zod schema of the discriminated union of messages from the Extension Host to the React Webview;
+ * all outgoing communication is validated against it.
  */
 export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional() }),
-  z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
-  z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.string().nullish() }),
+  z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional(), loadId: z.string().optional(), projectId: z.string().optional() }),
+  z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional(), projectId: z.string().optional() }),
+  z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.enum(['main', 'projects']).nullish() }),
   z.object({ type: z.literal('detail-closed') }),
-  z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional() }),
-  z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
-  z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string() }),
-  z.object({ type: z.literal('db-cancelled') }),
-  z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string() }),
-  z.object({ type: z.literal('last-dacpac-gone') }),
-  z.object({ type: z.literal('mssql-status'), available: z.boolean(), provider: ConnectionProviderIdSchema.optional() }),
+  z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-cancelled'), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-error'), message: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('last-dacpac-gone'), loadId: z.string().optional() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
   z.object({ type: z.literal('reload-source') }),
+  /**
+   * Open Wizard while a graph is loaded: runs the toolbar Back action, with its unsaved-changes
+   * bar.
+   */
+  z.object({ type: z.literal('request-back') }),
   z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
-  z.object({
-    type: z.literal('error'),
-    error: z.string(),
-    stack: z.string().optional(),
-    componentStack: z.string().optional(),
-    source: z.enum(['error-boundary', 'window-error', 'unhandled-rejection']).optional(),
-    context: z.record(z.string(), z.unknown()).optional(),
-    timestamp: z.number().optional(),
-  }),
+  z.object({ type: z.literal('ai-view-clear') }),
 ]);
 
-/**
- * TypeScript type inferred from the ExtensionToWebviewMsgSchema.
- * Represents all valid messages dispatched to the Webview.
- */
 export type ExtensionToWebviewMsg = z.infer<typeof ExtensionToWebviewMsgSchema>;
 
 /** Structured webview crash diagnostic accepted from both primary and detail panels. */
@@ -789,30 +767,25 @@ const WebviewWarningMessageSchema = z.object({
 });
 
 /**
- * Zod schema for messages sent from the primary lineage-graph webview to the
- * extension host.
- *
- * @remarks
- * The detail-panel webview runs in a separate process and uses its own schema
- * ({@link DetailPanelToExtensionMsgSchema}). Keeping the two unions separate
- * lets each dispatcher exhaustively handle its own variants.
+ * Zod schema for messages from the primary lineage-graph webview to the host. The detail-panel
+ * webview runs in a separate process with its own schema ({@link DetailPanelToExtensionMsgSchema});
+ * separate unions let each dispatcher be exhaustive over its own variants.
  */
 export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
   z.object({ type: z.literal('show-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('update-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
-  z.object({ type: z.literal('open-dacpac') }),
-  z.object({ type: z.literal('load-project'), id: z.string() }),
-  z.object({ type: z.literal('save-project'), project: ProjectSchema }),
+  z.object({ type: z.literal('open-dacpac'), loadId: z.string().optional() }),
+  z.object({ type: z.literal('load-project'), id: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('save-project'), project: DacpacProjectSchema }),
   z.object({ type: z.literal('delete-project'), id: z.string() }),
-  z.object({ type: z.literal('load-demo') }),
-  z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
-  z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
+  z.object({ type: z.literal('load-demo'), loadId: z.string().optional() }),
+  z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional(), projectId: z.string().optional(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional(), loadId: z.string().optional() }),
   z.object({ type: z.literal('filter-changed'), uiState: UiStateSnapshotSchema }),
   z.object({ type: z.literal('render-state'), renderState: RenderStateSnapshotSchema }),
-  z.object({ type: z.literal('db-connect') }),
-  z.object({ type: z.literal('check-mssql') }),
-  z.object({ type: z.literal('use-builtin-connection') }),
+  z.object({ type: z.literal('db-connect'), loadId: z.string().optional() }),
+  z.object({ type: z.literal('cancel-load'), loadId: z.string() }),
   z.object({
     type: z.literal('save-view'),
     projectId: z.string(),
@@ -825,9 +798,9 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request-projects') }),
   z.object({ type: z.literal('open-external'), url: z.string().url().refine(u => u.startsWith('http://') || u.startsWith('https://'), { message: 'Only HTTP/HTTPS URLs are allowed' }) }),
   z.object({ type: z.literal('open-settings') }),
-  z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
+  z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string().max(EXPORT_FILE_MAX_CHARS) }),
   z.object({ type: z.literal('ai-open-in-editor'), markdown: z.string().max(AI_REPORT_MARKDOWN_MAX_CHARS) }),
-  z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string() }),
+  z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string().max(WEBVIEW_LOG_MAX_CHARS) }),
   WebviewErrorMessageSchema,
   WebviewWarningMessageSchema,
   z.object({ type: z.literal('view-render-result'), rendered: z.number(), of: z.number(), unresolved: z.array(z.string()) }),
@@ -836,10 +809,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
 /** Messages sent from the main lineage-graph webview to the extension host. */
 export type MainPanelToExtensionMsg = z.infer<typeof MainPanelToExtensionMsgSchema>;
 
-/**
- * Zod schema for messages sent from the detail-panel webview to the extension
- * host.
- */
+/** Zod schema for messages from the detail-panel webview to the host. */
 export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('detail-ready'), findQuery: z.string().optional() }),
   z.object({ type: z.literal('table-stats-request'), schema: z.string(), objectName: z.string(), mode: z.enum(['quick', 'standard']), columns: z.array(ColumnDefSchema) }),
@@ -848,33 +818,92 @@ export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   WebviewWarningMessageSchema,
 ]);
 
-/** Messages sent from the detail-panel webview to the extension host. */
+/** Messages sent from the detail-panel webview to the extension host. @public */
 export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsgSchema>;
 
 /**
- * Every message either webview may post to the extension host.
- *
- * @remarks
- * The two panels keep separate dispatch unions so each host-side dispatcher stays exhaustive over
- * its own variants. One `acquireVsCodeApi()` handle type serves both bundles, so the webview-facing
- * `postMessage` signature is typed with this union: a send of a shape neither host dispatcher can
- * receive then fails to compile instead of being dropped at the Zod seam at runtime.
+ * Every message either webview may post to the host. The two panels keep separate dispatch unions
+ * so each dispatcher stays exhaustive. One `acquireVsCodeApi()` handle type serves both bundles, so
+ * `postMessage` is typed with this union: a shape neither dispatcher can receive fails to compile
+ * instead of being dropped at the Zod seam.
+ * @public
  */
 export type WebviewToExtensionMsg = MainPanelToExtensionMsg | DetailPanelToExtensionMsg;
 
+/** Settings the detail panel reads, synchronized from VS Code settings and the active session. */
+const DetailConfigSchema = z.object({
+  isDbMode: z.boolean(),
+  statsEnabled: z.boolean(),
+  excludeExternalTables: z.boolean(),
+  standardModeEnabled: z.boolean(),
+});
+
+/** Detail-panel settings carried by `detail-update`. */
+export type DetailConfig = z.infer<typeof DetailConfigSchema>;
+
+/** Statistical profile for a single column. */
+const ColumnStatsSchema = z.object({
+  /** The original column name. */
+  name: z.string(),
+  /** The SQL data type (e.g., 'nvarchar(50)'). */
+  type: z.string(),
+  /** Number of unique values (may be approximated). */
+  distinctCount: z.number(),
+  nullCount: z.number().nullable(),
+  /** Percentage of rows containing NULL. */
+  nullPercent: z.number().nullable(),
+  /** Ratio of non-NULL values to total rows. */
+  completeness: z.number(),
+  /** Ratio of distinct values to total rows. */
+  uniqueness: z.number(),
+  /** Minimum value (formatted as string). */
+  min: z.string().optional(),
+  /** Maximum value (formatted as string). */
+  max: z.string().optional(),
+  mean: z.number().optional(),
+  /** Sample standard deviation (`STDEV`). */
+  stdDev: z.number().optional(),
+  minLength: z.number().optional(),
+  maxLength: z.number().optional(),
+  /** Count of values equal to 0 (numeric only). */
+  zeroCount: z.number().optional(),
+  /** Count of empty strings (string only). */
+  emptyCount: z.number().optional(),
+  /** Whether profiling was skipped (e.g., for XML/LOB types). */
+  skipped: z.boolean().optional(),
+});
+
+/** Statistical profile for a single column; one schema serves the host build and the panel. */
+export type ColumnStats = z.infer<typeof ColumnStatsSchema>;
+
+/** Comprehensive statistical profile for a database table. */
+const TableStatsSchema = z.object({
+  /** Total rows evaluated (or sampled). */
+  rowCount: z.number(),
+  columns: z.array(ColumnStatsSchema),
+  /** Whether the data was sampled or fully scanned. */
+  sampled: z.boolean(),
+  /** The percentage of the table that was sampled. */
+  samplePercent: z.number().optional(),
+  warnings: z.array(z.string()).optional(),
+});
+
+export type TableStats = z.infer<typeof TableStatsSchema>;
+
+/** The object a table-stats reply answers, so the panel applies it only to that node. */
+const TableStatsObjectRefSchema = z.object({ schema: z.string(), objectName: z.string() });
+
 /**
- * Zod schema for messages sent from the extension host **to the detail-panel webview**.
- *
- * @remarks
- * The detail panel is a separate webview with its own send schema (mirrors {@link DetailPanelToExtensionMsgSchema}
- * for the reverse direction). Host→detail sends go through the `postToDetail` sink so they are validated
- * exactly like the main panel's `postToWebview` — no raw `detailPanel.webview.postMessage`.
+ * Zod schema for messages from the host **to the detail-panel webview**, mirroring
+ * {@link DetailPanelToExtensionMsgSchema} for the reverse direction. Sends go through the
+ * `postToDetail` sink so they are validated like the main panel's `postToWebview`; never a raw
+ * `detailPanel.webview.postMessage`.
  */
 export const ExtensionToDetailMsgSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: z.any() }),
+  z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: DetailConfigSchema }),
   z.object({ type: z.literal('detail-clear') }),
-  z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
-  z.object({ type: z.literal('table-stats-error'), message: z.string() }),
+  z.object({ type: z.literal('table-stats-result'), objectRef: TableStatsObjectRefSchema, stats: TableStatsSchema, mode: z.enum(['quick', 'standard']) }),
+  z.object({ type: z.literal('table-stats-error'), objectRef: TableStatsObjectRefSchema, message: z.string() }),
 ]);
 
 /** Messages sent from the extension host to the detail-panel webview. */

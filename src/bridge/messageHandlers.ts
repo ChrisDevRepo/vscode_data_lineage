@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
-import { z } from 'zod';
 import { type AiSession } from '../ai/session/session';
 import {
   Logger,
@@ -15,23 +14,24 @@ import {
 import { notifyError, notifyWarning } from '../utils/notifications';
 import { type BridgeHost } from './host';
 import {
-  type DatabaseModel, type XmlElement, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
+  type DatabaseModel, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
   UNKNOWN_DB_PLATFORM,
 } from '../engine/types';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
 import { checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import {
-  connectDatabase, connectionErrorHooks, releaseSession, getConnectionAvailability, stripSensitiveFields,
+  connectDatabase, connectionErrorHooks, releaseSession,
   loadDmvQueries, createDmvQueryCache, executeDmvQueries, executeDmvQueriesFiltered,
-  executeSimpleQuery, withQueryTimeout, isPhase2Query, type DmvQuery, type DbConnectEnv,
+  executeSimpleQuery, isPhase2Query, type DmvQuery, type DbConnectEnv,
 } from '../engine/connectionManager';
-import { DATABASE_CONFIG_SECTION, getConnectionProvider, type DbSession } from '../engine/db/dbSession';
-import { isDbConnectionError, isDriverError, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
+import type { DbSession } from '../engine/db/dbSession';
+import { usesMssqlExtension } from '../engine/db/mssqlRetiring';
+import { connectionFailure, reportConnectionError } from '../engine/db/connectionErrors';
 import { redactSecrets } from '../utils/redact';
-import { type IConnectionInfo, type SimpleExecuteResult } from '../types/mssql';
+import { type SimpleExecuteResult } from '../types/database';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
 import { type StatsMode } from '../engine/profilingEngine';
-import { buildModelFromDmv, buildSchemaPreview, mapServerInfoPlatform, validateQueryResult, type DmvResults } from '../engine/dmvExtractor';
+import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../engine/dmvExtractor';
 import {
   createProject, updateProject, deleteProject,
   addFilterProfile, deleteFilterProfile,
@@ -44,10 +44,10 @@ import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/s
 import { formatRenderConnectivity } from '../engine/renderConnectivity';
 import { formatScreenStateSections } from './debugDumpScreenState';
 import {
-  BRIDGE_PROTOCOL_VERSION,
   DetailPanelToExtensionMsgSchema,
+  LOAD_RESULT_TYPES,
   ProjectSchema,
-  type BridgeEnvelope,
+  type ExtensionToWebviewMsg,
   type MainPanelToExtensionMsg,
   type Project,
   type RenderStateSnapshot,
@@ -59,59 +59,14 @@ import { summarizeZodError, postToDetail } from './host';
 import { readDeclaredNumericSetting } from '../configCore';
 
 /**
- * Maps each main-panel message type to a handler whose `msg` parameter is
- * narrowed to the matching variant of {@link MainPanelToExtensionMsg}.
+ * Handler per main-panel message type, with `msg` narrowed to the matching
+ * {@link MainPanelToExtensionMsg} variant.
  */
-export type WebviewMessageHandlers = {
+type WebviewMessageHandlers = {
   [K in MainPanelToExtensionMsg['type']]: (
     msg: Extract<MainPanelToExtensionMsg, { type: K }>,
   ) => Promise<void> | void;
 };
-
-/**
- * Panel-lived connection state for table profiling through the mssql extension.
- *
- * @remarks
- * Built-in connections do not use it: each profiling request opens its own connection and closes it
- * when done, so no idle socket outlives the request. `pending` holds the connection negotiation currently in flight, so concurrent stats requests
- * join it rather than each opening their own connection.
- */
-export type StatsConnState<T = DbSession> = {
-  /** Negotiated connection, or `undefined` before the first successful negotiation. */
-  session: T | undefined;
-  /** The in-flight negotiation, joined by concurrent requests instead of starting a second one. */
-  pending: Promise<T | undefined> | null;
-};
-
-/**
- * Resolves the connection table profiling runs against, negotiating at most one connection.
- *
- * @remarks
- * A request arriving while a negotiation is in flight joins it, instead of opening a second
- * connection or putting a second connection prompt in front of the user. The in-flight promise is
- * cleared however it settles, so a cancelled or failed negotiation leaves the state ready again.
- *
- * @param state - Panel-lived connection state, mutated in place.
- * @param negotiate - Opens or prompts for a connection and yields it, or `undefined` when the
- *   user cancelled.
- * @returns The connection, or `undefined` when the negotiation yielded none.
- */
-export async function resolveStatsConnection<T>(
-  state: StatsConnState<T>,
-  negotiate: () => Promise<T | undefined>,
-): Promise<T | undefined> {
-  if (state.session) return state.session;
-  state.pending ??= negotiate();
-  let negotiated: T | undefined;
-  try {
-    negotiated = await state.pending;
-  } finally {
-    state.pending = null;
-  }
-  if (!negotiated) return undefined;
-  state.session ??= negotiated;
-  return state.session;
-}
 
 declare const __BUILD_TIMESTAMP__: string;
 
@@ -144,15 +99,10 @@ function parseWebviewLog(text: string): { category: LogCategory; message: string
 }
 
 /**
- * Splits a project list into the records the webview contract accepts and those it rejects.
- *
- * @remarks
- * The send path validates the whole frame, so one unacceptable record would otherwise cost every
- * project in it. Partitioning first keeps the failure proportional: the readable projects still
- * arrive, and the rejected one is named in the log — {@link ProjectSchema} stays strict throughout.
- *
- * @param projects - Records loaded from the project store.
- * @returns The records that validate, plus one issue summary per record that does not.
+ * Splits a project list into records the webview contract accepts and those it rejects. The send
+ * validates the whole frame, so one bad record would cost every project; partitioning keeps the
+ * rest and names the rejected one in the log. {@link ProjectSchema} stays strict.
+ * @internal
  */
 export function partitionSendableProjects(
   projects: readonly Project[],
@@ -170,7 +120,8 @@ export function partitionSendableProjects(
 function postProjectsList(host: BridgeHost, store: ProjectStore): void {
   const { sendable, rejected } = partitionSendableProjects(store.projects);
   for (const record of rejected) {
-    host.log('warn', 'Bridge', `Project "${record.id}" was not sent to the view — ${record.issues}`);
+    host.log('warn', 'Bridge', 'A saved project failed validation and was not sent to the view');
+    host.log('debug', 'Bridge', `Project "${record.id}" was not sent to the view — ${record.issues}`);
   }
   void host.postMessage({
     type: 'projects-list',
@@ -212,38 +163,27 @@ function recordWebviewError(sess: AiSession, entry: WebviewErrorEntry): void {
   if (state.lastErrors.length > MAX_LAST_ERRORS) state.lastErrors.shift();
 }
 
-/**
- * Storage key for the project store in VS Code's global state.
- */
+/** Key of the project store in VS Code's global state. */
 export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
 
-/**
- * Represents a bundle of message handlers and their associated cleanup logic.
- */
+/** Message handlers with their cleanup logic. */
 export interface MessageHandlerBundle {
   /** Map of message types to their per-variant handler functions. */
   handlers: WebviewMessageHandlers;
-  /** Cleanup function to release resources (e.g., database connections) when the panel is disposed. */
+  /** Releases resources (e.g. database connections) when the panel is disposed. */
   cleanup: () => Promise<void>;
   /** Function to programmatically trigger the demo load when the panel is already active. */
   triggerDemoLoad: () => Promise<void>;
 }
 
 /**
- * Installs a freshly built model as the session's current one.
+ * Installs a freshly built model as the session's current one, without posting to a webview, so a
+ * command-driven load leaves the session as a bridge-driven load does: column store repopulated,
+ * source labels set, `dataLineageViz.modelLoaded` raised. The lineage store is opened for `project`
+ * only, fire-and-forget; the snapshot is taken synchronously because the write runs later on the
+ * storage queue, when the session may hold another model.
  *
- * @remarks
- * Deliberately panel-independent — it never posts to a webview, so a command-driven load leaves the
- * session in exactly the state a bridge-driven load does: column store repopulated, source labels
- * set, and `dataLineageViz.modelLoaded` raised. The lineage store is opened for `project` only,
- * fire-and-forget, and the snapshot is captured synchronously here because the write runs later on
- * the storage queue — a payload read at write time could see a model the session already replaced.
- *
- * @param sess - Session to install the model into.
- * @param model - Model just extracted from a dacpac or from DMV results.
- * @param isDb - Whether the model came from a live database rather than a dacpac.
- * @param project - Project identity when the load is backed by a stored project.
- * @param store - Project store consulted for the human-readable source label; read only when `project` is set.
+ * @param store - Consulted for the source label; read only when `project` is set.
  */
 export function applyModelToSession(
   sess: AiSession,
@@ -277,33 +217,26 @@ export function applyModelToSession(
       }
     }
   } else {
+    sess.currentProjectId = null;
     sess.sourceLabel = isDb ? 'database' : 'dacpac';
   }
   void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
 }
 
-/** Mutable holder for the session's untitled AI report document; a closed document is never reused. */
+/**
+ * Mutable holder of the session's untitled AI report document; a closed document is never reused.
+ */
 export interface ReportDocumentRef {
   document?: vscode.TextDocument;
 }
 
 /**
- * Factory for creating the IPC (Inter-Process Communication) bridge between the Extension Host and the Webview.
+ * Creates the IPC bridge between the Extension Host and the Webview.
  *
- * @param host - Bridge host used to interact with VS Code.
- * @param context - Extension context for global state and subscriptions.
- * @param getSession - Factory for retrieving the current AI session.
- * @param outputChannel - Output channel used for logging.
- * @param loadProjectStore - Loader for the persisted project store.
- * @param saveProjectStore - Persister for project-store updates.
- * @param migrateFromWorkspaceState - Migration helper for legacy workspace state.
- * @param loadDemoFlag - Whether demo data should be loaded instead of a persisted project.
- * @param setDetailPanel - Setter for the current detail panel reference.
  * @param reportDocumentRef - Holder of the untitled AI report document, owned by the caller so one
- *   report document survives the handlers being re-created when the panel is closed and reopened.
- *   Defaults to a holder private to this handler set.
- *
- * @returns The per-message-type handler map plus the panel-dispose cleanup function.
+ *   report document survives the handlers being re-created when the panel is reopened. Defaults to
+ *   a private holder.
+ * @returns The per-message-type handler map plus the panel-dispose cleanup.
  */
 export function createMessageHandlers(
   host: BridgeHost,
@@ -318,9 +251,32 @@ export function createMessageHandlers(
   reportDocumentRef: ReportDocumentRef = {}
 ): MessageHandlerBundle {
 
-  let cachedElements: XmlElement[] | null = null;
-  let cachedDspName = '';
-  let cachedIdentifierCaseSensitive = false;
+  type DacpacPreview = Awaited<ReturnType<typeof extractSchemaPreview>>;
+  let cachedDacpac: DacpacPreview | null = null;
+  /**
+   * Builds the selected schemas of a parsed dacpac and installs the model, unless it is over the
+   * object limit.
+   */
+  function installFilteredDacpac(
+    host: BridgeHost,
+    dacpac: DacpacPreview,
+    schemas: readonly string[],
+    config: Awaited<ReturnType<typeof readExtensionConfig>>,
+    project: { id: string; name: string } | null,
+    sourceName: string,
+  ): void {
+    const logger = Logger.create(outputChannel, 'Parse');
+    const model = extractDacpacFiltered(dacpac.elements, new Set(schemas), dacpac.dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+      externalRefsEnabled: config.externalRefs.enabled,
+      identifierCaseSensitive: dacpac.identifierCaseSensitive,
+    });
+    if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
+    logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
+    setCurrentModel(model, false, project);
+    if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
+    host.postMessage({ type: 'dacpac-model', model, config, sourceName, projectId: project?.id });
+  }
+
   let lastConnectionInfo: StoredConnectionInfo | undefined;
   const dmvQueries = createDmvQueryCache(() => loadDmvQueries(outputChannel, context.extensionUri));
   const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: dmvQueries.get };
@@ -328,13 +284,16 @@ export function createMessageHandlers(
   let lastDetailNode: LineageNode | null = null;
 
   let reportWrite: Promise<unknown> = Promise.resolve();
-  /** Puts `content` into the session's report document, one call at a time so a second click meets the document the first created. */
+  /**
+   * Puts `content` into the report document, one call at a time so a second click meets the
+   * document the first created.
+   */
   function writeReportDocument(content: string): Promise<vscode.TextDocument> {
     const written = reportWrite.then(() => putReportContent(content));
     reportWrite = written.catch(() => undefined);
     return written;
   }
-  /** Replaces the report document's text, creating the document when none is open or the edit is refused. */
+  /** Replaces the report document's text, creating it when none is open or the edit is refused. */
   async function putReportContent(content: string): Promise<vscode.TextDocument> {
     const open = reportDocumentRef.document;
     if (open && !open.isClosed) {
@@ -348,13 +307,12 @@ export function createMessageHandlers(
     return created;
   }
   /**
-   * The built-in markdown preview tabs titled for `doc`, across every editor group.
+   * The built-in markdown preview tabs titled for `doc`, across all editor groups.
    *
-   * @remarks
-   * The built-in preview labels a tab `<prefix> <name>` (`Preview <name>`, `[Preview] <name>` when locked,
-   * the prefix localized), so the document name must be the whole last word of the label. The webview tab
-   * exposes no document URI; a different document whose name has a space before the same `Untitled-N`
-   * text is the one case this match cannot tell apart.
+   * The built-in preview labels a tab `<prefix> <name>` (`Preview <name>`, `[Preview] <name>` when
+   * locked, prefix localized), so the document name must be the whole last word. The webview tab
+   * has no document URI; a different document whose name has a space before the same `Untitled-N`
+   * text is the one case this cannot tell apart.
    */
   function reportPreviewTabs(doc: vscode.TextDocument): vscode.Tab[] {
     const name = path.basename(doc.uri.path);
@@ -363,38 +321,29 @@ export function createMessageHandlers(
         tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith('markdown.preview') && tab.label.endsWith(` ${name}`)));
   }
   /**
-   * Leaves at most the visible report previews on screen; returns true when one is the visible tab of an editor group.
+   * Leaves at most the visible report previews on screen; true when one is the visible tab of an
+   * editor group.
    *
-   * @remarks
-   * A preview hidden behind another tab is closed, also when another report preview is visible: the preview
-   * command opens a new preview whenever the group beside the active one holds none, so a hidden one would
-   * end as a second preview. A refused or failed close is logged and the command still runs.
+   * A hidden preview is closed even when another report preview is visible: the preview command
+   * opens a new one whenever the group beside the active one has none, which would leave two. A
+   * refused or failed close is logged and the command still runs.
    */
   async function settleReportPreviews(doc: vscode.TextDocument): Promise<boolean> {
     const previews = reportPreviewTabs(doc);
     for (const tab of previews.filter((candidate) => !candidate.isActive)) {
       const closed = await Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => false);
-      if (!closed) host.log('warn', 'Bridge', `Hidden report preview tab "${tab.label}" could not be closed`);
+      if (!closed) {
+        host.log('warn', 'Bridge', 'A hidden report preview tab could not be closed');
+        host.log('debug', 'Bridge', `Hidden report preview tab "${tab.label}" could not be closed`);
+      }
     }
     return previews.some((tab) => tab.isActive);
   }
 
-  const statsConnState: StatsConnState = { session: undefined, pending: null };
-  async function cleanupStatsConnection(): Promise<void> {
-    if (statsConnState.session) {
-      await statsConnState.session.dispose().catch((err: unknown) =>
-        host.log('warn', 'DB', `Stats disconnect failed: ${err instanceof Error ? err.message : String(err)}`)
-      );
-      statsConnState.session = undefined;
-    }
-  }
-
   /**
-   * Installs a newly loaded model.
-   *
-   * @remarks
-   * The detail panel shows a node of the previous model, so it is cleared; a DACPAC model drops the
-   * previous database connection, so table statistics cannot reach the database it came from.
+   * Installs a newly loaded model. The detail panel shows a node of the old model, so it is
+   * cleared; a DACPAC model drops the previous database connection, so table statistics cannot
+   * reach the database it came from.
    */
   function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     applyModelToSession(getSession(), m, isDb, project, project ? loadProjectStore(context) : null);
@@ -411,7 +360,8 @@ export function createMessageHandlers(
     try {
       await clearStoredRun(context.globalState, profileId);
     } catch (err) {
-      host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${err instanceof Error ? err.message : String(err)}`);
+      host.log('warn', 'Bridge', `Failed to clear AI run memory for a saved view: ${err instanceof Error ? err.message : String(err)}`);
+      host.log('debug', 'Bridge', `AI run memory not cleared for view ${profileId}`);
     }
   }
 
@@ -433,6 +383,89 @@ export function createMessageHandlers(
     return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
   }
 
+  /** The one load the webview still waits for; starting another cancels it. */
+  let current: { id?: string; cancel(): void } | undefined;
+
+  /**
+   * Wraps a load-starting handler so the load the webview named can be cancelled by its id.
+   *
+   * `msg.loadId` is the webview's id for the load; a request without one runs unstamped and cannot
+   * be cancelled by id. `body` gets a host that stamps load-result messages with the id and drops
+   * them once the load is cancelled; this closure is the only place the id is applied. The host's
+   * progress token also fires on cancel, stopping the connection and query steps that watch it.
+   *
+   * The latest intent wins: starting a load cancels the previous one, because the webview drops its
+   * results and a load that finished last must not set the session model or write the project store
+   * behind the screen.
+   *
+   * A retry started by the connection-error toast after its load ended opens a new progress
+   * notification through the same host. While the load is current the retry gets a fresh source, so
+   * `cancel-load` still reaches it and its results are stamped. It is refused when a newer load
+   * replaced this one (the webview would drop its results) and while another retry runs, so one
+   * load never has two live sources and the live source gates every post.
+   */
+  function loadHandler<M extends { loadId?: string }>(
+    body: (host: BridgeHost, token: vscode.CancellationToken, msg: M) => Promise<void> | void,
+  ): (msg: M) => Promise<void> {
+    return async (msg) => {
+      const { loadId } = msg;
+      let source = new vscode.CancellationTokenSource();
+      let ended = false;
+      let retrying = false;
+      const mine = { id: loadId, cancel: () => source.cancel() };
+      current?.cancel();
+      current = mine;
+      /** Reads the live source, so a guard made before a retry still sees the retry's cancel. */
+      const token: vscode.CancellationToken = {
+        get isCancellationRequested() { return source.token.isCancellationRequested; },
+        onCancellationRequested: (listener, thisArgs, disposables) => source.token.onCancellationRequested(listener, thisArgs, disposables),
+      };
+      const scoped: BridgeHost = {
+        ...host,
+        postMessage: (out: ExtensionToWebviewMsg) => {
+          if (!loadId || !(LOAD_RESULT_TYPES as readonly string[]).includes(out.type)) return host.postMessage(out);
+          return source.token.isCancellationRequested ? Promise.resolve(false) : host.postMessage({ ...out, loadId } as ExtensionToWebviewMsg);
+        },
+        withProgress: <R,>(options: vscode.ProgressOptions, task: (progress: vscode.Progress<unknown>, token: vscode.CancellationToken) => Thenable<R>) => {
+          const isRetry = ended;
+          if (isRetry) {
+            if (current !== mine || retrying) {
+              host.log('info', 'Bridge', 'Retry skipped — a newer load replaced this one or a retry is running');
+              return Promise.resolve(undefined as R);
+            }
+            retrying = true;
+            source = new vscode.CancellationTokenSource();
+          }
+          const mySource = source;
+          return host.withProgress(options, async (progress, progressToken) => {
+            const merged = new vscode.CancellationTokenSource();
+            const links = [progressToken, mySource.token].map((t) => t.onCancellationRequested(() => merged.cancel()));
+            try {
+              return await task(progress, merged.token);
+            } finally {
+              links.forEach((link) => link.dispose());
+              merged.dispose();
+              if (isRetry) {
+                mySource.dispose();
+                retrying = false;
+              }
+            }
+          });
+        },
+      };
+      try {
+        await body(scoped, token, msg);
+      } finally {
+        ended = true;
+        source.dispose();
+      }
+    };
+  }
+
+  /** Runs `fn` only while the load is live, so a cancelled load leaves no model in the session. */
+  const unlessCancelled = (token: vscode.CancellationToken, fn: (model: DatabaseModel) => void) =>
+    (model: DatabaseModel): void => { if (!token.isCancellationRequested) fn(model); };
+
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
   const handlers: WebviewMessageHandlers = {
     'ready': async () => {
@@ -452,19 +485,18 @@ export function createMessageHandlers(
       const store = loadProjectStore(context);
       const sess = getSession();
       postProjectsList(host, store);
-      if (sess.model && store.lastOpenedId) {
-        const project = store.projects.find(p => p.id === store.lastOpenedId);
-        if (project) {
-          sess.currentProjectId = project.id;
-          sess.projectName = project.name;
-          sess.isDbSession = project.connection.type === 'database';
-        }
-        host.log('info', 'Bridge', `Restoring session for project: ${sess.projectName}`);
-        host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
+      // Every `ready` (first, or after a webview reload) re-syncs the session's model: a load a
+      // command installed before the webview could receive it, or a post lost across a reload, is
+      // delivered here.
+      if (sess.model) {
+        host.log('info', 'Bridge', 'Restoring the session model');
+        host.log('debug', 'Bridge', `Restoring session for project: ${sess.projectName}`);
+        host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true, projectId: sess.currentProjectId ?? undefined });
       }
     },
     'show-detail': async (msg) => {
-      host.log('info', 'Bridge', `Node detail opened — ${msg.node?.id || '(no node)'}`);
+      host.log('info', 'Bridge', 'Node detail opened');
+      host.log('debug', 'Bridge', `Node detail opened — ${msg.node?.id || '(no node)'}`);
       if (msg.node) {
         lastDetailNode = msg.node;
       } else {
@@ -486,15 +518,6 @@ export function createMessageHandlers(
         setDetailPanel(detailPanel);
 
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
-          const inboundVersion = (rawM as BridgeEnvelope | undefined)?.protocolVersion;
-          if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
-            notifyError(
-              bridgeLogger,
-              'Bridge protocol mismatch (detail panel)',
-              `Data Lineage: the detail panel is speaking bridge protocol v${safeStringifyForLog(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
-            );
-            return;
-          }
           const parsed = DetailPanelToExtensionMsgSchema.safeParse(rawM);
           if (!parsed.success) {
             host.log('warn', 'Bridge', `Rejected malformed detail-panel message (type=${rawM?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
@@ -515,9 +538,9 @@ export function createMessageHandlers(
               }
             } else if (m.type === 'table-stats-request') {
               if (detailPanel && !getSession().isDbSession) {
-                void postToDetail(detailPanel, { type: 'table-stats-error', message: 'Table statistics need a database project.' }, bridgeLogger);
+                void postToDetail(detailPanel, { type: 'table-stats-error', objectRef: { schema: m.schema, objectName: m.objectName }, message: 'Table statistics need a database project.' }, bridgeLogger);
               } else if (detailPanel) {
-                await handleTableStatsRequestHost(host, dbEnv, lastConnectionInfo, statsConnState, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
+                await handleTableStatsRequestHost(host, dbEnv, lastConnectionInfo, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel, getSession().model);
               }
             } else if (m.type === 'close-detail') {
               detailPanel?.dispose();
@@ -567,7 +590,7 @@ export function createMessageHandlers(
         }
       }
     },
-    'open-dacpac': async () => {
+    'open-dacpac': loadHandler(async (host, token) => {
       host.log('info', 'Bridge', 'Opening dacpac picker');
       const uris = await host.showOpenDialog({
         canSelectMany: false,
@@ -575,7 +598,8 @@ export function createMessageHandlers(
         title: 'Select a .dacpac file'
       });
       if (uris && uris.length > 0) {
-        host.log('info', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
+        host.log('info', 'Bridge', 'Dacpac selected');
+        host.log('debug', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
         const data = await host.readFile(uris[0]);
         if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
         const config = await readExtensionConfig(host);
@@ -584,12 +608,14 @@ export function createMessageHandlers(
           extracted = await extractSchemaPreview(data);
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
-          host.log('error', 'Dacpac', `Open ${uris[0].fsPath}`, err);
-          host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
+          host.log('error', 'Dacpac', 'Open dacpac', err);
+          host.log('debug', 'Dacpac', `Open dacpac failed: ${uris[0].fsPath}`);
+          host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}` });
           return;
         }
-        const { preview, elements, dspName, identifierCaseSensitive } = extracted;
-        cachedElements = elements; cachedDspName = dspName; cachedIdentifierCaseSensitive = identifierCaseSensitive;
+        if (token.isCancellationRequested) return;
+        const { preview } = extracted;
+        cachedDacpac = extracted;
         host.postMessage({
           type: 'dacpac-schema-preview',
           preview,
@@ -602,16 +628,16 @@ export function createMessageHandlers(
         host.log('info', 'Bridge', 'Dacpac picker cancelled');
         host.postMessage({ type: 'db-cancelled' });
       }
-    },
-    'load-project': async (msg) => {
-      host.log('info', 'Bridge', `Loading project: ${msg.id}`);
-      await cleanupStatsConnection();
-
+    }),
+    'load-project': loadHandler(async (host, token, msg) => {
+      host.log('info', 'Bridge', 'Loading project');
+      host.log('debug', 'Bridge', `Loading project: ${msg.id}`);
       const store = loadProjectStore(context);
       const project = store.projects.find(p => p.id === msg.id);
       if (!project) {
-        host.log('error', 'Bridge', 'Load project', `Project not found: ${msg.id}`);
-        host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}`, phase: 'connect' });
+        host.log('error', 'Bridge', 'Load project', 'Project not found');
+        host.log('debug', 'Bridge', `Project not found: ${msg.id}`);
+        host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}` });
         return;
       }
 
@@ -620,7 +646,7 @@ export function createMessageHandlers(
           const fileUri = vscode.Uri.file(project.connection.path);
           host.log('debug', 'Bridge', `Reading dacpac file: ${fileUri.fsPath}`);
           const data = await host.readFile(fileUri);
-          if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
+          if (token.isCancellationRequested || isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
 
           const refreshed = { ...project, updatedAt: new Date().toISOString() };
           const updatedStore = updateProject(store, refreshed);
@@ -630,59 +656,59 @@ export function createMessageHandlers(
           const config = await readExtensionConfig(host);
           const schemas = project.connection.schemas;
 
+          const extracted = await extractSchemaPreview(data);
+          if (token.isCancellationRequested) return;
           if (schemas && schemas.length > 0) {
             host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
-            const { elements, dspName, identifierCaseSensitive } = await extractSchemaPreview(data);
-            const logger = Logger.create(outputChannel, 'Parse');
-            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-              externalRefsEnabled: config.externalRefs.enabled,
-              identifierCaseSensitive,
-            });
-            if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
-            logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
-            setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
-            if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-            host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
+            const name = project.connection.displayName;
+            installFilteredDacpac(host, extracted, schemas, config, { id: project.id, name }, name);
           } else {
             host.log('debug', 'Bridge', 'No schemas in project, showing preview');
-            const { preview, elements, dspName, identifierCaseSensitive } = await extractSchemaPreview(data);
-            cachedElements = elements; cachedDspName = dspName; cachedIdentifierCaseSensitive = identifierCaseSensitive;
+            const { preview } = extracted;
+            cachedDacpac = extracted;
             host.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: project.connection.displayName });
             host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
           }
         } catch (err) {
           if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
-            host.log('warn', 'Bridge', `Dacpac file not found: ${project.connection.path}`);
+            host.log('warn', 'Bridge', 'Dacpac file not found');
+            host.log('debug', 'Bridge', `Dacpac file not found: ${project.connection.path}`);
             host.postMessage({ type: 'last-dacpac-gone' });
           } else {
             const reason = err instanceof Error ? err.message : String(err);
-            host.log('error', 'Bridge', `Load project ${project.connection.path}`, err);
-            host.postMessage({ type: 'db-error', message: `Could not load ${project.connection.displayName}: ${reason}`, phase: 'extract' });
+            host.log('error', 'Bridge', 'Load project', err);
+            host.log('debug', 'Bridge', `Load project failed: ${project.connection.path}`);
+            host.postMessage({ type: 'db-error', message: `Could not load ${project.connection.displayName}: ${reason}` });
           }
         }
       } else if (project.connection.type === 'database') {
         const dbConn = project.connection;
-        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, token) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, token), async (session) => {
+        const wasLegacy = usesMssqlExtension(dbConn.connectionInfo);
+        const storeReconnected = async (session: DbSession) => {
+          if (token.isCancellationRequested) return;
+          const updatedStore = updateProject(store, {
+            ...project,
+            connection: { ...dbConn, connectionInfo: session.connectionInfo },
+            updatedAt: new Date().toISOString(),
+          });
+          await saveProjectStore(context, updatedStore);
+          postProjectsList(host, updatedStore);
+        };
+        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, progressToken) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, progressToken), async (session) => {
           lastConnectionInfo = session.connectionInfo;
           const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
             await runDbPhase1Host(host, session, outputChannel, dmvQueries.reload);
+            if (wasLegacy) await storeReconnected(session);
           } else {
-            await runDbPhase2Host(host, session, schemas, outputChannel, dmvQueries.reload, getSession, session.connectionInfo.database, dbConn.sourceName, (m) => {
+            await runDbPhase2Host(host, session, schemas, outputChannel, dmvQueries.reload, getSession, session.connectionInfo.database, dbConn.sourceName, unlessCancelled(token, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
-            });
-            const refreshed = {
-              ...project,
-              connection: { ...dbConn, connectionInfo: refreshedConnectionInfo(session, dbConn.connectionInfo) },
-              updatedAt: new Date().toISOString(),
-            };
-            const updatedStore = updateProject(store, refreshed);
-            await saveProjectStore(context, updatedStore);
-            postProjectsList(host, updatedStore);
+            }), project.id);
+            await storeReconnected(session);
           }
         });
       }
-    },
+    }),
     'save-project': async (msg) => {
       host.log('debug', 'Bridge', `Saving project: ${msg.project?.name}`);
       const store = loadProjectStore(context);
@@ -699,57 +725,49 @@ export function createMessageHandlers(
       const profileIds = (store.projects.find(p => p.id === msg.id)?.filterProfiles ?? []).map(fp => fp.id);
       const updated = deleteProject(store, msg.id);
       await saveProjectStore(context, updated);
+      const sess = getSession();
+      if (sess.currentProjectId === msg.id) sess.currentProjectId = null;
       postProjectsList(host, updated);
       for (const profileId of profileIds) {
         await clearStoredRunLogged(profileId);
       }
     },
-    'load-demo': async () => {
+    'load-demo': loadHandler(async (host, token) => {
       host.log('debug', 'Bridge', 'Loading demo');
-      await handleLoadDemo(host, getSession, outputChannel, (m) => {
+      await handleLoadDemo(host, getSession, outputChannel, unlessCancelled(token, (m) => {
         setCurrentModel(m, false, null);
         getSession().projectName = 'Demo';
-      });
-    },
-    'dacpac-visualize': async (msg) => {
+      }));
+    }),
+    'dacpac-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      if (!cachedElements) {
-        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedElements is null)');
-        host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
+      if (!cachedDacpac) {
+        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedDacpac is null)');
+        host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.' });
         return;
       }
       const config = await readExtensionConfig(host);
-      const logger = Logger.create(outputChannel, 'Parse');
-      let model: DatabaseModel;
+      if (token.isCancellationRequested) return;
+      const sess = getSession();
+      const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
       try {
-        model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-          externalRefsEnabled: config.externalRefs.enabled,
-          identifierCaseSensitive: cachedIdentifierCaseSensitive,
-        });
+        installFilteredDacpac(host, cachedDacpac, msg.schemas, config, msg.projectId ? { id: msg.projectId, name: projectName } : null, projectName);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         host.log('error', 'Dacpac', 'Dacpac visualize', err);
-        host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}`, phase: 'extract' });
-        return;
+        host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}` });
       }
-      if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
-      logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
-      const sess = getSession();
-      const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
-      setCurrentModel(model, false, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
-      if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-      host.postMessage({ type: 'dacpac-model', model, config, sourceName: projectName });
-    },
-    'db-visualize': async (msg) => {
+    }),
+    'db-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, token) => {
+      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, progressToken) => {
         if (!lastConnectionInfo) {
           host.log('error', 'Bridge', 'Database visualize', 'No stored connection info');
-          host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
+          host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.' });
           return undefined;
         }
-        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, token);
-      }, async (conn, _progress, token) => {
+        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, progressToken);
+      }, async (conn, _progress, progressToken) => {
         const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
         let pendingProject: ReturnType<typeof createProject> | null = null;
         if (msg.projectName) {
@@ -772,33 +790,32 @@ export function createMessageHandlers(
           }
         }
 
-        await runDbPhase2Host(host, conn, msg.schemas, outputChannel, dmvQueries.reload, getSession, conn.connectionInfo.database, sourceName, (m) => {
+        await runDbPhase2Host(host, conn, msg.schemas, outputChannel, dmvQueries.reload, getSession, conn.connectionInfo.database, sourceName, unlessCancelled(token, (m) => {
           if (pendingProject) {
             setCurrentModel(m, true, { id: pendingProject.id, name: pendingProject.name });
           } else {
             setCurrentModel(m, true, null);
             getSession().projectName = sourceName;
           }
-        });
+        }), pendingProject?.id);
 
-        if (pendingProject && !token.isCancellationRequested) {
+        if (pendingProject && !progressToken.isCancellationRequested) {
           const store = loadProjectStore(context);
           const updated = updateProject(store, pendingProject);
           await saveProjectStore(context, updated);
           postProjectsList(host, updated);
         }
       });
-    },
+    }),
     'filter-changed': (msg) => {
       const sess = getSession();
       const { uiState } = msg;
-      const prevCount = sess.filteredCount;
+      const prevCount = (sess.uiState as { filteredCount?: number } | null)?.filteredCount;
       const prevHit = sess.renderLimitHit;
       sess.uiState = uiState;
       sess.filter = uiState.filter;
       sess.traceState = uiState.trace;
       sess.graphMode = uiState.graphMode;
-      sess.filteredCount = uiState.filteredCount;
       sess.renderLimitHit = uiState.renderLimitHit;
       getUiDiagnostics(sess).lastUiSyncAt = Date.now();
       if (prevCount !== uiState.filteredCount || prevHit !== uiState.renderLimitHit) {
@@ -812,21 +829,16 @@ export function createMessageHandlers(
       sess.renderState = msg.renderState;
       state.lastUiSyncAt = Date.now();
     },
-    'db-connect': () => {
+    'db-connect': loadHandler((host) => {
       host.log('debug', 'Bridge', 'Database connect requested');
       return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token) => connectDatabase(dbEnv, undefined, token), (conn) => {
         lastConnectionInfo = conn.connectionInfo;
         return runDbPhase1Host(host, conn, outputChannel, dmvQueries.reload);
       });
-    },
-    'check-mssql': () => {
-      host.postMessage({ type: 'mssql-status', ...getConnectionAvailability() });
-    },
-    'use-builtin-connection': async () => {
-      const cfg = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION);
-      await cfg.update('connectionProvider', 'builtIn', vscode.ConfigurationTarget.Global);
-      host.log('info', 'Bridge', 'Connection provider switched to builtIn from the wizard');
-      host.postMessage({ type: 'mssql-status', ...getConnectionAvailability() });
+    }),
+    'cancel-load': (msg) => {
+      host.log('debug', 'Bridge', 'Load cancel requested');
+      if (current?.id === msg.loadId) current.cancel();
     },
     'save-view': async (msg) => {
       const logger = Logger.create(outputChannel, 'Bridge');
@@ -835,7 +847,7 @@ export function createMessageHandlers(
         const store = loadProjectStore(context);
         const updated = addFilterProfile(store, msg.projectId, msg.profile);
         await saveProjectStore(context, updated);
-        logger.info(`Successfully saved filter view: "${msg.profile?.name}"`);
+        logger.info('Saved filter view');
         postProjectsList(host, updated);
         try {
           const sess = getSession();
@@ -847,10 +859,10 @@ export function createMessageHandlers(
             logger.debug(`AI run memory kept for "${msg.profile?.name}" — the save resolves to no presented run.`);
           }
         } catch (runErr) {
-          logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${runErr instanceof Error ? runErr.message : String(runErr)}`);
+          logger.warn(`Failed to store AI run memory for the saved view: ${runErr instanceof Error ? runErr.message : String(runErr)}`);
         }
       } catch (err) {
-        logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
+        logger.error('Failed to save filter view', err);
         throw err;
       }
     },
@@ -873,7 +885,7 @@ export function createMessageHandlers(
     },
     'reload': () => {
       host.log('debug', 'Bridge', 'Reloading panel');
-      host.executeCommand('dataLineageViz.open');
+      host.executeCommand('dataLineageViz.open', { replace: true });
     },
     'request-projects': () => {
       host.log('debug', 'Bridge', 'Projects list requested');
@@ -892,11 +904,9 @@ export function createMessageHandlers(
     },
     /**
      * Saves a webview-composed export under a name the user confirms in the save dialog.
-     *
-     * @remarks
-     * `defaultName` is webview-supplied, so only its base name pre-fills the dialog: a name carrying
-     * separators or `..` segments would otherwise seed the dialog at a path the export never came
-     * from. The dialog still owns the destination — this only bounds what the webview may suggest.
+     * `defaultName` is webview-supplied, so only its base name pre-fills the dialog; separators or
+     * `..` segments would seed it at a path the export never came from. The dialog still owns the
+     * destination.
      */
     'export-file': async (msg) => {
       const defaultName = path.basename(msg.defaultName);
@@ -910,17 +920,15 @@ export function createMessageHandlers(
     /**
      * Shows the AI report in one untitled markdown document and one preview beside the panel.
      *
-     * @remarks
-     * The first click creates the document; later clicks replace its text and re-use it while it is
-     * open, so repeated clicks never accumulate documents or previews. The unsaved document stays
-     * available for the user to keep or save. An open preview follows its document by itself, so the
-     * preview command runs only when no preview of the report is the visible tab of a group; a preview
-     * hidden behind another tab is closed first, because the built-in command opens a new preview whenever
-     * the group beside the active one holds none. No HTML sanitizing pass runs
-     * here: the content lands in a text document, and VS Code's own markdown preview renders it under
-     * its `markdown.preview.security` policy. The preview command belongs to the built-in markdown
-     * extension, which a user can disable — its absence is not a failed action, so the fallback shows
-     * the document itself and reports it as a warning.
+     * The first click creates the document; later clicks replace its text and reuse it while open,
+     * so repeated clicks accumulate no documents or previews. The unsaved document stays for the
+     * user to keep or save. An open preview follows its document, so the preview command runs only
+     * when no report preview is the visible tab of a group; a hidden one is closed first (the
+     * command opens a new preview whenever the group beside the active one has none). No HTML
+     * sanitizing runs: the content lands in a text document that VS Code's markdown preview renders
+     * under its `markdown.preview.security` policy. The preview command belongs to the built-in
+     * markdown extension, which a user can disable; its absence is not a failed action, so the
+     * fallback shows the document and warns.
      */
     'ai-open-in-editor': async (msg) => {
       host.log('debug', 'Bridge', 'Opening AI description in editor');
@@ -968,7 +976,8 @@ export function createMessageHandlers(
         ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
         : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
 
-      host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}; context=${contextLine}`, err);
+      host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}`, err);
+      host.log('debug', 'Bridge', `Webview ${sanitizeForLog(source)} error context=${contextLine}`);
       host.showErrorMessage(userMessage);
     },
     'show-warning': (msg) => {
@@ -977,7 +986,7 @@ export function createMessageHandlers(
         Logger.create(outputChannel, 'Bridge'),
         'Webview warning notification',
         `Data Lineage: ${text}`,
-        { messageType: 'show-warning', text },
+        { messageType: 'show-warning' },
       );
     },
     'view-render-result': (msg) => {
@@ -986,9 +995,11 @@ export function createMessageHandlers(
       if (msg.rendered === msg.of) {
         logger.debug(`AI view rendered — ${msg.rendered}/${msg.of} nodes resolved`);
       } else if (msg.rendered > 0) {
-        logger.info(`AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model: ${trunc(msg.unresolved.join(', '), 200)}`);
+        logger.info(`AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model`);
+        logger.debug(`AI view unresolved ids: ${trunc(msg.unresolved.join(', '), 200)}`);
       } else {
-        logger.warn(`AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model. unresolved: ${trunc(msg.unresolved.join(', '), 200)}`);
+        logger.warn(`AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model`);
+        logger.debug(`AI view unresolved ids: ${trunc(msg.unresolved.join(', '), 200)}`);
       }
     },
   };
@@ -997,18 +1008,16 @@ export function createMessageHandlers(
     handlers,
     cleanup: async () => {
       dmvQueries.dispose();
-      await cleanupStatsConnection();
     },
-    triggerDemoLoad: () => handleLoadDemo(host, getSession, outputChannel, (m) => {
-      setCurrentModel(m, false, null);
-      getSession().projectName = 'Demo';
-    }),
+    triggerDemoLoad: async () => handlers['load-demo']({ type: 'load-demo' }),
   };
 }
 
 const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 
-/** Toast sink for a failure the webview already shows inline through `db-error`: log it, show it once. */
+/**
+ * Toast sink for a failure the webview already shows inline via `db-error`: log it, show it once.
+ */
 const SHOWN_INLINE = (): void => {};
 
 /**
@@ -1028,16 +1037,15 @@ function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode
     { bytes, maxBytes: MAX_DACPAC_BYTES },
     SHOWN_INLINE,
   );
-  host.postMessage({ type: 'db-error', message, phase: 'extract' });
+  host.postMessage({ type: 'db-error', message });
   return true;
 }
 
 /**
- * Refuses a built model that exceeds `dataLineageViz.maxNodes` — the shared `checkObjectLimit`
- * gate for every model load path, webview-bridge or command. When a webview bridge is present the
- * refusal is posted to it as a `db-error` — shown inline, and the loader leaves its loading state at
- * once instead of spinning to the generic "Processing timed out" notice. `host` is omitted where
- * there is no webview bridge; the refusal is then a `vscode.window.showErrorMessage` toast.
+ * Refuses a built model that exceeds `dataLineageViz.maxNodes`: the shared `checkObjectLimit` gate
+ * for every load path. With a webview bridge the refusal is posted as a `db-error`, shown inline,
+ * and the loader leaves its loading state at once instead of timing out. Without `host` it is a
+ * `vscode.window.showErrorMessage` toast.
  */
 export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger: Logger, host?: BridgeHost): boolean {
   const check = checkObjectLimit(model, maxNodes);
@@ -1051,7 +1059,7 @@ export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger:
     { count: check.count, limit: check.limit },
     host ? SHOWN_INLINE : undefined,
   );
-  host?.postMessage({ type: 'db-error', message, phase: 'extract' });
+  host?.postMessage({ type: 'db-error', message });
   return true;
 }
 
@@ -1081,7 +1089,7 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
       { asset: 'assets/demo.dacpac' },
       SHOWN_INLINE,
     );
-    host.postMessage({ type: 'db-error', message: `Failed to load demo — ${msg}`, phase: 'extract' });
+    host.postMessage({ type: 'db-error', message: `Failed to load demo — ${msg}` });
   }
 }
 
@@ -1101,9 +1109,10 @@ async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChann
   host.log('info', 'DB', `Phase 1 Complete — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
 }
 
-async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
+async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void, projectId?: string) {
   const queries = await loadQueries();
-  host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
+  host.log('info', 'DB', `Running Phase 2 queries for ${schemas.length} schema(s)`);
+  host.log('debug', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
   const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
   const leadSteps = allObjectsQuery ? 2 : 1;
@@ -1147,43 +1156,24 @@ async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: st
 
   onModelBuilt?.(model);
   if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-  host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
+  host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database', projectId });
 }
 
 /**
- * Upper bound for the platform probe, independent of `dmvQueryTimeout`.
- *
- * @remarks
- * The probe is a single-row `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must not
- * inherit the user's bulk-query budget (default 120 s) — an unreachable server would otherwise
- * stall the import behind a progress notification showing no steps. The fallback tiers still
- * produce a platform either way.
+ * Upper bound for the platform probe, independent of `dmvQueryTimeout`. The probe is a single-row
+ * `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must not inherit the bulk-query budget
+ * (default 120 s): an unreachable server would stall the import behind a progress notification with
+ * no steps.
  */
 const PLATFORM_PROBE_TIMEOUT_MS = 10_000;
 
 /**
- * Shape accepted from a session's `getServerInfo`.
+ * Resolves the database platform before the Phase 2 model is built, as `buildModelFromDmv` needs it
+ * at construction.
  *
- * @remarks
- * `IServerInfo` types these as required, but the value crosses an extension boundary this code
- * does not own, so a malformed response degrades to the explicit unknown label instead of throwing
- * inside `mapEngineMetadata`.
- */
-const ServerInfoSchema = z.object({
-  engineEditionId: z.number(),
-  serverMajorVersion: z.number(),
-  serverEdition: z.string(),
-});
-
-/**
- * Resolves the database platform before the Phase 2 model is built.
- *
- * @remarks
- * Three tiers, none of which may fail the import: the `platform-info` query, then authoritative
- * MSSQL `getServerInfo` metadata, then an explicit unknown label — never an invented `SQL Server`
- * default the model would reason from. A built-in session skips the middle tier: its `getServerInfo`
- * sends the same `platform-info` query, so it cannot succeed where the probe did not. Runs ahead of the Phase 2 sweep because `buildModelFromDmv`
- * needs the result at model construction.
+ * Two tiers, neither may fail the import: the `platform-info` query, then an explicit unknown
+ * label, never an invented `SQL Server` default. The session's `getServerInfo` is no third tier: it
+ * sends the same query, so it cannot succeed where the probe did not.
  */
 async function loadDatabasePlatform(
   session: DbSession,
@@ -1194,7 +1184,7 @@ async function loadDatabasePlatform(
   const logger = Logger.create(outputChannel, 'DB');
   const platformQuery = queries.find(q => q.name === 'platform-info');
   const probeTimeoutMs = Math.min(timeoutMs, PLATFORM_PROBE_TIMEOUT_MS);
-  const fallback = session.provider === 'builtIn' ? 'platform will be explicit unknown' : 'using MSSQL server metadata';
+  const fallback = 'platform will be explicit unknown';
 
   if (platformQuery) {
     try {
@@ -1207,39 +1197,12 @@ async function loadDatabasePlatform(
         : 'no rows';
       logger.warn(`Platform query returned unusable metadata (${reason}) — ${fallback}`);
     } catch (err) {
-      logger.warn(`Platform query failed — ${fallback}: ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
+      logger.warn(`Platform query failed — ${fallback}: ${err instanceof Error ? err.message : String(err)}`);
     }
   } else {
     logger.warn(`Custom DMV configuration has no platform-info query — ${fallback}`);
   }
-  if (session.provider === 'builtIn') return { serverPlatform: UNKNOWN_DB_PLATFORM };
-
-  try {
-    const serverInfo = ServerInfoSchema.parse(await withQueryTimeout(
-      session.getServerInfo(),
-      probeTimeoutMs,
-      `MSSQL getServerInfo timed out after ${probeTimeoutMs / 1000}s`,
-    ));
-    return { serverPlatform: mapServerInfoPlatform(serverInfo) };
-  } catch (err) {
-    logger.warn(`MSSQL server metadata unavailable — platform will be explicit unknown: ${err instanceof Error ? err.message : String(err)}`);
-    return { serverPlatform: UNKNOWN_DB_PLATFORM };
-  }
-}
-
-/**
- * Connection info to persist for a project after a successful reconnect.
- *
- * @remarks
- * An mssql-extension record that reconnected through the same provider keeps its stored fields; any
- * other case persists the session's own info, so a provider switch chosen by the setting is stored
- * once and does not announce itself again.
- */
-function refreshedConnectionInfo(session: DbSession, stored: StoredConnectionInfo): StoredConnectionInfo {
-  const storedForMssql = (stored.provider ?? 'mssqlExtension') === 'mssqlExtension';
-  return session.provider === 'mssqlExtension' && storedForMssql
-    ? stripSensitiveFields(stored as unknown as IConnectionInfo)
-    : session.connectionInfo;
+  return { serverPlatform: UNKNOWN_DB_PLATFORM };
 }
 
 async function withDbProgressHost(
@@ -1260,20 +1223,24 @@ async function withDbProgressHost(
         host.postMessage({ type: 'db-cancelled' });
       }
     } catch (err) {
-      const target = isDbConnectionError(err) ? err.target : session && isDriverError(err) ? targetFromSession(session) : undefined;
-      if (target) {
-        const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn(patch, token), phaseFn);
+      const failure = connectionFailure(err, session);
+      if (failure) {
+        const { target } = failure;
+        // A retry reconnects the connection that failed, so a record stored by the retired mssql
+        // extension is not asked to reconnect twice.
+        const failed: Partial<StoredConnectionInfo> | undefined = target.connectionId ? { provider: 'builtIn', connectionId: target.connectionId } : undefined;
+        const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn({ ...failed, ...patch }, token), phaseFn);
         const reported = reportConnectionError(
-          isDbConnectionError(err) ? err.original : err,
+          failure.error,
           target,
           Logger.create(env.outputChannel, 'DB'),
-          connectionErrorHooks(env, target.connectionId, retry),
+          connectionErrorHooks(env, target.connectionId, token.isCancellationRequested ? undefined : retry),
         );
-        host.postMessage({ type: 'db-error', message: reported.message, phase: 'connect' });
+        host.postMessage({ type: 'db-error', message: reported.message });
       } else {
         const message = redactSecrets(err instanceof Error ? err.message : String(err));
         host.log('error', 'DB', title, message);
-        host.postMessage({ type: 'db-error', message, phase: 'connect' });
+        host.postMessage({ type: 'db-error', message });
       }
     } finally {
       if (session) {
@@ -1288,22 +1255,30 @@ async function handleTableStatsRequestHost(
   host: BridgeHost,
   dbEnv: DbConnectEnv,
   storedConnectionInfo: StoredConnectionInfo | undefined,
-  statsConnState: StatsConnState,
   panel: vscode.WebviewPanel,
   schema: string,
   objectName: string,
   mode: StatsMode,
   cols: ColumnDef[],
-  outputChannel: vscode.LogOutputChannel
+  outputChannel: vscode.LogOutputChannel,
+  model: DatabaseModel | null,
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'Stats');
+  const objectRef = { schema, objectName };
   const cfg = host.getConfiguration();
-  if (!cfg.get('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled)) {
-    logger.info('Profiling disabled — request rejected');
+  const defaults = DEFAULT_CONFIG.tableStatistics;
+  const isExternalTable = model?.nodes.some(n => n.schema === schema && n.name === objectName && n.type === 'external') ?? false;
+  const refusedBy = !cfg.get('tableStatistics.enabled', defaults.enabled) ? 'enabled'
+    : mode === 'standard' && !cfg.get('tableStatistics.standardModeEnabled', defaults.standardModeEnabled) ? 'standardModeEnabled'
+    : isExternalTable && cfg.get('tableStatistics.excludeExternalTables', defaults.excludeExternalTables) ? 'excludeExternalTables'
+    : undefined;
+  if (refusedBy) {
+    logger.info(`Profiling refused by tableStatistics.${refusedBy} — request rejected`);
     logger.debug(`Rejected profiling target: ${schema}.${objectName}`);
     void postToDetail(panel, {
       type: 'table-stats-error',
-      message: 'Table profiling is disabled by dataLineageViz.tableStatistics.enabled.',
+      objectRef,
+      message: `Table profiling is disabled by dataLineageViz.tableStatistics.${refusedBy}.`,
     }, logger);
     return;
   }
@@ -1317,14 +1292,11 @@ async function handleTableStatsRequestHost(
 
   logger.info(`Profiling started (mode=${mode}, columns=${cols.length})`);
   logger.debug(`Profiling target: ${schema}.${objectName}`);
-  const perRequest = getConnectionProvider() === 'builtIn';
   let session: DbSession | undefined;
   try {
-    session = perRequest
-      ? await connectDatabase(dbEnv, storedConnectionInfo)
-      : await resolveStatsConnection(statsConnState, () => connectDatabase(dbEnv, storedConnectionInfo));
+    session = await connectDatabase(dbEnv, storedConnectionInfo);
     if (!session) {
-      void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
+      void postToDetail(panel, { type: 'table-stats-error', objectRef, message: 'Connection cancelled.' }, logger);
       return;
     }
     const serverInfo = await session.getServerInfo();
@@ -1342,6 +1314,7 @@ async function handleTableStatsRequestHost(
       logger.info('No profileable columns — nothing to query');
       void postToDetail(panel, {
         type: 'table-stats-error',
+        objectRef,
         message: `No profileable columns in ${schema}.${objectName} — the column types are not supported by statistics, or dataLineageViz.tableStatistics.maxColumns excludes them all.`,
       }, logger);
       return;
@@ -1373,26 +1346,26 @@ async function handleTableStatsRequestHost(
     const samplePercent = needsSampling ? computeSamplePercent(sampleSize, rowCount) : undefined;
     const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
     logger.info(`Table statistics ready — rows=${rowCount}${needsSampling ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
-    void postToDetail(panel, { type: 'table-stats-result', stats, mode }, logger);
+    void postToDetail(panel, { type: 'table-stats-result', objectRef, stats, mode }, logger);
   } catch (err) {
-    if (isDbConnectionError(err)) {
-      const reported = reportConnectionError(err.original, err.target, logger, connectionErrorHooks(dbEnv, err.target.connectionId, undefined));
-      void postToDetail(panel, { type: 'table-stats-error', message: reported.message }, logger);
+    const failure = connectionFailure(err);
+    if (failure) {
+      const reported = reportConnectionError(failure.error, failure.target, logger, connectionErrorHooks(dbEnv, failure.target.connectionId, undefined));
+      void postToDetail(panel, { type: 'table-stats-error', objectRef, message: reported.message }, logger);
       return;
     }
-    host.log('error', 'Stats', 'Profiling', err);
-    void postToDetail(panel, { type: 'table-stats-error', message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
+    host.log('error', 'Stats', 'Profiling failed', err instanceof Error ? err.name : typeof err);
+    host.log('debug', 'Stats', `Profiling failed — ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
+    void postToDetail(panel, { type: 'table-stats-error', objectRef, message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
   } finally {
-    if (perRequest && session) {
+    if (session) {
       await releaseSession(session).catch((err: unknown) =>
-        host.log('warn', 'Stats', `Disconnect failed: ${redactSecrets(err instanceof Error ? err.message : String(err))}`));
+        host.log('warn', 'Stats', `Disconnect failed: ${err instanceof Error ? err.message : String(err)}`));
     }
   }
 }
 
-/**
- * Logs a summary of the SQL parsing results and stores it in the session.
- */
+/** Logs a summary of the SQL parsing results and stores it in the session. */
 function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, objectCount?: number, edgeCount?: number, schemaCount?: number) {
   const logger = Logger.create(outputChannel, 'Parse');
   const sess = getSession();
@@ -1411,7 +1384,8 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
   }
 
   if (stats.unreadableDefinitions?.length) {
-    logger.warn(`Definition not readable (encrypted or no VIEW DEFINITION permission) — loaded without edges: ${stats.unreadableDefinitions.join(', ')}`);
+    logger.warn(`Definition not readable (encrypted or no VIEW DEFINITION permission) — ${stats.unreadableDefinitions.length} object(s) loaded without edges`);
+    logger.debug(`Definitions not readable: ${stats.unreadableDefinitions.join(', ')}`);
   }
 
   if (spCount === 0) {
@@ -1429,12 +1403,11 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
 }
 
 /**
- * Reads display and behaviour settings from a VS Code workspace configuration
- * and returns the serialisable config snapshot sent to the webview. Numeric settings are
+ * Reads display and behaviour settings from a workspace configuration into the serialisable
+ * snapshot sent to the webview (same shape as {@link ExtensionConfigSchema}). Numeric settings are
  * clamped to their declared manifest range.
  *
  * @param cfg - Workspace configuration scoped to `dataLineageViz`.
- * @returns Config snapshot for the webview (same shape as {@link ExtensionConfigSchema}).
  */
 export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): Record<string, any> {
   const num = (key: string) => readDeclaredNumericSetting(cfg, key);
@@ -1476,16 +1449,7 @@ async function readExtensionConfig(host: BridgeHost): Promise<Record<string, any
 import { buildWebviewCsp } from '../utils/cspBuilder';
 import { getNonce } from '../utils/getNonce';
 
-/**
- * Generates the root HTML for the secondary Detail Webview.
- *
- * This provides the container, strict CSP, and bootloader fallback for the
- * detail panel.
- *
- * @param webview - The vscode.Webview instance for the detail panel.
- * @param extensionUri - The base URI of the extension for resolving assets.
- * @returns The complete HTML string.
- */
+/** Root HTML for the secondary Detail Webview: container, strict CSP and bootloader fallback. */
 function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
@@ -1521,12 +1485,7 @@ function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri)
 }
 
 /**
- * Builds a GUI diagnostic snapshot for the current extension state.
- *
- * @param context - Extension context for global state and subscriptions.
- * @param getSession - Factory for retrieving the current session-backed GUI state.
- *
- * @returns Diagnostic text focused on the user-visible graph, filters, render state, and settings.
+ * Builds a GUI diagnostic snapshot of the user-visible graph, filters, render state and settings.
  */
 export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession): string {
   const sess = getSession();

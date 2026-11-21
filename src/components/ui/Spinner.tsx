@@ -3,15 +3,9 @@ import type { CSSProperties } from 'react';
 interface SpinnerProps {
   /** Sizing/positioning utility classes appended after `animate-spin`. */
   className?: string;
-  /** Inline style (e.g. `{ color: 'var(--ln-fg-muted)' }`). */
   style?: CSSProperties;
 }
 
-/**
- * Animated loading spinner.
- *
- * @returns The shared spinning-circle SVG.
- */
 export function Spinner({ className = 'w-4 h-4', style }: SpinnerProps) {
   return (
     <svg className={`animate-spin ${className}`} style={style} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

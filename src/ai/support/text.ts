@@ -1,10 +1,7 @@
 /**
- * Pure string helpers shared across the VS Code-free AI core, the provider adapters, and the
- * host runners.
- *
- * @remarks
- * VS Code-free on purpose so the core framework and the `vscode.lm` runner share **one** copy.
- * Secret redaction lives here too so every provider-error path can sanitize before logging/emitting.
+ * Pure string helpers shared by the VS Code-free AI core, the provider adapters and the host
+ * runners (one copy for the core and the `vscode.lm` runner). Secret redaction lives here so every
+ * provider-error path sanitizes before logging or emitting.
  */
 
 import { stripFocusNodeLinks } from '../../engine/shared/bridgeContract';
@@ -15,6 +12,8 @@ const PROVIDER_ERROR_CAUSE_DEPTH = 3;
 
 /** Sanitized allowlisted fields retained from one provider exception or nested cause. */
 export interface ProviderErrorCauseDiagnostic {
+  /** A provider reply part arrived before failure, even if the phase buffered it. */
+  readonly replyReceived?: true;
   /** Sanitized exception name, reduced to diagnostic-safe characters. */
   readonly name: string;
   /** Redacted, length-capped error message. */
@@ -32,14 +31,9 @@ export interface ProviderErrorDiagnostic extends ProviderErrorCauseDiagnostic {
 }
 
 /**
- * Escapes text for a dynamic prompt slot so it cannot open or close a prompt delimiter.
- *
- * @remarks
- * Every value that reaches a system prompt from outside the prompt builder — the user question,
- * mission brief, screen phrase — passes through here before interpolation.
- *
- * @param value - Untrusted text.
- * @returns The text with `&`, `<` and `>` entity-escaped.
+ * Escapes text for a dynamic prompt slot (`&`, `<`, `>` entity-escaped) so it cannot open or close
+ * a prompt delimiter. Every value reaching a system prompt from outside the prompt builder
+ * (question, mission brief, screen phrase) passes through here.
  */
 export function escapePromptText(value: string): string {
   return value
@@ -49,39 +43,23 @@ export function escapePromptText(value: string): string {
 }
 
 /**
- * Escape untrusted catalog text (object/schema names, hop labels) for inline Markdown display.
- *
- * @param value - Untrusted text rendered inside chat Markdown.
- * @returns The text with `&`, `<`, `>` entity-escaped and Markdown control characters
- * (`` \ ` * _ # [ ] $ ``) backslash-escaped, so it renders literally and cannot open emphasis,
- * links, code spans, math or HTML.
+ * Escapes untrusted catalog text (object/schema names, hop labels) for inline Markdown: `&`, `<`,
+ * `>` entity-escaped and Markdown control characters backslash-escaped, so it renders literally and
+ * opens no emphasis, link, code span, math or HTML.
  */
 export function escapeMarkdownText(value: string): string {
   return escapePromptText(value).replace(/[\\`*_#[\]$]/g, '\\$&');
 }
 
-/**
- * Truncate `text` to `max` characters with a trailing ellipsis.
- *
- * @param text - The string to shorten (status labels, log previews).
- * @param max - Inclusive character budget; defaults to 60.
- * @returns `text` unchanged when within budget, else its first `max - 1` chars + `…`.
- */
-export function trunc(text: string, max = 60): string {
+/** Truncates `text` to `max` characters (default 60, inclusive) with a trailing `…`. */
+function trunc(text: string, max = 60): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 /**
- * Shorten a visible status preview at its last sentence or clause boundary, then a word boundary.
- *
- * @remarks
- * Adds `...` only when the text exceeds the inclusive display budget. An unbroken token that cannot fit is omitted rather than split. This helper does not alter stored
- * findings or model history.
- *
- * @param text - The string to shorten.
- * @param max - Inclusive character budget, the trailing `...` included.
- * @returns `text` unchanged when within budget, else the text folded at the nearest earlier word
- * boundary plus `...`.
+ * Shortens a visible status preview at its last sentence or clause boundary, then a word boundary;
+ * `max` includes the trailing `...`, added only when the text exceeds it. An unbroken token that
+ * cannot fit is omitted rather than split. Stored findings and model history are untouched.
  */
 export function truncAtWordBoundary(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -96,34 +74,21 @@ export function truncAtWordBoundary(text: string, max: number): string {
 }
 
 /**
- * Serialize `value` to JSON with every angle bracket replaced by its unicode escape.
- *
- * @remarks
- * The result is embedded between XML-style delimiters in a model message; DDL, comments, and
- * identifiers inside the payload must not be able to close the delimiter and smuggle markup into
- * the instruction stream. JSON readers decode the escapes back to the original characters, so the
- * payload the model parses is unchanged. Every delimited JSON block goes through here — a second
- * escaping site is a drift risk on a security-relevant rule.
- *
- * @param value - The payload to serialize.
- * @param space - Optional `JSON.stringify` indentation.
- * @returns Escaped JSON safe to place inside an XML-style delimiter block.
+ * Serializes `value` to JSON with every angle bracket replaced by its unicode escape. The result
+ * sits between XML-style delimiters in a model message, so DDL, comments and identifiers cannot
+ * close the delimiter and smuggle markup; JSON readers decode the escapes unchanged. Every
+ * delimited JSON block goes through here; a second escaping site is drift on a security-relevant
+ * rule.
  */
 export function escapeDelimitedJson(value: unknown, space?: number): string {
   return JSON.stringify(value, null, space).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 }
 
 /**
- * Redact likely secrets from a provider error before it reaches a log, the webview, or telemetry.
- *
- * @remarks
- * A provider `401`/`403` body can echo the `Authorization` header or the API key. We strip
- * `Bearer <token>` headers, `sk-`/`key-`/`api-`-prefixed tokens, and any long opaque run, then
- * cap the length. Over-redaction is acceptable here — an error message never needs a 32+ char
- * literal verbatim.
- *
- * @param message - The raw `Error.message` from the provider/SDK.
- * @returns A length-capped message safe to log and surface inline.
+ * Redacts likely secrets from a provider error before it reaches a log, the webview or telemetry. A
+ * `401`/`403` body can echo the `Authorization` header or API key, so it strips `Bearer <token>`,
+ * `sk-`/`key-`/`api-` tokens and any long opaque run, then caps the length. Over-redaction is
+ * acceptable: an error message never needs a 32+ char literal.
  */
 export function sanitizeProviderError(message: string): string {
   const redacted = message
@@ -139,9 +104,8 @@ export function sanitizeProviderError(message: string): string {
 }
 
 /**
- * Retains only bounded, diagnostic provider-error fields and sanitizes them before any sink sees them.
+ * Retains only bounded diagnostic provider-error fields, sanitized before any sink sees them.
  *
- * @param error - Raw SDK/provider exception.
  * @param phase - Runtime model-call phase in which the exception surfaced.
  * @returns A no-secret, JSON-safe diagnostic with at most three nested causes.
  */
@@ -156,9 +120,10 @@ export function sanitizeProviderErrorDiagnostic(error: unknown, phase: string): 
     const rawCode = stringCode
       ?? chromiumNetworkCode(rawMessage)
       ?? (typeof record?.code === 'number' ? record.code : undefined);
-    const diagnostic: { name: string; message: string; code?: string; cause?: ProviderErrorCauseDiagnostic } = {
+    const diagnostic: { name: string; message: string; replyReceived?: true; code?: string; cause?: ProviderErrorCauseDiagnostic } = {
       name: safeDiagnosticToken(rawName, 'Error'),
       message: sanitizeProviderError(rawMessage),
+      ...(record?.replyReceived === true ? { replyReceived: true as const } : {}),
     };
     if (typeof rawCode === 'string' || typeof rawCode === 'number') {
       diagnostic.code = safeDiagnosticToken(String(rawCode), 'unknown');
@@ -176,7 +141,7 @@ export function formatProviderErrorDiagnostic(diagnostic: ProviderErrorDiagnosti
   return `phase=${diagnostic.phase} detail=${JSON.stringify(diagnostic)}`;
 }
 
-/** Connection-level Node/undici codes that identify a transport interruption rather than a provider verdict. */
+/** Connection-level Node/undici codes marking a transport interruption, not a provider verdict. */
 const TRANSPORT_ERROR_CODES = new Set([
   'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND',
   'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT',
@@ -184,13 +149,10 @@ const TRANSPORT_ERROR_CODES = new Set([
 ]);
 
 /**
- * Chromium network-stack failures that are transport interruptions, not provider verdicts.
- *
- * @remarks
- * Inside the extension host the request travels over Electron's network stack, which reports
- * `net::ERR_*` and attaches **no** `code` property — the token exists only inside the message.
- * Listed explicitly rather than matched by prefix so a Chromium error meaning "the provider
- * answered and the answer was refused" is never silently retried.
+ * Chromium network-stack failures that are transport interruptions, not provider verdicts. In the
+ * extension host requests use Electron's network stack, which reports `net::ERR_*` with **no**
+ * `code` property (the token exists only in the message). Listed explicitly, not matched by prefix,
+ * so an error meaning "the provider answered and refused" is never silently retried.
  */
 const CHROMIUM_TRANSPORT_ERRORS = new Set([
   'net::ERR_CONNECTION_TIMED_OUT', 'net::ERR_CONNECTION_RESET', 'net::ERR_CONNECTION_CLOSED',
@@ -201,16 +163,13 @@ const CHROMIUM_TRANSPORT_ERRORS = new Set([
 ]);
 
 /**
- * Recovers a Chromium transport token from an error message that carries no `code`.
+ * Recovers a Chromium transport token from an error message that carries no `code`. Returns the
+ * first allowlisted `net::ERR_*` token (later ones are checked when an earlier one is a generic
+ * wrapper such as `net::ERR_FAILED`), or `undefined`.
  *
- * @param message - Raw provider error message.
- * @returns The first allowlisted `net::ERR_*` token in the message (later tokens are checked when
- *   an earlier one is a generic wrapper such as `net::ERR_FAILED`), or `undefined` when none match.
- *
- * @remarks
- * The one place a code is derived from prose, applied at the boundary where the raw error is still
- * available. Everything downstream — {@link isTransportProviderError} above all — keeps classifying
- * on `code` alone, so the "never match on message text" rule still holds where the decision is made.
+ * The one place a code is derived from prose, at the boundary where the raw error is still
+ * available; everything downstream, {@link isTransportProviderError} above all, classifies on
+ * `code` alone, so "never match on message text" holds where the decision is made.
  */
 function chromiumNetworkCode(message: string): string | undefined {
   for (const match of message.matchAll(/\bnet::ERR_[A-Z0-9_]+/g)) {
@@ -219,7 +178,7 @@ function chromiumNetworkCode(message: string): string | undefined {
   return undefined;
 }
 
-/** True when any sanitized cause carries a known connection-level code — a network interruption, not a provider verdict. */
+/** True when any sanitized cause carries a known connection-level code (a network interruption). */
 export function isTransportProviderError(diagnostic: ProviderErrorCauseDiagnostic): boolean {
   for (let cursor: ProviderErrorCauseDiagnostic | undefined = diagnostic; cursor; cursor = cursor.cause) {
     if (cursor.code && (TRANSPORT_ERROR_CODES.has(cursor.code) || CHROMIUM_TRANSPORT_ERRORS.has(cursor.code))) return true;
@@ -227,7 +186,7 @@ export function isTransportProviderError(diagnostic: ProviderErrorCauseDiagnosti
   return false;
 }
 
-/** Ordered codes carried by a diagnostic and its causes, used only for the user-facing detail string. */
+/** Ordered codes carried by a diagnostic and its causes, used only for the user-facing detail. */
 function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): string[] {
   const codes: string[] = [];
   for (let cursor: ProviderErrorCauseDiagnostic | undefined = diagnostic; cursor; cursor = cursor.cause) {
@@ -236,10 +195,7 @@ function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): strin
   return codes;
 }
 
-/**
- * Plain-words explanation for each `vscode.LanguageModelError` code, keyed by the error's `code`.
- * The provider's own text for these carries no remedy the user can act on.
- */
+/** Plain-words explanation per `vscode.LanguageModelError` code; provider text has no remedy. */
 const LANGUAGE_MODEL_ERROR_TEXT: Readonly<Record<string, string>> = {
   NoPermissions: 'The extension is not allowed to use the selected language model. Grant it access in the model picker or the chat provider settings, then try again.',
   Blocked: 'The AI provider blocked the request. Try again later or choose another model.',
@@ -247,17 +203,14 @@ const LANGUAGE_MODEL_ERROR_TEXT: Readonly<Record<string, string>> = {
 };
 
 /**
- * Renders a sanitized provider diagnostic as the single user-facing chat error line.
- *
- * @remarks
- * Classification is code-based only (never message-prose matching), via
- * {@link isTransportProviderError}: a known connection-level code names the failure a temporary
- * network/service interruption; a `vscode.LanguageModelError` code is named in plain words;
- * anything else stays a plain provider error. The transport branch
- * reports the code chain, not the provider's own message — that prose is boilerplate shared across
- * every network-class failure and can offer a contradictory remedy. The full message stays in the
- * debug log and trace diagnostic. A provider *verdict* keeps its message, since there the prose is
- * the answer itself.
+ * Renders a sanitized provider diagnostic as the single user-facing chat error line. Classification
+ * is code-based only (never message prose), via {@link isTransportProviderError}: a known
+ * connection-level code names a temporary network/service interruption; a
+ * `vscode.LanguageModelError` code is named in plain words; anything else stays a plain provider
+ * error. The transport branch reports the code chain, not the provider's message, which is
+ * boilerplate shared across network-class failures and can offer a contradictory remedy (the full
+ * message stays in the debug log and trace). A provider *verdict* keeps its message, since there
+ * the prose is the answer.
  */
 export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic): string {
   const codes = providerErrorCodeChain(diagnostic);
@@ -277,16 +230,9 @@ function safeDiagnosticToken(value: string, fallback: string): string {
 
 /**
  * Strips overlay-only `#focus-node:` anchors from a cached AI-preview description before it is
- * replayed into a chat surface as plain text.
- *
- * @remarks
- * `#focus-node:` links only resolve inside the graph webview's own React tree; a chat surface has
- * no such target, so the markup would render as dead links. The `### Objects` transport line is
- * demoted to small italic text so chat never renders a heading-scale object list.
- *
- * @param description - The full assembled markdown from `AiSession.lastPresentResultDescription`.
- * @returns The same markdown with every `[label](#focus-node:...)` reduced to plain `label` and
- *   the Objects footnote rendered as `*Objects: …*`.
+ * replayed into a chat surface, which has no target for them and would render dead links. Every
+ * `[label](#focus-node:...)` becomes plain `label`, and the `### Objects` transport line is demoted
+ * to `*Objects: …*` so chat never renders a heading-scale object list.
  */
 export function sanitizeDescriptionForChat(description: string): string {
   return stripFocusNodeLinks(description)
@@ -294,46 +240,31 @@ export function sanitizeDescriptionForChat(description: string): string {
 }
 
 /**
- * Renders ids as a backticked, comma-separated list for a rejection message — the single home for
- * the offender-list quoting rule.
- *
- * @param ids - Offending ids to display.
- * @returns The backtick-quoted list. Quoting keeps an invisible defect (zero-width or padding
- *   characters) from rendering an offending id identical to a valid one, which would make the
- *   model re-send the same value and spend a repair round learning nothing.
+ * Renders ids as a backticked, comma-separated list for a rejection message (the single home for
+ * the quoting rule). Quoting keeps an invisible defect (zero-width or padding characters) from
+ * making an offending id look identical to a valid one, which would make the model re-send it and
+ * waste a repair round.
  */
 export function quoteIds(ids: readonly string[]): string {
   return ids.map(id => `\`${id}\``).join(', ');
 }
 
-/**
- * Reads a `cursor` input as the zero-based offset of the next page.
- *
- * @param cursor - The `next_cursor` value a previous result carried; absent for the first page.
- * @returns The offset, `0` when no cursor was sent.
- */
+/** Reads a `cursor` (a prior `next_cursor`) as the next page's zero-based offset; 0 if none. */
 export function cursorOffset(cursor: string | undefined): number {
   return cursor === undefined ? 0 : Number.parseInt(cursor, 10);
 }
 
 /**
- * Builds the `next_cursor` value for a list that continues at `offset`.
- *
- * @param offset - Zero-based index of the first item the next page serves.
- * @param total - Length of the full list; no cursor is returned once `offset` reaches it.
- * @returns The opaque cursor string, or `undefined` when the list is exhausted.
+ * Builds the `next_cursor` for a list continuing at `offset`; `undefined` once `offset` reaches
+ * `total`.
  */
 export function nextCursor(offset: number, total: number): string | undefined {
   return offset < total ? String(offset) : undefined;
 }
 
 /**
- * Regular-suffix pluralizer — the single home for the mechanical `+s` rule so user-facing
- * counts phrase consistently across chat messages and prompt renderings.
- *
- * @param n - The count deciding the form.
- * @param noun - The singular noun (regular pluralization only).
- * @returns The noun, suffixed with `s` unless `n` is exactly 1.
+ * Regular-suffix pluralizer (`+s` unless `n` is exactly 1), the single home for the rule so counts
+ * phrase consistently across chat messages and prompts.
  */
 export function pluralize(n: number, noun: string): string {
   return n === 1 ? noun : `${noun}s`;

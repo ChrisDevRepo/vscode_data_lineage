@@ -8,22 +8,20 @@ import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
 import { openBuiltInSession, type BuiltInEnv } from './builtInProvider';
-import { CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
+import { builtInTarget, CONNECTION_ERROR_LABELS, describeConnectionError } from './connectionErrors';
 import { defaultTenantId, listTenants, pickAccount } from './entraSignIn';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
-  MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_SYSNAME_LENGTH, passwordSecretKey, passwordTooLong, readBuiltInConnections,
+  MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_SYSNAME_LENGTH, MAX_TCP_PORT, passwordSecretKey, passwordTooLong, readBuiltInConnections,
   savePassword, tooLong, upsertBuiltInConnection, type BuiltInConnection,
 } from './connectionSettings';
 
 const WIZARD_TITLE = 'Add Database Connection';
 const WIZARD_STEPS = 6;
-const MAX_TCP_PORT = 65535;
 
 /**
- * Parses the wizard's server field: `host` or `host,port`, with an optional `tcp:` prefix dropped.
- *
- * @returns The host and optional port, or `undefined` when the text is not a valid server.
+ * Parses the wizard's server field (`host` or `host,port`, optional `tcp:` prefix dropped);
+ * `undefined` when the text is not a valid server.
  */
 export function parseServerInput(text: string): { server: string; port?: number } | undefined {
   const [typed, port, ...rest] = text.split(',').map((part) => part.trim());
@@ -137,14 +135,11 @@ function hostChanged(previous: BuiltInConnection | undefined, next: Pick<BuiltIn
 }
 
 /**
- * Keeps the saved password consistent with the connection it belongs to.
- *
- * @remarks
- * A supplied password is stored for SQL login. An Entra ID connection holds no password, so any
- * saved one is deleted. A saved password is also deleted when an existing connection changes
- * server, port, authentication type or user without a new password, or when the previous entry is
- * unknown (for example a hand-edited one that failed validation), so it is never sent to a different
- * host or account.
+ * Keeps the saved password consistent with its connection. A supplied password is stored for SQL
+ * login; an Entra ID connection holds none, so any saved one is deleted. A saved password is also
+ * deleted when an existing connection changes server, port, authentication type or user without a
+ * new password, or when the previous entry is unknown (e.g. hand-edited and failing validation), so
+ * it is never sent to a different host or account.
  */
 async function reconcilePassword(
   secrets: vscode.SecretStorage,
@@ -166,22 +161,18 @@ function withConnectProgress<T>(title: string, task: () => Promise<T>): Thenable
 }
 
 /**
- * Runs the add (or, with `existing`, edit) wizard and saves the result.
+ * Runs the add (or, with `existing`, edit) wizard and saves the result. Six steps (server,
+ * authentication, user, password or Microsoft sign-in, database, display name), each with a Back
+ * button after the first. The database name is typed because a login that exists only inside one
+ * database cannot list the server's databases; the connection is test-connected before it is
+ * written, which reports a database that cannot be opened. Microsoft sign-in opens VS Code's
+ * account picker and saves the account and the directory: the only one the account has, else the
+ * one picked from a list starting with the {@link defaultTenantId} choice.
  *
- * @remarks
- * Six steps — server, authentication, user, password or Microsoft sign-in, database, display name —
- * each with a Back button after the first. The database name is typed, as a login that exists only
- * inside one database cannot list the server's databases. The connection is test-connected before
- * it is written, which reports a database that cannot be opened. Microsoft sign-in opens VS Code's
- * account picker and saves the chosen account and the
- * directory: the only one the account has, otherwise the one picked from a list that starts with the
- * {@link defaultTenantId} choice.
- *
- * @param env - Host services.
  * @param existing - Connection to edit; its id, unrelated fields and saved password are kept. A
- *   changed server or port resets certificate trust and requires the password to be entered again;
- *   a changed user does the same for the password.
- * @param initial - Values the steps start with when adding, for example from a saved project.
+ *   changed server or port resets certificate trust and requires the password again; a changed user
+ *   does the same for the password.
+ * @param initial - Values the steps start with when adding, e.g. from a saved project.
  * @returns The saved connection, or `undefined` when the user cancelled.
  */
 export async function runAddConnectionFlow(
@@ -319,11 +310,7 @@ export async function runAddConnectionFlow(
           await session.dispose();
           return undefined;
         } catch (err) {
-          return describeConnectionError(err, {
-            provider: 'builtIn', name: connection.name, server: connection.server, port: connection.port,
-            database: connection.database, user: connection.user, authenticationType: connection.authenticationType,
-            connectionId: connection.id, tenantId: connection.tenantId,
-          });
+          return describeConnectionError(err, builtInTarget(connection, connection.database));
         }
       });
       if (failure === 'cancelled') return undefined;
@@ -332,7 +319,7 @@ export async function runAddConnectionFlow(
         const trustLabel = CONNECTION_ERROR_LABELS.trustServerCertificate;
         const choice = await vscode.window.showErrorMessage(failure.message, ...(offerTrust ? [trustLabel] : []), 'Edit', 'Cancel');
         if (choice === trustLabel) {
-          if (await confirmTrustServerCertificate(connection)) state.trustServerCertificate = true;
+          state.trustServerCertificate = true;
           continue;
         }
         if (choice !== 'Edit') return undefined;
@@ -357,7 +344,7 @@ export async function runAddConnectionFlow(
   }
 }
 
-/** Narrows the connections a command accepts; `refusal` explains why a connection named by id is not one. */
+/** Narrows the accepted connections; `refusal` says why a connection named by id is not one. */
 interface ConnectionFilter {
   accepts: (connection: BuiltInConnection) => boolean;
   refusal: (connection: BuiltInConnection) => string;
@@ -386,7 +373,7 @@ async function pickConnection(placeholder: string, filter?: ConnectionFilter): P
   return picked?.connection;
 }
 
-/** The connection an argument names by id, or the one picked; a named connection the filter rejects is refused with a warning. */
+/** The connection an argument names by id, or the picked one; one the filter rejects warns. */
 function connectionFromArg(arg: unknown, placeholder: string, filter?: ConnectionFilter): Promise<BuiltInConnection | undefined> {
   const id = typeof arg === 'string' ? arg : (arg as { id?: unknown } | undefined)?.id;
   if (typeof id !== 'string') return pickConnection(placeholder, filter);
@@ -399,18 +386,15 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: Connectio
 }
 
 /**
- * Registers the four connection commands.
- *
- * @remarks
- * `dataLineageViz.addDatabaseConnection` accepts `{ connection, password? }`; with an argument it
- * validates, saves to user settings and the secret store, and returns the id. Its only prompt is the
- * certificate-trust confirmation, shown when the argument turns `trustServerCertificate` on for a
- * server and port not already trusted under that id; declined, the connection is saved without trust.
- * Replacing an existing id that changes server, port, user or authentication type drops its saved
- * password unless a new one is supplied. `removeDatabaseConnection` always asks for confirmation.
- * The other commands take an optional connection id and otherwise show a picker; edit returns the
- * saved id and update-password returns whether a password was stored. Update-password lists and
- * accepts only SQL login connections; an Entra ID connection named by id is refused with a warning.
+ * Registers the four connection commands. `dataLineageViz.addDatabaseConnection` accepts `{
+ * connection, password? }`; with an argument it validates, saves to user settings and the secret
+ * store, and returns the id without prompting. Replacing an existing id that changes
+ * server, port, user or authentication type drops its saved password unless a new one is supplied.
+ * `removeDatabaseConnection` removes the picked connection and its saved password and shows an
+ * information toast. The other commands take an optional
+ * connection id and otherwise show a picker; edit returns the saved id and update-password whether
+ * a password was stored. Update-password lists and accepts only SQL login connections; an Entra ID
+ * connection named by id is refused with a warning.
  */
 export function registerConnectionCommands(
   context: vscode.ExtensionContext,
@@ -428,12 +412,8 @@ export function registerConnectionCommands(
         const problems = parsed.error.issues.map((i) => `${i.path.join('.') || 'argument'}: ${i.message}`).join('; ');
         throw new Error(`Invalid database connection: ${problems}`);
       }
-      let connection = BuiltInConnectionSchema.parse({ ...parsed.data.connection, id: parsed.data.connection.id ?? randomUUID() });
+      const connection = BuiltInConnectionSchema.parse({ ...parsed.data.connection, id: parsed.data.connection.id ?? randomUUID() });
       const previous = readBuiltInConnections(logger).find((c) => c.id === connection.id);
-      const alreadyTrusted = previous?.trustServerCertificate === true && !hostChanged(previous, connection);
-      if (connection.trustServerCertificate && !alreadyTrusted && !await confirmTrustServerCertificate(connection)) {
-        connection = { ...connection, trustServerCertificate: false };
-      }
       await upsertBuiltInConnection(connection);
       await reconcilePassword(context.secrets, previous, connection, parsed.data.password);
       logger.info('Saved database connection');
@@ -450,14 +430,11 @@ export function registerConnectionCommands(
     vscode.commands.registerCommand('dataLineageViz.removeDatabaseConnection', async (arg?: unknown): Promise<void> => {
       const target = await connectionFromArg(arg, 'Select a connection to remove');
       if (!target) return;
-      const choice = await vscode.window.showWarningMessage(
-        `Remove "${target.name}"? Its saved password is deleted too.`, { modal: true }, 'Remove',
-      );
-      if (choice !== 'Remove') return;
       await deleteBuiltInConnection(target.id);
       await context.secrets.delete(passwordSecretKey(target.id));
       logger.info('Removed database connection');
       logger.debug(`Removed database connection ${target.id}`);
+      void vscode.window.showInformationMessage(`Removed connection "${target.name}" and its saved password.`);
     }),
 
     vscode.commands.registerCommand('dataLineageViz.updateDatabasePassword', async (arg?: unknown): Promise<boolean> => {

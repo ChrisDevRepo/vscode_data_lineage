@@ -1,8 +1,10 @@
-import { RemoveMessage } from '@langchain/core/messages';
+import { AIMessage, RemoveMessage } from '@langchain/core/messages';
 import { END, REMOVE_ALL_MESSAGES, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
 import {
   modelAssistantMessage,
   modelUserMessage,
+  messageContentToText,
+  ModelPortError,
   type ModelMessage,
   type ModelPort,
 } from '../model/modelPort';
@@ -44,7 +46,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, sanitizeDescriptionForChat, type ProviderErrorDiagnostic } from '../support/text';
+import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -61,6 +63,7 @@ import {
   type ConversePlanDraft,
   type ConverseInstructionPlan,
   type InstructionPhase,
+  type StructuredInstructionPlan,
 } from './instructionPlan';
 import {
   executeToolAttempt,
@@ -83,32 +86,25 @@ import {
 } from './state';
 
 /**
- * Count of one-time phase nodes that each self-loop up to {@link MAX_TOOL_PROVIDER_CALLS} times.
- *
- * @remarks
- * Under the single-generation redesign every phase node re-enters itself (via its `routeAfter*`
- * conditional edge, while `toolAttempt.phase` still matches) for one provider generation per LangGraph
- * step — so a single logical phase costs up to {@link MAX_TOOL_PROVIDER_CALLS} graph transitions, not
- * one. These are the seven self-looping nodes that run at most once per turn: `detect_entry`,
- * `discovery`, `visual_preview`, `sm_entry`, `gate_refine`, `synthesis`, `follow_up`. The active
- * coordinator/worker loop is counted separately (it scales with `maxRounds`). No single turn traverses
- * all seven (they sit on mutually exclusive branches), so summing them is a deliberately generous upper
- * bound for {@link turnRecursionLimit}.
+ * Count of one-time phase nodes that each self-loop up to {@link MAX_TOOL_PROVIDER_CALLS} times:
+ * `detect_entry`, `discovery`, `visual_preview`, `sm_entry`, `gate_refine`, `synthesis`,
+ * `follow_up`. Each re-enters itself (via its `routeAfter*` edge while `toolAttempt.phase` still
+ * matches) once per provider generation, so one logical phase costs up to
+ * {@link MAX_TOOL_PROVIDER_CALLS} transitions. The active coordinator/worker loop is counted
+ * separately (it scales with `maxRounds`). No turn traverses all seven (mutually exclusive
+ * branches), so the sum is a deliberately generous bound for {@link turnRecursionLimit}.
  */
 const SELF_LOOPING_ONE_TIME_PHASES = 7;
 
 /**
- * Graph transitions for nodes that neither self-loop nor scale with `maxRounds`.
- *
- * @remarks
- * Counted from the graph wiring: the four fixed non-looping nodes `consent_gate`, `approve_gate`,
- * `hold_gate` and `cancel_gate` (4), the extra `active_coordinator` execution that routes to
- * `synthesis` after the last round (1), and the START/END plumbing transitions (2). A small constant,
- * not a policy knob.
+ * Graph transitions of nodes that neither self-loop nor scale with `maxRounds`, counted from the
+ * wiring: `consent_gate`, `approve_gate`, `hold_gate`, `cancel_gate` (4), the extra
+ * `active_coordinator` execution routing to `synthesis` after the last round (1), START/END
+ * plumbing (2).
  */
 const FIXED_TRANSITION_OVERHEAD = 7;
 
-/** Absolute floor for {@link turnRecursionLimit} so short-`maxRounds` turns keep generous headroom. */
+/** Absolute floor for {@link turnRecursionLimit}, so short-`maxRounds` turns keep headroom. */
 const RECURSION_LIMIT_FLOOR = 50;
 
 /**
@@ -136,14 +132,14 @@ const PHASE_PROGRESS_LABELS: Readonly<Record<InstructionPhase, string>> = {
  */
 const SYNTHESIS_RENDER_FAILED_NOTICE = '_The AI preview could not be rendered; details are in the debug log._';
 
+/** Wait before the one retry of a generation a transport interruption ended. */
+const TRANSPORT_RETRY_DELAY_MS = 1_000;
+
 /**
- * Chat-facing text for each {@link RejectionChatGroup}, derived once from
- * {@link classifyRejectionCode}'s id so the group id (used in debug `group=`/`classes=` fields) and
- * its chat wording can never drift apart.
- *
- * @remarks
- * `correction` is the fallback every unmapped code resolves to — no rejection code ever reaches the
- * user raw, whatever new guard is added later.
+ * Chat-facing text per {@link RejectionChatGroup}, derived once from
+ * {@link classifyRejectionCode}'s id so the group id (debug `group=`/`classes=`) and its chat
+ * wording cannot drift. `correction` is the fallback for every unmapped code, so no rejection code
+ * reaches the user raw.
  */
 const REJECTION_GROUP_CHAT_TEXT: Readonly<Record<RejectionChatGroup, string>> = {
   column_mapping: 'column mapping',
@@ -160,27 +156,19 @@ function rejectionCauseLabel(attempt: Pick<ToolPhaseAttemptState, 'rejections'>)
 }
 
 /**
- * LangGraph `recursionLimit` for one turn, derived from the graph shape and the provider-call cap so
- * the budget cannot silently desync from the loop bounds it protects.
+ * LangGraph `recursionLimit` for one turn, derived from the graph shape and the provider-call cap
+ * so the budget cannot desync from the loop bounds it protects. Sum of: the
+ * {@link SELF_LOOPING_ONE_TIME_PHASES} phases (each up to {@link MAX_TOOL_PROVIDER_CALLS} steps,
+ * imported so raising the cap widens this budget), the active coordinator/worker loop (`maxRounds`
+ * rounds, each one coordinator step plus up to `MAX_TOOL_PROVIDER_CALLS` worker self-loops per
+ * accepted read and once more at the end), and {@link FIXED_TRANSITION_OVERHEAD}. Floored at
+ * {@link RECURSION_LIMIT_FLOOR}. A limit below the real transition count aborts a legitimate turn
+ * with an opaque recursion error.
  *
- * @remarks
- * Every phase node self-loops one provider generation per LangGraph step, up to
- * {@link MAX_TOOL_PROVIDER_CALLS}, so the real transition count is far above a flat per-round
- * factor. Importing {@link MAX_TOOL_PROVIDER_CALLS} keeps the two constants in lockstep — raising the
- * per-phase call cap automatically widens this budget. The bound is the sum of three terms:
- * the {@link SELF_LOOPING_ONE_TIME_PHASES} one-time phases (each up to `MAX_TOOL_PROVIDER_CALLS`
- * steps), the active coordinator/worker loop (`maxRounds` rounds, each one coordinator step plus, per
- * accepted read and once more at the end, up to `MAX_TOOL_PROVIDER_CALLS` worker self-loops — the
- * read itself and the no-progress replies in a row before it), and {@link FIXED_TRANSITION_OVERHEAD} for the
- * non-looping gate/plumbing nodes. Floored at {@link RECURSION_LIMIT_FLOOR}. A limit below the implied
- * transition count aborts a legitimate turn mid-analysis with an opaque LangGraph recursion error.
- *
- * @param maxRounds - The hop limit for the turn (`ai.maxRounds`).
- * @param scopeSize - Size of the admitted exploration scope, `0` while none is admitted. Every accepted
- *   read answers a distinct object of the scope, so it bounds the reads one round can make. LangGraph
- *   counts steps per `invoke` from the resumed checkpoint, so the invoke that follows the consent
- *   approval carries the limit of the scope that approval admitted.
- * @returns The recursion budget to pass to `graph.invoke`.
+ * @param maxRounds - Hop limit for the turn (`ai.maxRounds`).
+ * @param scopeSize - Admitted exploration scope size, `0` while none. Each accepted read answers a
+ *   distinct scope object, so it bounds a round's reads. Steps count per `invoke` from the resumed
+ *   checkpoint, so the invoke after consent approval carries the limit of the scope it admitted.
  */
 export function turnRecursionLimit(maxRounds: number, scopeSize: number): number {
   const oneTimePhaseSteps = SELF_LOOPING_ONE_TIME_PHASES * MAX_TOOL_PROVIDER_CALLS;
@@ -229,7 +217,9 @@ export interface AgentGraphDeps {
    * dropped instead of corrupting the session a newer turn owns.
    */
   readonly turnEpoch: number;
-  /** Optional logger for active-loop diagnostics (host wires it to the AI channel); off when undefined. */
+  /**
+   * Optional logger for active-loop diagnostics (the host wires the AI channel); off if undefined.
+   */
   readonly logger?: Logger;
   /**
    * Optional sink for rejections the attempt executor raises without dispatching a tool.
@@ -239,17 +229,15 @@ export interface AgentGraphDeps {
    * so the default path pays nothing.
    */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
+  /** Clears the AI preview on the canvas; an approved exploration replaces the earlier result. */
+  readonly clearPreview?: () => void;
 }
 
 
 /**
- * Builds the production LangGraph runtime for one native-chat turn.
- *
- * Runtime handles are captured in node closures. Checkpointed channels remain serializable so the
- * host can pause at the consent interrupt and resume through `Command({ resume })`.
- *
- * @param deps - Provider, registry, session and host-runtime dependencies.
- * @returns The compiled production StateGraph.
+ * Builds the production LangGraph runtime for one native-chat turn. Runtime handles are captured in
+ * node closures; checkpointed channels stay serializable so the host can pause at the consent
+ * interrupt and resume through `Command({ resume })`.
  */
 export function buildAgentGraph(deps: AgentGraphDeps) {
   const getCtx = (state: AgentStateType): StagePromptContext =>
@@ -284,23 +272,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   });
 
   /**
-   * Terminal update for a tripped attempt budget, preserving the reason {@link attemptStop} chose.
-   *
-   * @remarks
+   * Terminal update for a tripped attempt budget, keeping the reason {@link attemptStop} chose.
    * `fail` carries prose and an error code; which budget ended the turn is a separate enumerated
-   * axis, and the only one a diagnostic consumer can read — lifecycle trace records deliberately
-   * hold no failure prose, so without this the stop reason is unrecoverable after the fact. The
-   * active worker's own terminal already writes the same channel; routing every other stop through
-   * here keeps one mapping instead of repeating it per phase.
+   * axis, the only one a diagnostic consumer can read since lifecycle trace records hold no failure
+   * prose. Routing every stop through here keeps one mapping.
    *
-   * Severity follows meaning: the error line stays content-free — stop reason, counters, the last
-   * rejection's tool, code, and issue paths — and the rejection prose, which is normal AI
-   * behaviour, rides the paired `[Stop]` line at `debug`. That pairing is what keeps the turn
-   * diagnosable: the error line says which budget ended it, the debug line says what the model was
-   * told last, and a default-on log carries only the first.
+   * The error line stays content-free (stop reason, counters, last rejection's tool, code and issue
+   * paths); the rejection prose, normal AI behaviour, rides the paired `[Stop]` line at `debug`, so
+   * a default-on log says which budget ended the turn and the debug line says what the model was
+   * told last.
    *
-   * @param stopped - The stop `attemptStop` selected; `message`/`errorCode` may be overridden by
-   *   spreading a replacement over it when a phase has a more specific diagnosis.
+   * @param stopped - The stop `attemptStop` selected; `message`/`errorCode` may be overridden when
+   *   a phase has a more specific diagnosis.
    */
   const failStopped = (
     stopped: { readonly reason: string; readonly message: string; readonly errorCode?: AgentErrorCode },
@@ -323,14 +306,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * The one provider-failure exit every phase funnels through.
+   * The one provider-failure exit every phase funnels through. The model port logs only at debug,
+   * so the turn-ending diagnostic it sanitized is emitted here where the {@link Logger} lives; a
+   * failed generation leaves the turn with no result and is logged at error level.
    *
-   * @remarks
-   * The model port cannot log at error level — it takes only an optional debug callback — so the
-   * turn-ending diagnostic it sanitized is emitted here, where the {@link Logger} lives. A failed
-   * generation leaves the turn with no result, which `logging.md` puts at ERROR.
-   *
-   * @param res - The failed attempt, read for its user text and sanitized provider diagnostic.
    * @param fallbackMessage - Phase-specific text used when the port supplied none; also the log op.
    */
   const failProvider = (
@@ -346,24 +325,17 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * Announces one in-phase repair retry in the same progress grammar the hop counter uses.
+   * Announces one in-phase repair retry in the hop counter's progress grammar. A semantic failure
+   * inside a self-looping phase is otherwise invisible in chat. Fires only when the attempt just
+   * recorded added a failure (an accepted non-terminal call announces nothing) and re-emits the
+   * phase status with a `(Retry N — <cause>)` bracket.
    *
-   * @remarks
-   * A semantic failure inside a self-looping phase is otherwise invisible in chat. This fires only
-   * when the attempt just recorded added a failure — an accepted non-terminal tool call that loops
-   * the phase announces nothing — and re-emits the phase status with a `(Retry N — <cause>)`
-   * bracket, mirroring the hop counter's `(+N added, −N pruned)` brackets.
+   * It is a transient `status` (`stream.progress`), never permanent `text`: a retry that later
+   * succeeds leaves the reader nothing to act on. A phase that never recovers still ends on its own
+   * terminal event (`failStopped`/`failProvider`/`fail`), and every rejection is logged at
+   * `[Reject]`/`[Attempt]` regardless of what reaches chat.
    *
-   * Retry ⇒ transient `status` (native `stream.progress`), never permanent `text` (native
-   * `stream.markdown`): a retry the phase goes on to resolve is exactly the "still working" signal
-   * VS Code's progress surface exists for, not content that belongs in the final transcript — a
-   * retry that later succeeds leaves the reader nothing to act on once the turn completes. This is
-   * additive-safe for the opposite case too: a phase that never recovers still ends on its own
-   * terminal `error`/`terminal` event (`failStopped`/`failProvider`/`fail`), and every rejection is
-   * already logged unconditionally at `[Reject]`/`[Attempt]` regardless of what reaches chat, so the
-   * debug trail still carries every drop even though the transcript no longer repeats it as content.
-   *
-   * @param statusText - The phase's own status line to re-emit; defaults to the phase progress label.
+   * @param statusText - The phase's status line to re-emit; defaults to the phase progress label.
    */
   const emitRepairProgress = (
     phaseLabel: string,
@@ -380,24 +352,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   /**
    * Debug-only per-hop convergence summary, emitted once an active hop that recorded at least one
-   * rejection reaches a terminal disposition (committed, or failed the turn outright).
+   * rejection reaches a terminal disposition. With the `[AI] [Attempt]` and `[Reject]` lines it
+   * lets support correlate a chat retry count ({@link emitRepairProgress}) with the ordered chain
+   * of rejection groups (never raw codes). `converging` compares only the final two rejections:
+   * equal groups mean the retry stayed on the same fault category, a changed group means it moved;
+   * a single rejection reads as converging.
    *
-   * @remarks
-   * Complements the per-attempt `[AI] [Attempt]` line and toolProvider's `[Reject]` line with the
-   * one line support needs to correlate a chat retry count ({@link emitRepairProgress}) with what
-   * the hop actually did: the ordered chain of rejection GROUPS — never raw codes, the same rule the
-   * chat line follows — and whether the model was converging on one fault category or bouncing
-   * between unrelated ones.
-   *
-   * `converging` compares only the final two recorded rejections, the model's most recent correction
-   * against the one immediately before it: equal groups mean the retry stayed on the SAME category
-   * of fault (still working the issue), a changed group means it moved to a different one. A hop
-   * with only one rejection has no prior group to diverge from, so it reads as converging by default.
-   *
-   * @param hop - The hop number this attempt state belongs to, matching the chat "Hop X/Y" counter.
+   * @param hop - Hop number, matching the chat "Hop X/Y" counter.
    * @param focusId - The hop's focus node id, `[schema].[object]` form.
-   * @param attempt - The hop's cumulative attempt state at its terminal disposition.
-   * @param outcome - How the hop concluded.
    */
   const emitHopConvergenceSummary = (
     hop: number,
@@ -480,43 +442,77 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * Executes one compiled tool plan — a single physical attempt, with no retry of any kind.
-   * Whatever it returns, including a transport failure, is final; the calling node decides its
-   * disposition.
-   *
-   * @remarks
-   * `presentResultRepairDraftContext` shows the held section labels through {@link heldSectionsForRepair};
-   * the rejected call the model sent already carries every body.
+   * Logs a connection-level interruption before any reply and waits the transport-retry delay.
+   * Returns false, without waiting, for any other failure or once the turn is aborted.
    */
-  const runToolAttempt = (
+  const waitForTransportRetry = async (failure: ProviderErrorDiagnostic): Promise<boolean> => {
+    if (!isTransportProviderError(failure) || failure.replyReceived || deps.signal?.aborted) return false;
+    deps.logger?.debug(`[AI] transport-retry ${formatProviderErrorDiagnostic(failure)}`);
+    await abortableDelay(TRANSPORT_RETRY_DELAY_MS, deps.signal);
+    return true;
+  };
+
+  /**
+   * Executes one compiled tool plan: one physical attempt, plus one more only when the first ended
+   * in a connection-level interruption before any reply. Any other failure, and a second
+   * interruption, is final; the calling node decides the disposition.
+   * `presentResultRepairDraftContext` shows held section labels through
+   * {@link heldSectionsForRepair}; the rejected call already carries every body.
+   */
+  const runToolAttempt = async (
     plan: ConverseInstructionPlan,
     priorState: ToolPhaseAttemptState,
-  ) => executeToolAttempt(deps.model, plan, {
-    priorState,
-    debugLog: message => deps.logger?.debug(message),
-    traceSyntheticRejection: deps.traceSyntheticRejection,
-    presentResultRepairDraftContext: () => {
-      const held = deps.getSession().presentResultRepairDraft.get();
-      return held ? { sections: heldSectionsForRepair(held.sections) } : null;
-    },
-    holdRejectedPresentResult: (input, issuePaths) => {
-      const sess = deps.getSession();
-      if (sess.activeLmStage?.kind === 'visual_preview') return null;
-      return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
-    },
-    holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
-  });
+  ): Promise<ToolAttemptResult> => {
+    const attempt = () => executeToolAttempt(deps.model, plan, {
+      priorState,
+      debugLog: message => deps.logger?.debug(message),
+      traceSyntheticRejection: deps.traceSyntheticRejection,
+      presentResultRepairDraftContext: () => {
+        const held = deps.getSession().presentResultRepairDraft.get();
+        return held ? { sections: heldSectionsForRepair(held.sections) } : null;
+      },
+      holdRejectedPresentResult: (input, issuePaths) => {
+        const sess = deps.getSession();
+        if (sess.activeLmStage?.kind === 'visual_preview') return null;
+        return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
+      },
+      holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
+      heldSubmission: () => (deps.getSession().stateMachine as NavigationEngine | null)?.heldSubmission ?? null,
+      projectRejectedSubmission: input => (deps.getSession().stateMachine as NavigationEngine | null)?.projectRejectedSubmission(input) ?? null,
+    });
+    const first = await attempt();
+    if (first.stop !== 'error' || !first.providerError) return first;
+    return await waitForTransportRetry(first.providerError) ? attempt() : first;
+  };
 
-  /** Returns the cumulative attempt state for one phase, or a fresh state when the phase changed. */
+  /**
+   * Runs one structured generation; a connection-level interruption before any reply is retried
+   * once, and a failure that is not retried, or the retry's own, is thrown unchanged.
+   */
+  const runStructuredPlan = async <T>(plan: StructuredInstructionPlan<T>, onAttempt?: () => void): Promise<T> => {
+    const attempt = () => {
+      onAttempt?.();
+      return executeInstructionPlan(deps.model, plan);
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof ModelPortError)) throw error;
+      if (!await waitForTransportRetry(sanitizeProviderErrorDiagnostic(error, plan.frame.phase))) throw error;
+      return attempt();
+    }
+  };
+
+  /** Cumulative attempt state for one phase, or a fresh state when the phase changed. */
   const attemptStateFor = (state: AgentStateType, phase: InstructionPhase): ToolPhaseAttemptState =>
     state.toolAttempt?.phase === phase ? state.toolAttempt : initialToolPhaseAttemptState(phase);
 
   /**
    * The one attempt-stop policy every self-looping phase applies after {@link recordToolAttempt}:
    * maps a backend fault, or {@link MAX_TOOL_PROVIDER_CALLS} model replies without progress, to the
-   * stop and its failure message. Returns `null` while the phase may keep looping. Callers wrap the message
-   * in their own `fail`-shaped update so phase-specific cleanup (repair drafts, active-hop reset)
-   * stays local.
+   * stop and its failure message. Returns `null` while the phase may keep looping. Callers wrap the
+   * message in their own `fail`-shaped update so phase-specific cleanup (repair drafts, active-hop
+   * reset) stays local.
    */
   const attemptStop = (
     nextAttempt: ToolPhaseAttemptState,
@@ -574,27 +570,21 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * When discovery's no-progress stop trips with at least one accepted observation already
-   * held, the material the phase needs to answer is not lost: one further generation, tool calls
-   * disabled (`toolChoice: 'none'`), asks the model to answer from what it already holds instead of
-   * ending the turn with no answer. Mirrors {@link renderHeldSynthesisDraft}'s "committed work
-   * survives a breaker trip" precedent for the phase whose committed work is a set of accepted
-   * observations rather than a held draft.
+   * When discovery's no-progress stop trips with at least one accepted observation held, one
+   * further generation with tools disabled (`toolChoice: 'none'`) asks the model to answer from
+   * what it holds instead of ending the turn without an answer. Mirrors
+   * {@link renderFailedSynthesisAnswer}'s "committed work survives a breaker trip" for a phase whose
+   * committed work is accepted observations. The common trigger is a duplicate-read stop: the model
+   * keeps re-issuing the read despite the hint that its held observations answer it, and
+   * `toolChoice: 'none'` removes that tool so the only legal move is to answer from what
+   * {@link executeToolAttempt} already rendered into its messages.
    *
-   * @remarks
-   * A duplicate-read stop is the common trigger: the correction hint on every such rejection already
-   * tells the model its held observations answer the call it just repeated, but the model keeps
-   * re-issuing the read instead of answering, spending the phase's no-progress budget on repeats of a
-   * call it already paid for. `toolChoice: 'none'` removes the tool it kept reaching for, so this
-   * generation has no legal move but to answer from what {@link executeToolAttempt}'s own
-   * retry-context assembly already rendered into its messages from `nextAttempt`.
-   *
-   * @param nextAttempt - The phase's cumulative state at the moment the breaker tripped; its held
-   *   observations are what the salvage generation is asked to answer from.
-   * @param draft - The same phase draft the tripped attempt used, so the salvage call sees the same
-   *   system prompt, facts and messages.
-   * @returns The salvage generation's result when it produced a non-empty text-only answer;
-   *   `null` when the provider errored, was cancelled, or still did not answer in plain text.
+   * @param nextAttempt - Cumulative state when the breaker tripped; its held observations are what
+   *   the generation answers from.
+   * @param draft - The draft the tripped attempt used, so the call sees the same system prompt,
+   *   facts and messages.
+   * @returns The generation's result when it produced a non-empty text-only answer; `null` when the
+   *   provider errored, was cancelled or did not answer in plain text.
    */
   const trySalvageDiscoveryAnswer = async (
     nextAttempt: ToolPhaseAttemptState,
@@ -662,7 +652,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (held && state.toolAttempt?.phase !== 'detect_entry') {
       let action: 'approve' | 'change' | 'cancel' | 'other';
       try {
-        const classified = await executeInstructionPlan(deps.model, compileInstructionPlan({
+        const classified = await runStructuredPlan(compileInstructionPlan({
           kind: 'structured',
           phase: 'detect_entry',
           contract: { id: 'gate_reply', schema: GateReplySchema },
@@ -727,10 +717,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const detectorMessages = priorAttempt.providerCalls > 0
       ? [...base, ...await renderToolAttemptContext(priorAttempt, deps.model, message => deps.logger?.debug(message))]
       : base;
-    const callsBefore = deps.model.modelCalls;
+    let callsBefore = deps.model.modelCalls;
     let entry: z.infer<typeof EntryDetectionSchema>;
     try {
-      entry = await executeInstructionPlan(deps.model, compileInstructionPlan({
+      entry = await runStructuredPlan(compileInstructionPlan({
         kind: 'structured',
         phase: 'detect_entry',
         contract: { id: 'entry_detection', schema: EntryDetectionSchema },
@@ -738,7 +728,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         messages: detectorMessages,
         system: buildEntryDetectorSystemPrompt(ctx),
         signal: deps.signal,
-      }));
+      }), () => {
+        callsBefore = deps.model.modelCalls;
+      });
     } catch (error) {
       if (!(error instanceof StructuredOutputError)) throw error;
       const providerCalls = deps.model.modelCalls - callsBefore;
@@ -943,7 +935,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return { toolAttempt: nextAttempt, phase: 'sm_entry' };
   };
 
-  /** Ends the turn on an admission refusal: the user reads it, no gate opens and no further model call runs. */
+  /**
+   * Ends the turn on an admission refusal: the user reads it; no gate opens, no model call follows.
+   */
   const refusedTerminal = (text: string | undefined): AgentStateUpdate => {
     const refusal = text ?? '';
     deps.sink.stream(refusal);
@@ -1069,6 +1063,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       deps.logger?.debug(`[AI] approved proposal activation rejected — revision=${expectedRevision} reason=${sanitizeForLog(activation.reason)}`);
       return fail(`Approved exploration could not start: ${activation.reason}`);
     }
+    deps.clearPreview?.();
     const engine = activation.engine as NavigationEngine;
     if (cachedDiscoverySummary) engine.setDiscoverySummary(cachedDiscoverySummary);
     return {
@@ -1078,13 +1073,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * Ends the turn with the reviewed proposal still pending so the chat input frees up.
-   *
-   * @remarks
-   * The session deliberately stays in `awaiting_gate` with `pendingExploration` intact:
-   * that pair is what {@link detectEntryNode} reads to resolve the next prompt against the
-   * proposal (a card trigger, or a typed reply classified approve/change/cancel/other), and what
-   * keeps `isRefining` true inside the `start_exploration` handler.
+   * Ends the turn with the reviewed proposal still pending so the chat input frees up. The session
+   * stays in `awaiting_gate` with `pendingExploration` intact: that pair is what
+   * {@link detectEntryNode} reads to resolve the next prompt against the proposal (card trigger, or
+   * typed reply classified approve/change/cancel/other) and keeps `isRefining` true in the
+   * `start_exploration` handler.
    */
   const holdGateNode = (_state: AgentStateType): AgentStateUpdate => ({ outcome: 'ok', phase: 'done' });
 
@@ -1189,6 +1182,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       requiredTerminalTool: 'lineage_submit_findings',
       proseGate: 'buffer-until-tool',
       freshSubmission: () => engine.heldFindingFocus === null && sess.memory.getArchivedAngles(focusId).size === 0,
+      heldFailed: () => engine.heldFailed,
       hopColumns: () => engine.hopSubmitColumns,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, input, isError) => {
@@ -1333,7 +1327,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
     }, ['Synthesis failed', 'Synthesis', 'without rendering a result']);
     if (attempt.terminal) {
-      if (attempt.nextAttempt.stopReason === 'no_progress') renderHeldSynthesisDraft(deps, sess);
+      if (attempt.nextAttempt.stopReason === 'no_progress') renderFailedSynthesisAnswer(deps, sess, attempt.nextAttempt.messages);
       sess.presentResultRepairDraft.clear();
       return attempt.terminal;
     } else if (!sess.presentResultCalledThisTurn) {
@@ -1512,18 +1506,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 }
 
 /**
- * Records the capture keys the locked classification excluded from one stage's prompt.
+ * Records the capture keys the locked classification excluded from one stage's prompt. Every other
+ * prompt filter is inferable from the shipped keys or logged by the submit handler; classification
+ * gating is the exception, since the excluded key never reaches the model and a run never asked for
+ * the business angle looks like one that found nothing. Silent when nothing was gated.
  *
- * @remarks
- * Every other filter in the prompt chain announces itself — a stage or slot-count drop is inferable
- * from the shipped keys, and an off-angle section dropped at commit is logged by the submit handler.
- * Classification gating is the exception: the excluded key never reaches the model, so a run that
- * was never asked for the business angle is indistinguishable from one that was asked and found
- * nothing. Silent on the common path — nothing is logged when nothing was gated.
- *
- * @param deps - Graph dependencies carrying the optional logger.
- * @param stage - Stage whose prompt was rendered.
- * @param classification - Locked classification that produced the gating.
  * @param gatedKeys - Keys excluded by that classification.
  */
 function logClassificationGating(
@@ -1562,13 +1549,10 @@ function routeAfterDiscovery(state: AgentStateType): string {
 }
 
 /**
- * Router for `visual_preview`, whose declared conditional edges are `[visualPreview, smEntry, END]`.
- *
- * @remarks
- * Deliberately not {@link routeAfterDiscovery}: that one can return `AGENT_NODES.gate`, which is
- * not in this node's edge set, so a persisted `state.gate` reaching here would make LangGraph
- * reject the transition with an opaque graph error instead of producing a phase decision. A
- * routing function must only name destinations its own node declares.
+ * Router for `visual_preview`, whose conditional edges are `[visualPreview, smEntry, END]`. Not
+ * {@link routeAfterDiscovery}: that can return `AGENT_NODES.gate`, outside this node's edge set, so
+ * a persisted `state.gate` would make LangGraph reject the transition with an opaque error. A
+ * router must name only destinations its own node declares.
  */
 function routeAfterVisualPreview(state: AgentStateType): string {
   if (state.outcome) return END;
@@ -1662,21 +1646,15 @@ function detectRefusalFromToolResult(toolName: string, resultText: string): stri
 
 
 /**
- * Wraps the synthesis completion envelope for the model-facing message, the same untrusted-JSON
- * treatment `visualPreviewNode` gives its `<discovery_preview_source>` block.
+ * Wraps the synthesis completion envelope for the model-facing message, with the same
+ * untrusted-JSON treatment `visualPreviewNode` gives its `<discovery_preview_source>` block. The
+ * envelope is the turn's largest DDL-derived payload (formulas and SQL in
+ * `detail_slots[].sections[].text`, the verbatim question in `synthesis_reminder`) and arrives as a
+ * user-role message, so it needs the escaping and untrusted-content banner of any user-role
+ * delivery (a `ToolMessage` role already marks tool output and needs none). `escapeDelimitedJson`
+ * neutralizes only `<`/`>`; no field is dropped, truncated or reordered.
  *
- * @remarks
- * The envelope is the turn's largest DDL-derived payload — captured formulas and SQL inside
- * `detail_slots[].sections[].text`, plus the verbatim user question threaded through
- * `synthesis_reminder` — reaching the model as a user-role message, so it needs the same escaping
- * and untrusted-content banner as any other user-role delivery (`submitFindings`'s `logAndReturn`
- * returns the same envelope as a `ToolMessage`, a role that already marks it as tool output rather
- * than prose, so it needs none). `escapeDelimitedJson` neutralizes only `<`/`>` (unicode-escaped, so
- * the JSON a model parses is unchanged byte-for-byte apart from those two characters) — no field is
- * dropped, truncated, or reordered.
- *
- * @param envelope - The completion envelope from {@link buildSmCompletionEnvelope}.
- * @returns The delimited, banner-prefixed message text for `modelUserMessage`.
+ * @param envelope - The envelope from {@link buildSmCompletionEnvelope}.
  */
 export function buildSynthesisEnvelopeMessage(envelope: ReturnType<typeof buildSmCompletionEnvelope>): string {
   return [
@@ -1696,10 +1674,7 @@ function providerStopText(at: { readonly object: string; readonly completedHops:
     + 'The run is incomplete, so no result is shown and the graph was not changed. Ask again.';
 }
 
-/**
- * User-facing text for a run ended by a backend fault: where it stopped, the fault code, and that
- * nothing was shown or changed.
- */
+/** User text for a run ended by a backend fault: where it stopped, fault code, nothing changed. */
 function backendFaultStopText(subject: string, code: string, at?: { readonly object: string; readonly completedHops: number }): string {
   const where = at ? `The analysis stopped at \`${at.object}\`` : `${subject} stopped`;
   return `${where}: an internal error occurred (${code}). `
@@ -1723,15 +1698,12 @@ function loopStopText(at: { readonly object: string; readonly completedHops: num
 }
 
 /**
- * Chat text for the committed `lineage_present_result`, chosen by how its preview was delivered.
+ * Chat text for the committed `lineage_present_result`, chosen by how its preview was delivered: a
+ * render-degraded mark from the present handler means the post failed or threw (`post_failed`);
+ * otherwise the auto-dispatch flag separates `delivered` from the deferred `no_panel`
+ * ({@link buildChatAnswer}). The description passes through {@link sanitizeDescriptionForChat}
+ * because its object links resolve only in the webview.
  *
- * @remarks
- * A render-degraded mark set by the present handler means the post failed or threw
- * (`post_failed`); otherwise the auto-dispatch flag separates `delivered` from the deferred
- * `no_panel`. See {@link buildChatAnswer} for what each outcome carries. The assembled description
- * passes through {@link sanitizeDescriptionForChat}: its object links resolve only in the webview.
- *
- * @param sess - The live session, read for the committed artifact and delivery flags.
  * @returns The chat answer body, or null when the result carries no text.
  */
 function presentedChatAnswer(sess: AiSession): string | null {
@@ -1747,34 +1719,57 @@ function presentedChatAnswer(sess: AiSession): string | null {
 }
 
 /**
- * Renders the synthesis phase's held `lineage_present_result` draft into the chat stream when a
- * breaker trip ends the turn with no committed result.
+ * Renders the synthesis phase's held `lineage_present_result` draft, or its latest authored prose
+ * when none is held, into chat when a breaker trip ends the turn with no committed result. The last
+ * render step failing never discards the model's own final text, and the backend never resends a
+ * stripped patch to coax a narrower validation past (a content-shaping resend the model never sent
+ * is not ACCEPT / REJECT / NORMALIZE-WITH-LOG). A held draft's intro, sections and closing render
+ * through the preview's assembler ({@link orderAndAssemble}) unaltered; either text is followed by
+ * one line saying the AI preview could not be rendered. `sess.markSynthesisRenderDegraded` records
+ * the cause for the participant's one-shot warning toast.
  *
- * @remarks
- * The last render step failing never discards the model's own final text and the backend never
- * resends a stripped `{ is_update: true, notes: [] }` patch to coax a narrower validation past —
- * a content-shaping resend the model never sent is not one of ACCEPT / REJECT / NORMALIZE-WITH-LOG.
- * The held draft's own intro, sections and closing render through
- * the same assembler the preview uses ({@link orderAndAssemble}), unaltered, followed by one plain
- * line stating the AI preview could not be rendered. `sess.markSynthesisRenderDegraded` records the
- * cause for the participant's one-shot warning toast.
- *
- * @param deps - Graph dependencies (chat sink, logger).
- * @param sess - The live session, read for the held draft.
+ * @param messages - The synthesis attempt's messages; the newest non-blank assistant text is the
+ * fallback when no draft is held.
  */
-function renderHeldSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): void {
+function renderFailedSynthesisAnswer(
+  deps: AgentGraphDeps,
+  sess: AiSession,
+  messages: readonly ModelMessage[],
+): void {
   const draft = sess.presentResultRepairDraft.get();
-  if (!draft) return;
-  const assembled = orderAndAssemble(draft.sections ?? [], {
-    title: draft.title,
-    intro: draft.intro,
-    closing: draft.closing,
-  });
-  const closing = sess.takeClosingNotices() + (assembled.description ? '\n\n' + assembled.description : '');
+  const answer = draft
+    ? orderAndAssemble(draft.sections ?? [], {
+        title: draft.title,
+        intro: draft.intro,
+        closing: draft.closing,
+      }).description
+    : [...messages]
+        .reverse()
+        .filter(AIMessage.isInstance)
+        .map((message) => messageContentToText(message.content))
+        .find((text) => text.trim());
+  const closing = sess.takeClosingNotices() + (answer ? '\n\n' + answer : '');
   if (closing) deps.sink.stream(closing);
   deps.sink.stream(`\n\n${SYNTHESIS_RENDER_FAILED_NOTICE}`);
   deps.logger?.debug(
-    '[AI] [Repair] synthesis breaker tripped with a held draft — held text rendered to chat.',
+    `[AI] [Repair] synthesis breaker tripped — authoredText=${Boolean(answer)} heldDraft=${Boolean(draft)}.`,
   );
   sess.markSynthesisRenderDegraded('synthesis_breaker');
+}
+
+/** Resolves after `ms`, or at once when `signal` aborts first. */
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    }
+    signal?.addEventListener('abort', finish, { once: true });
+  });
 }

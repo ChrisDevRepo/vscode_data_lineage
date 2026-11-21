@@ -18,16 +18,20 @@
   --ln-bg: var(--vscode-editor-background, #ffffff);
   --ln-bg-secondary: var(--vscode-sideBar-background, #f3f4f6);
   --ln-bg-elevated: var(--vscode-dropdown-background, #ffffff);
-  --ln-toolbar-bg: var(--vscode-editorGroupHeader-tabsBackground, #f8f8f8);
+  /* High-contrast themes leave editorGroupHeader.tabsBackground unset: fall back to the editor background, never a fixed light colour (the HC foreground is white). */
+  --ln-toolbar-bg: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, #f8f8f8));
   --ln-widget-bg: var(--vscode-editorWidget-background, #ffffff);
   --ln-widget-border: var(--vscode-editorWidget-border, #c8c8c8);
-  --ln-sidebar-header-bg: var(--vscode-sideBarSectionHeader-background, #e8e8e8);
-  --ln-sidebar-header-fg: var(--vscode-sideBarSectionHeader-foreground, #1f2937);
+  --ln-sidebar-header-bg: var(--vscode-sideBarSectionHeader-background, var(--vscode-sideBar-background, #e8e8e8));
+  --ln-sidebar-header-fg: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-sideBar-foreground, var(--vscode-foreground, #1f2937)));
 
   /* Foreground colors */
   --ln-fg: var(--vscode-editor-foreground, #1f2937);
   --ln-fg-muted: var(--vscode-descriptionForeground, #6b7280);
-  --ln-fg-dim: var(--vscode-disabledForeground, #9ca3af);
+  /* Tertiary text and glyphs (counts, separators, close marks) must meet AA: --vscode-disabledForeground is a
+     translucent grey (2.1:1 on the light toolbar) and stays only for decoration and disabled looks. */
+  --ln-fg-dim: var(--ln-fg-muted);
+  --ln-fg-disabled: var(--vscode-disabledForeground, #9ca3af);
   --ln-text-link: var(--vscode-textLink-foreground, #2563eb);
 
   /* Border colors */
@@ -36,7 +40,9 @@
 
   /* Input colors */
   --ln-input-bg: var(--vscode-input-background, #ffffff);
-  --ln-input-border: var(--vscode-input-border, #d1d5db);
+  /* Input boundaries need 3:1 against the surroundings (WCAG 1.4.11); the Modern themes' own --vscode-input-border
+     is about 1.5:1, so the boundary is the input text colour mixed into its background. HC themes use their border. */
+  --ln-input-border: color-mix(in srgb, var(--ln-input-fg) 60%, var(--ln-input-bg));
   --ln-input-fg: var(--vscode-input-foreground, #1f2937);
   --ln-input-placeholder: var(--vscode-input-placeholderForeground, #9ca3af);
 
@@ -48,9 +54,10 @@
   --ln-button-bg: var(--vscode-button-background, #2563eb);
   --ln-button-fg: var(--vscode-button-foreground, #ffffff);
   --ln-button-hover-bg: var(--vscode-button-hoverBackground, #1d4ed8);
-  --ln-button-secondary-bg: var(--vscode-button-secondaryBackground, #f3f4f6);
+  /* HC themes leave the secondary button colours unset but set a white/black foreground: transparent, never a light fallback. */
+  --ln-button-secondary-bg: var(--vscode-button-secondaryBackground, transparent);
   --ln-button-secondary-fg: var(--vscode-button-secondaryForeground, #374151);
-  --ln-button-secondary-hover-bg: var(--vscode-button-secondaryHoverBackground, #e5e7eb);
+  --ln-button-secondary-hover-bg: var(--vscode-button-secondaryHoverBackground, var(--ln-hover-bg));
 
   /* Interactive colors */
   --ln-focus-border: var(--vscode-focusBorder, #2563eb);
@@ -60,7 +67,8 @@
   /* Warning colors */
   --ln-warning-bg: var(--vscode-editorWarning-background, rgba(255, 200, 0, 0.1));
   --ln-warning-border: var(--vscode-editorWarning-border, #cca700);
-  --ln-warning-fg: var(--vscode-editorWarning-foreground, #cca700);
+  /* List text token: readable on light themes; high contrast has none, so it falls back. */
+  --ln-warning-fg: var(--vscode-list-warningForeground, var(--vscode-editorWarning-foreground, #cca700));
 
   /* Analysis colors */
   --ln-analysis-bg: var(--vscode-editorInfo-background, rgba(0, 120, 215, 0.08));
@@ -128,6 +136,7 @@
   --ln-wizard-btn-bg: #2a2a3a;
   --ln-wizard-btn-border: #3a3a4a;
   --ln-wizard-btn-hover-bg: #3a3a4e;
+  --ln-wizard-input-border: #6a6a80;  /* 4.0:1 on the black panel (WCAG 1.4.11) */
   --ln-wizard-hover-bg: rgba(255, 255, 255, 0.06);
   --ln-wizard-link: #60a5fa;
   --ln-wizard-fg-dim: rgba(255, 255, 255, 0.55);
@@ -173,6 +182,7 @@
 /* Dark Theme Overrides */
 body[data-vscode-theme-kind="vscode-dark"] {
   --ln-edge-min-strength: 0.5;
+  --ln-input-border: color-mix(in srgb, var(--ln-input-fg) 50%, var(--ln-input-bg));
   --ln-node-bg: rgba(30, 30, 30, 0.95);
   --ln-node-border: rgba(255, 255, 255, 0.2);
   --ln-node-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
@@ -204,6 +214,7 @@ body[data-vscode-theme-kind="vscode-dark"] {
 
 /* High Contrast Theme Overrides */
 body[data-vscode-theme-kind="vscode-high-contrast"] {
+  --ln-input-border: var(--vscode-input-border, var(--vscode-contrastBorder, #6fc3df));
   --ln-edge-min-strength: 1;
   --ln-edge-min-width-scale: 1;
   --ln-node-bg: var(--vscode-editor-background, #000000);
@@ -237,6 +248,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
 }
 body[data-vscode-theme-kind="vscode-high-contrast-light"] {
+  --ln-input-border: var(--vscode-input-border, var(--vscode-contrastBorder, #0f4a85));
   --ln-edge-min-strength: 1;
   --ln-edge-min-width-scale: 1;
   --ln-node-bg: var(--vscode-editor-background, #ffffff);
@@ -268,6 +280,15 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-minimap-mask-stroke: var(--vscode-contrastBorder);
   --ln-minimap-mask-stroke-width: 2;
   --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
+}
+
+/* Light theme graph contrast (WCAG 2.2 SC 1.4.11): the default node border (15% black) and slate edges
+   sit near 1.4:1 and 2.6:1 on a white canvas. Both stay fixed light-theme colours: a neutral grey node border
+   at 3:1 and the slate edge hue darkened to 3.5:1 on white; the edge density fade still softens dense graphs. */
+body[data-vscode-theme-kind="vscode-light"] {
+  --ln-node-border: #939393;
+  --ln-edge-color-base: #7c8ba1;
+  --ln-edge-color: var(--ln-edge-color-base);
 }
 
 /* #endregion */
@@ -306,6 +327,14 @@ body.vscode-reduce-motion *::after {
   *::after {
     transition: none !important;
   }
+}
+
+/* Keyboard focus ring for every control that has no component-specific ring. The UA default colour is the OS
+   accent (orange on some Macs, 2.3:1 on the light banner); the theme's focusBorder reaches 3:1 in all themes
+   (WCAG 2.4.7, 1.4.11). `:where` keeps this at zero specificity so any component ring below still wins; `.ln-input` keeps its own border ring and `tabindex=-1` containers (menus, dialogs) take focus by script, not by Tab. */
+:where(button, a[href], input:not(.ln-input), select, textarea, summary, [tabindex]:not([tabindex='-1'])):focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: 1px;
 }
 
 /* #endregion */
@@ -803,6 +832,23 @@ body.vscode-reduce-motion *::after {
   margin-right: 6px;
   color: var(--ln-fg-muted);
 }
+/* Engine-assembled CT column chain: collapsed supporting evidence, smaller and muted so the
+   written report leads. The summary keeps the global focus ring. */
+.ln-ai-description-md .ln-ai-column-evidence {
+  font-size: .85em;
+  color: var(--ln-fg-muted);
+  margin: 8px 0;
+}
+.ln-ai-description-md .ln-ai-column-evidence summary {
+  cursor: pointer;
+}
+.ln-ai-description-md .ln-ai-column-evidence th,
+.ln-ai-description-md .ln-ai-column-evidence td {
+  padding: 2px 6px;
+}
+.ln-ai-description-md .ln-ai-column-evidence :is(th, td, code) {
+  font-size: inherit;
+}
 
 body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,
 body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-overlay {
@@ -871,6 +917,19 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-ove
   stroke-width: max(calc(var(--ln-edge-w, 1.2) + var(--ln-lit-edge-width-boost)), var(--ln-lit-edge-min-width)) !important;
 }
 
+/* Keyboard focus on an edge (`edgesFocusable`): @xyflow/react removes the outline, so the edge path itself
+   takes the focus colour and a heavier stroke, over the density fade and selection dimming. */
+.react-flow .react-flow__edge:focus-visible .react-flow__edge-path {
+  stroke: var(--ln-focus-border) !important;
+  stroke-width: max(calc(var(--ln-edge-w, 1.2) + 1.6px), 3px) !important;
+  opacity: 1 !important;
+}
+/* @xyflow/react sets `outline: none` on `.react-flow__edge:focus`; the focus ring comes back for keyboard focus. */
+.react-flow .react-flow__edge:focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: 2px;
+}
+
 .react-flow__minimap {
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--ln-border) 60%, transparent);
@@ -909,12 +968,12 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   background: var(--ln-bg) !important;
 }
 .react-flow__background pattern circle {
-  fill: var(--ln-fg-dim) !important;
+  fill: var(--ln-fg-disabled) !important;
 }
 
 /* Node handle dots */
 .ln-handle {
-  background: var(--ln-fg-dim) !important;
+  background: var(--ln-fg-disabled) !important;
 }
 
 /* Remove-from-view button (advanced bookmark mode) */
@@ -1250,6 +1309,27 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   outline-offset: 2px;
 }
 
+/* Focus ring colour on surfaces where the theme's focusBorder falls below 3:1: the mode banners (a tinted
+   warning/info/AI fill) take the text colour, the always-black wizard and help modal take the wizard link blue. */
+.ln-mode-banner :focus-visible {
+  outline-color: var(--ln-fg);
+}
+.ln-start-screen .ln-panel :focus-visible,
+.ln-modal :focus-visible {
+  outline-color: var(--ln-wizard-link);
+}
+
+/* High contrast: the secondary button has no fill, so it gets its boundary from the contrast border, and
+   every button kind shows hover through the contrast active border (VS Code HC convention). */
+body[data-vscode-theme-kind="vscode-high-contrast"] .ln-btn-secondary,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-btn-secondary {
+  border-color: var(--vscode-contrastBorder);
+}
+body[data-vscode-theme-kind="vscode-high-contrast"] :is(.ln-btn-primary, .ln-btn-secondary, .ln-btn-ghost, .ln-btn-icon):hover:not(:disabled),
+body[data-vscode-theme-kind="vscode-high-contrast-light"] :is(.ln-btn-primary, .ln-btn-secondary, .ln-btn-ghost, .ln-btn-icon):hover:not(:disabled) {
+  border-color: var(--vscode-contrastActiveBorder, var(--vscode-focusBorder));
+}
+
 /* Filter-narrowed dot indicator */
 .ln-filter-dot::after {
   content: '';
@@ -1267,6 +1347,10 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
 .ln-detail-table {
   width: 100%;
   border-collapse: collapse;
+}
+.ln-detail-table th:not(:last-child),
+.ln-detail-table td:not(:last-child) {
+  padding-right: 0.75rem;   /* a truncated cell never runs into the next column */
 }
 .ln-detail-table th {
   text-align: left;
@@ -1424,14 +1508,6 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
 .ln-help-sep-bottom { border-bottom: 1px solid var(--ln-wizard-border); }
 .ln-help-sep-top    { border-top:    1px solid var(--ln-wizard-border); }
 
-/* HelpModal — "NEW" feature badge */
-.ln-help-badge {
-  background: var(--ln-wizard-btn-bg);
-  color: var(--ln-wizard-link, #60a5fa);
-  border: 1px solid var(--ln-wizard-border);
-  letter-spacing: .05em;
-}
-
 /* Panel (card-like container) */
 .ln-panel {
   background: var(--ln-toolbar-bg);
@@ -1512,28 +1588,6 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   background: transparent;
   border: 1px solid var(--ln-border);
 }
-.ln-provider-notice {
-  background: rgba(251, 191, 36, 0.08);
-  border: 1px solid var(--ln-wizard-warning);
-  color: var(--ln-wizard-fg);
-}
-.ln-start-screen .ln-panel .ln-provider-notice > svg,
-.ln-provider-warning-icon {
-  color: var(--ln-wizard-warning);
-}
-.ln-provider-warning-badge {
-  color: var(--ln-wizard-warning);
-  border: 1px solid var(--ln-wizard-warning);
-  border-radius: 3px;
-  padding: 0 5px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
-  white-space: nowrap;
-}
-.ln-btn-compact {
-  padding: 0.25rem 0.75rem;
-}
 .ln-status-body {
   color: var(--ln-fg-muted);
   opacity: 0.9;
@@ -1608,7 +1662,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
 .ln-start-screen .ln-panel .ln-input {
   background: var(--ln-wizard-input-bg);
   color: var(--ln-wizard-fg);
-  border-color: var(--ln-wizard-btn-border);
+  border-color: var(--ln-wizard-input-border);
 }
 .ln-start-screen .ln-panel .ln-input::placeholder {
   color: var(--ln-wizard-fg-dim);

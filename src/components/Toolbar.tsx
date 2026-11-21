@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { FloatingFocusManager, FloatingPortal, useInteractions, useListNavigation } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
@@ -17,25 +17,18 @@ import type { FilterProfile } from '../engine/projectStore';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 
 interface ToolbarProps {
-  /** The set of object types (table, view, etc.) currently active in the filter. */
   types: Set<ObjectType>;
-  /** Callback to toggle a specific object type in the filter. */
   onToggleType: (type: ObjectType) => void;
   /** Whether nodes with no edges are currently hidden. */
   hideIsolated: boolean;
-  /** Callback to toggle the visibility of isolated nodes. */
   onToggleIsolated: () => void;
   /** Set of schemas that are currently highlighted or "focused" in the graph. */
   focusSchemas: Set<string>;
-  /** Callback to toggle focus for a specific schema. */
   onToggleFocusSchema: (schema: string) => void;
-  /** The set of schemas currently selected for rendering. */
   selectedSchemas?: Set<string>;
   /** Callback to toggle visibility for a specific schema. */
   onToggleSchema?: (schema: string) => void;
-  /** Callback to select all available schemas. */
   onSelectAllSchemas?: (schemas: string[]) => void;
-  /** Callback to deselect all schemas. */
   onSelectNoneSchemas?: (schemas: string[]) => void;
   /** List of all unique schema names present in the current model. */
   availableSchemas?: string[];
@@ -45,46 +38,32 @@ interface ToolbarProps {
   onRebuild?: () => void;
   /** Whether a rebuild (re-extract or config-triggered) is currently in flight. */
   isRebuilding?: boolean;
-  /** Callback to return to the project selection screen. */
   onBack: () => void;
-  /** Callback to open the DDL/SQL source viewer for the selected node. */
   onOpenDdlViewer?: () => void;
-  /** Callback to export the current graph state as a Draw.io XML file. */
   onExportDrawio?: () => void;
   /** Whether a node is currently selected/highlighted in the canvas. */
   hasHighlightedNode?: boolean;
-  /** Callback to execute a search and highlight matching nodes. */
   onExecuteSearch?: (name: string, schema?: string) => void;
-  /** Callback to initiate a column-level or table-level lineage trace. */
   onStartTrace?: (nodeId: string) => void;
   /**
-   * IDs of nodes that are in the working set but collapsed inside a schema cluster.
-   * Passed through to {@link SearchWithAutocomplete} for three-state search partitioning.
+   * Nodes in the working set but collapsed inside a schema cluster; {@link SearchWithAutocomplete}
+   * uses them for three-state search partitioning.
    */
   collapsedSchemaNodeIds?: Set<string>;
-  /** Callback to toggle the full-text SQL search sidebar. */
   onToggleDetailSearch?: () => void;
-  /** Whether the detail search sidebar is currently visible. */
   isDetailSearchOpen?: boolean;
   /** Whether an analysis mode (islands, hubs, etc.) is currently active. */
   isAnalysisActive?: boolean;
-  /** The specific type of analysis currently being performed. */
   analysisType?: AnalysisType | null;
-  /** Callback to switch to a specific analysis mode. */
   onOpenAnalysis?: (type: AnalysisType) => void;
   /** Whether external references (cross-DB, files) are shown. */
   showExternalRefs?: boolean;
-  /** The specific subtypes of external references to display. */
   externalRefTypes?: Set<'file' | 'db'>;
-  /** Callback to toggle the global external references filter. */
   onToggleExternalRefs?: () => void;
-  /** Callback to toggle a specific external reference subtype. */
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
   /** List of glob patterns used to exclude objects by name. */
   exclusionPatterns?: string[];
-  /** Callback to add a new name-based exclusion pattern. */
   onAddExclusionPattern?: (pattern: string) => void;
-  /** Callback to remove an existing exclusion pattern. */
   onRemoveExclusionPattern?: (pattern: string) => void;
   /** List of saved filter profiles (bookmarks) for the current project. */
   filterProfiles?: FilterProfile[];
@@ -94,16 +73,17 @@ interface ToolbarProps {
   activeViewId?: string | null;
   /** Whether the current filter state differs from the applied saved view. */
   isViewModified?: boolean;
-  /** Callback to save the current filter state as a new view. */
   onSaveView?: (name: string) => void;
-  /** Callback to apply a saved filter profile. */
   onApplyView?: (profile: FilterProfile) => void;
-  /** Callback to delete a saved filter profile. */
   onDeleteView?: (profileId: string) => void;
-  /** Callback to update an existing saved filter profile. */
   onUpdateView?: (profileId: string) => void;
   /** Whether the filters have been modified since the last project load/save. */
   isFilterDirty?: boolean;
+  /**
+   * Increments when the extension asks to go back; runs the Back button action, with its
+   * unsaved-changes bar.
+   */
+  backRequest?: number;
   /** Whether UI interactions that would change the graph structure are disabled. */
   isModeLocked?: boolean;
   /** Whether a fresh trace/path/analysis mode can be started from the current view. */
@@ -114,7 +94,6 @@ interface ToolbarProps {
   isOverview?: boolean;
   /** Explicit Object View / Schema View state. */
   graphMode?: GraphMode;
-  /** Callback to switch between Object View and Schema View. */
   onGraphModeChange?: (mode: GraphMode) => void;
   /** Whether overview currently renders schema clusters and object nodes. */
   isExpandedSchemaViewActive?: boolean;
@@ -124,7 +103,6 @@ interface ToolbarProps {
   showExpandedSchemaClusters?: boolean;
   /** Callback to hide/show collapsed schema clusters without changing filters. */
   onToggleExpandedSchemaClusters?: () => void;
-  /** Number of schemas currently expanded in expanded schema view. */
   expandedSchemaCount?: number;
   /** Callback to expand all schemas at once and enter Expanded Schema View. */
   onExpandAllSchemas?: () => void;
@@ -141,13 +119,13 @@ interface ToolbarProps {
   } | null;
   /** Number of nodes React Flow is actually rendering (the perf-relevant count). */
   renderedNodeCount: number;
-  /** Object count above which newly loaded graphs start in Schema View (`dataLineageViz.overview.threshold`). */
+  /** Object count above which a newly loaded graph starts in Schema View (`overview.threshold`). */
   overviewThreshold: number;
-  /** Rendered-node ceiling above which the graph is replaced by a limit warning (`dataLineageViz.renderLimit`). */
+  /** Rendered-node ceiling above which a limit warning replaces the graph (`renderLimit`). */
   renderLimit: number;
   /**
-   * Set once on initial load/reset: `true` when the loaded model is below the overview threshold.
-   * Disables the Schema View button until the user opts in via settings; never re-derived from filter changes.
+   * Set on initial load/reset: `true` when the model is below the overview threshold. Disables the
+   * Schema View button until the user opts in via settings; never re-derived from filter changes.
    */
   schemaViewSoftDisabled?: boolean;
 }
@@ -189,9 +167,7 @@ function expandedSchemaStatusText(expandedSchemaCount: number): string {
 }
 
 
-/**
- * Provides graph search, filtering, analysis, navigation, and keyboard controls.
- */
+/** Graph search, filtering, analysis, navigation and keyboard controls. */
 export const Toolbar = memo(function Toolbar({
   types,
   onToggleType,
@@ -235,6 +211,7 @@ export const Toolbar = memo(function Toolbar({
   onDeleteView,
   onUpdateView,
   isFilterDirty = false,
+  backRequest = 0,
   isModeLocked = false,
   canStartNewScopedMode = !isModeLocked,
   canSwitchGraphMode = !isModeLocked,
@@ -258,6 +235,13 @@ export const Toolbar = memo(function Toolbar({
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [confirmingBack, setConfirmingBack] = useState(false);
   const backButtonRef = useRef<HTMLButtonElement>(null);
+  const requestBack = () => (isFilterDirty ? setConfirmingBack(true) : onBack());
+  const handledBackRequest = useRef(backRequest);
+  useEffect(() => {
+    if (backRequest === handledBackRequest.current) return;
+    handledBackRequest.current = backRequest;
+    requestBack();
+  });
   const analysis = useDropdown();
   const analysisItemsRef = useRef<Array<HTMLElement | null>>([]);
   const [analysisActiveIndex, setAnalysisActiveIndex] = useState<number | null>(null);
@@ -319,7 +303,7 @@ export const Toolbar = memo(function Toolbar({
     <>
       <div className="ln-toolbar flex items-center gap-2 px-4 py-2.5">
         <Tooltip content="Load New Project">
-          <Button ref={backButtonRef} onClick={() => isFilterDirty ? setConfirmingBack(true) : onBack()} variant="icon" aria-label="Load New Project">
+          <Button ref={backButtonRef} onClick={requestBack} variant="icon" aria-label="Load New Project">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />
             </svg>
@@ -562,8 +546,8 @@ export const Toolbar = memo(function Toolbar({
           </>
         )}
 
-        {/* Metrics — pushed to right. Shows the rendered-node count gauged toward the render limit,
-            with a tick at the initial Schema View threshold. */}
+        {/* Metrics, pushed right: rendered-node count against the render limit, with a tick at the
+            initial Schema View threshold. */}
         {metrics && (
           <>
             <div className="ml-auto w-px h-6 shrink-0 ln-divider" />

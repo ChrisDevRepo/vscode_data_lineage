@@ -10,7 +10,7 @@ import { SIMPLE_NODE_ZOOM_THRESHOLD } from '../engine/nodeDecoration';
 import type { CustomNodeData, TraceNeighborOption, TraceNodeControls } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
 
-/** Whether the canvas zoom is low enough that a node should render as a plain, undecorated box. */
+/** Whether the canvas zoom is low enough that a node should render as a plain, undecorated box. @internal */
 export function isZoomBelowSimpleThreshold(zoom: number): boolean {
   return zoom < SIMPLE_NODE_ZOOM_THRESHOLD;
 }
@@ -148,7 +148,10 @@ export function NodeRemoveButton({ id, onRemove }: { id: string; onRemove?: (nod
   );
 }
 
-/** Render the four add/prune neighbor buttons for a node's in/out trace sides; nothing without trace controls. */
+/**
+ * Renders the four add/prune neighbor buttons for a node's in/out trace sides; none without trace
+ * controls.
+ */
 export function TraceControlsRail({
   traceControls,
   onAction,
@@ -257,7 +260,5 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   );
 }
 
-/**
- * Renders an object or schema node inside the React Flow canvas.
- */
+/** Renders an object or schema node inside the React Flow canvas. */
 export const CustomNode = memo(CustomNodeComponent);

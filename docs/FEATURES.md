@@ -8,29 +8,25 @@ Capabilities of Data Lineage Viz, with the VS Code settings that control them. F
 
 Open the Command Palette and filter for **Data Lineage**. Commands cover data
 loading and refresh, object search, settings, customization-file scaffolding,
-AI graph results, and diagnostics. The current command names and descriptions
-are maintained in `package.json`; the activity-bar view exposes the common
+AI graph results, and diagnostics. The activity-bar view exposes the common
 loading and settings actions.
 
 ---
 
 ## Database connections
 
-A live database is read through the provider set in `dataLineageViz.database.connectionProvider`:
+A live database is read through connections saved by Data Lineage. They use SQL login or Microsoft Entra ID; Windows authentication is not supported. Entra sign-in uses VS Code's Microsoft account picker. Passwords, certificate trust and the other connection details are in [`SECURITY.md`](../SECURITY.md#connections).
 
-- **`mssqlExtension`** (default) — uses a profile saved in the MSSQL extension. The wizard warns about its retiring connection API and offers **Use Built-in Connection**.
-- **`builtIn`** — uses connections saved by Data Lineage, with SQL login or Microsoft Entra ID. Passwords stay in VS Code secret storage. Entra sign-in uses VS Code's Microsoft account picker and supports MFA; the selected account and tenant are saved with the connection. Windows authentication is not supported.
+Manage connections through **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password** in the Command Palette. Enter the database name directly; a database-scoped login may not be able to list databases.
 
-Manage built-in connections through **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password** in the Command Palette. Enter the database name directly; a database-scoped login may not be able to list databases. Saved projects using the MSSQL extension show an **! Old connection** badge with migration advice.
-
-Import queries are documented in [`DMV_QUERIES.md`](DMV_QUERIES.md). For connection errors, see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
+Import runs read-only metadata queries, documented in [`DMV_QUERIES.md`](DMV_QUERIES.md). For connection errors and projects saved with the retired SQL Server (mssql) extension connection, see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
 
 ---
 
 ## Keyboard shortcuts
 
-All shortcuts are local to the graph webview — the extension registers no VS Code
-global keybindings, so none of these can conflict with your editor bindings.
+All shortcuts are local to the graph webview. The extension registers no VS Code
+global keybindings.
 
 | Key | Action |
 |-----|--------|
@@ -43,55 +39,28 @@ global keybindings, so none of these can conflict with your editor bindings.
 | <kbd>Esc</kbd> | Close active input, then exit the current mode |
 | <kbd>[</kbd> / <kbd>]</kbd> | Previous / next AI report section, while the report pane has focus |
 
-Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text,
-and never fire with a Ctrl, Cmd, or Alt modifier. <kbd>Esc</kbd> cascades: it closes
-the active input, dropdown, or help panel first, then exits one graph mode per press
-(AI preview → bookmark → analysis → trace). Press <kbd>?</kbd> in the webview for the
-same list in the app.
-
-Menus and popups follow the standard keyboard pattern:
-
-- **Right-click menus** on a node or schema cluster, and the **Graph Analysis** menu, take
-  focus when they open. <kbd>↑</kbd>/<kbd>↓</kbd> and <kbd>Home</kbd>/<kbd>End</kbd> move
-  between items, <kbd>Enter</kbd> runs one, <kbd>Esc</kbd> closes.
-- **Toolbar popups** (Schema, Type and External refs filters, Bookmarks, Exclusion rules) move
-  focus into the popup and return it to their button on <kbd>Esc</kbd>. A whole filter row is
-  clickable, not only its checkbox.
-- **Help** is a modal dialog: focus stays inside while it is open and the first <kbd>Esc</kbd>
-  closes it.
-- An inline delete or leave confirmation moves focus to **Cancel**, so <kbd>Enter</kbd> never
-  confirms a destructive action by accident.
+Bare-key shortcuts are ignored while typing in an input and with a Ctrl, Cmd or
+Alt modifier. <kbd>Esc</kbd> closes the active input, dropdown or help panel
+first, then exits one graph mode per press (AI preview, bookmark, analysis,
+trace).
 
 ---
 
 ## Schema View
 
-When a loaded graph exceeds a configurable node threshold, the extension starts in **Schema View** - replacing individual object nodes with schema cluster nodes that show object counts and type distribution. At or below the threshold it starts in Object View. After that initial load decision, the toolbar **Schema View** toggle button switches between the two views; filters and exclusions do not re-check the threshold or auto-switch the view. `dataLineageViz.renderLimit` remains the only post-load safety gate for rejecting a selected visual surface that would mount too many React Flow nodes.
+When a loaded graph has more objects than `dataLineageViz.overview.threshold` (capped at `renderLimit`), the extension starts in **Schema View**: one cluster node per schema, with object counts and type distribution. Otherwise it starts in Object View. After that, the toolbar **Schema View** toggle switches between the two views, except while a trace, analysis, bookmark or AI preview is active or when the model has no more objects than the threshold, where it is disabled; filters and exclusions do not re-check the threshold.
 
 - Double-clicking a schema cluster expands that schema as object nodes. By default (`expandOnly`) the clicked schema becomes the only expanded one; set `dataLineageViz.overview.schemaDoubleClickBehavior` to `expand` to add it alongside schemas already expanded.
-- Selecting a schema cluster shows an on-node toolbar to **Expand** it or **Expand Only**. **Expand** keeps other expanded schemas open; **Expand Only** expands this schema and collapses the others.
-- Quick Jump and Detail Search separate results into **Visible**, **In Schema Cluster**, and **Not in Current Filter**. Selecting an object in a schema cluster expands that schema without changing the active schema filter.
-- Multiple schemas can be expanded at a time while the projected rendered node count stays within `dataLineageViz.renderLimit`.
-- **Refresh View** resets the schema, type, and focus schema filters (exclusion rules and the Hide Isolated toggle persist), collapses expanded schemas, and re-applies the initial Object View / Schema View decision.
-- In Expanded Schema View, schema clusters render as a filled colored tile (vs the lighter object cards) and as ringed blocks on the minimap, so the two node kinds read apart at a glance.
-- Configure: `dataLineageViz.overview.enabled`,
-  `dataLineageViz.overview.threshold`,
-  `dataLineageViz.overview.schemaDoubleClickBehavior`, and
-  `dataLineageViz.renderLimit`.
+- Selecting a schema cluster shows **Expand** (keeps other expanded schemas open) and **Expand Only** (collapses the others).
+- Quick Jump and Detail Search group results as **Visible**, **In Schema Cluster**, and **Not in Current Filter**. Selecting an object in a schema cluster expands that schema.
+- **Refresh View** resets the schema, type, external-reference, and focus schema filters, collapses expanded schemas, and re-applies the initial Object View / Schema View decision. Exclusion rules and the Hide Isolated toggle persist.
+- Settings: `dataLineageViz.overview.enabled`, `dataLineageViz.overview.threshold`, `dataLineageViz.overview.schemaDoubleClickBehavior`.
 
 ### Rendering limits
 
-The extension separates the **webview working graph** (`maxNodes`) from **React Flow rendering** (`renderLimit`). `@lineage` queries the complete loaded model even when rendering is capped. A selection over `maxNodes` is refused and not loaded at all — neither the graph nor `@lineage` sees it.
+`dataLineageViz.maxNodes` limits the objects (including virtual external-reference nodes) loaded. A selection above it is refused: nothing is loaded, the prior view stays, and an error names the count, the limit and the setting.
 
-| Setting | Controls |
-|---------|----------|
-| `dataLineageViz.maxNodes` | Objects (including virtual external-reference nodes) admitted to the webview working graph |
-| `dataLineageViz.renderLimit` | React Flow nodes the GUI will lay out and render |
-| `dataLineageViz.overview.threshold` | Whether a new load starts in Schema View or Object View; a threshold above `renderLimit` is treated as `renderLimit` |
-
-A selection whose object count exceeds `maxNodes` is refused outright — nothing is loaded or rendered, the prior view stays, and an error names the count, the limit, and the setting. It is never silently truncated. When a selection within `maxNodes` would still render more than `renderLimit` React Flow nodes, the graph shows a *Render limit reached* notice instead of drawing it. The notice says to reduce filter scope or adjust VS Code settings, and it has no button. A trace, path, analysis, or AI preview is counted by its own size and shows the same notice. Schema View and Expanded Schema View count each collapsed schema as one node. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
-
-Lines scale with the graph: up to about 100 rendered edges they keep full color and width; above that they fade and thin gradually, reaching their floor at 2,000 edges, so a dense graph reads as density rather than solid ink. The fade is stronger in dark themes, where the same line color stands out more, and off in high-contrast themes. Highlighted and route lines keep full emphasis.
+`dataLineageViz.renderLimit` limits the nodes drawn at once. When a selection would draw more, the graph shows a *Render limit reached* notice instead. A trace, path, analysis or AI preview counts only its own nodes; in Schema View each collapsed schema counts as one. Search, DDL and `@lineage` use the whole loaded model.
 
 ---
 
@@ -106,54 +75,36 @@ Lines scale with the graph: up to about 100 rendered edges they keep full color 
 
 ### Bookmarks
 
-Save the current filter state as a named bookmark. Bookmarks retain schema, object-type, isolation, external-reference, focus, and exclusion choices; trace, analysis, path, and AI views can also be saved as bounded bookmarks. Restore them from the toolbar dropdown. Bookmarks are saved per project.
+Save the current filter state as a named bookmark. Bookmarks keep schema, object-type, isolation, external-reference, focus, and exclusion choices; trace, analysis, and AI views can also be saved. Restore them from the toolbar dropdown. Bookmarks are saved per project.
 
-#### AI bookmarks keep the run's memory
-
-Saving a bookmark from an AI-authored view also stores the exploration behind it: the question the
-run started from, the start object, every per-object finding and the decision that produced it, the
-objects the run pruned, the questions it left open, and a content hash of each in-scope object's DDL
-at save time.
-
-With that bookmark applied, `@lineage` can recall the run instead of repeating it — what the run
-found about a named object, which objects it pruned and why, and which questions it left open. Each
-recalled finding describes the object as it was at run time, so an object whose DDL has changed
-since is reported as stale and the assistant confirms it against the current definition before
-answering.
-
-The record lives with the bookmark: deleting the bookmark or its project deletes it, updating the
-bookmark keeps it (only a save from a newer AI view replaces it), and a bookmark saved by an
-earlier build simply has no run to recall. Each exploration approved in a chat keeps its own run, so
-a bookmark recalls the exploration it was saved from even after the same chat goes on to approve
-another; a damaged run record is treated the same as none and the recall falls back to repeating the
-work instead of answering from bad data.
+A bookmark saved from an AI view also keeps that run's findings. With that bookmark applied, `@lineage` can recall them instead of repeating the work. Findings on objects whose DDL changed since are flagged as stale. Older bookmarks may have no saved run. Deleting a bookmark or its project deletes its run record.
 
 ---
 
 ## Exclusion rules
 
-Hide nodes from the graph using pattern-based rules. Rules apply in real time — no data reload needed.
+Hide nodes from the graph using pattern-based rules. Rules apply without reloading the data.
 
 To hide objects on every load, list the same patterns in `dataLineageViz.excludePatterns`. That setting is applied when a source is opened and takes effect after the data source is reloaded.
 
 ### Three ways to add a rule
 
 1. Open the exclusion dropdown (ban icon in toolbar) and type a pattern.
-2. Right-click any node and select **Exclude from view**.
+2. Right-click any object node and select **Exclude from view**.
 3. Select a node and press <kbd>Delete</kbd>.
 
 ### Pattern syntax
 
-Patterns are case-insensitive JavaScript regular expressions matched against both `schema.name` and the object's full name. `%` is translated to `.*` before the expression is compiled.
+Patterns are case-insensitive regular expressions matched against both `schema.name` and the object's full name. `%` means "anything".
 
 | Pattern | Matches |
 |---------|---------|
 | `%tmp%` | Any name containing "tmp" |
-| `dbo.%` | All objects in the dbo schema |
+| `dbo.%` | `dbo`, any character, then anything; not anchored, so `mydbo.x` also matches. Use `^dbo\.` for the schema only |
 | `%_stg$` | Any name ending in "_stg" |
 | `^dbo\.tmp_` | Regex: starts with `dbo.tmp_` |
 
-Because the input remains a regular expression, escape characters such as `.` when you need a literal match and use `^` / `$` to anchor an exact name. Exclusion rules are saved per bookmark.
+Escape `.` for a literal dot and use `^` / `$` to anchor a name. Exclusion rules are saved per bookmark.
 
 ---
 
@@ -163,54 +114,50 @@ Because the input remains a regular expression, escape characters such as `.` wh
 
 Right-click a node and select **Trace Levels** to explore upstream (inputs) or downstream (outputs) dependencies. The graph filters to the discovered subgraph.
 
-- Adjust trace depth with the level controls.
+- A configuration bar sets the Upstream and Downstream levels (0–99, or **All**) and shows the object count the choice would produce, marked when it is over `dataLineageViz.renderLimit`. **Apply** runs the trace.
 - Default depth is configurable: `dataLineageViz.trace.defaultUpstreamLevels`, `dataLineageViz.trace.defaultDownstreamLevels`.
 - Press <kbd>Esc</kbd> to exit trace mode.
 
 ### Edit a trace
 
-After running **Trace Levels**, refine the result directly on the graph without re-running it:
+After running **Trace Levels**, refine the result on the graph without re-running it:
 
-- **Add a neighbour** — the **+** control on a node pulls in one of its direct upstream/downstream neighbours that the trace did not already include.
-- **Prune a node** — the **−** control drops a node from the current trace scope.
-- **Safety gating** — the trace origin is an anchor and cannot be pruned. A pruned node leaves together with the branch that hangs only on it, so the trace always stays connected.
-- Edits layer on top of the original trace and never change your filters; re-run **Trace Levels** or press <kbd>Esc</kbd> to discard them.
+- **Add a neighbour** — the **+** control on a node adds one of its direct upstream/downstream neighbours that the trace did not include.
+- **Prune** — the **−** control on a node removes one of its neighbours; right-click **Remove from trace** removes the node itself. Objects that are reachable only through the removed node leave with it. The trace origin cannot be removed.
+- The trace navigator footer lists the edit counts and a **Reset** button that restores the starting scope. <kbd>Esc</kbd> exits the trace.
 
-Editing applies to Trace Levels results — a computed shortest path is fixed.
+Editing applies to Trace Levels results, not to a computed shortest path.
 
 ### Trace navigator
 
-A trace opens with the whole graph visible and nothing dimmed; the navigator starts folded to a button at the top left, beside the legend. Opened, it lists the trace as a tree in a compact top-left card that is only as tall as its rows, and the graph is refitted beside it:
+While a trace or path is shown, the navigator panel (top left) lists it as a tree of **Upstream** and **Downstream** hop levels, plus a **Connected** group for objects neither direction reaches. Its close button collapses it to a small button that reopens it. It is not shown while Detail Search or an analysis is open.
 
-- **Starting point** — the panel title (L0); click it to clear the selection and fit the whole trace. Its tooltip lists the row gestures.
-- **Upstream / Downstream** — fixed sections of hop levels (L1, L2, …); each object's type symbol carries its schema color, as on the canvas and in the legend. Deeper levels start collapsed on large traces; **Expand all** / **Collapse all** in the title bar open or close every level. The **+** on a section loads one more level on that side; its tooltip shows how many nodes it adds.
-- **Click a node** — lights only the route between the starting point and that node — every path connecting them, so both branches of a diamond — animates just those edges and fits the view to the route.
-- **Check nodes** — each checkbox, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+click on a row, adds that node's route: the graph shows only the routes to the checked nodes, on any level and either side, with every route edge animated and the view fitted to all of them. Rows hidden from the graph stay listed, dimmed, and can be checked to add their route. **Show all** restores the trace.
-- **Hide** — the panel's close button folds it back to the button beside the legend; click it to reopen. The choice holds for later traces in the session.
-- **Trim** — right-click a node and choose **Remove from trace** to remove it and the branch that hangs only on it. **Reset** beside the edit summary restores the starting scope.
-- **Find** — the magnifier in the title bar, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>F</kbd> inside the panel, opens it; it jumps between matches and opens collapsed levels, and <kbd>Esc</kbd> closes it. Objects reached from neither side are listed under **Connected**.
+- Click a row to light up the routes from the starting point to that node.
+- Check rows (or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+click) to show only the routes to the checked nodes. **Show all** restores the trace.
+- **+** on a section loads one more level (Trace Levels results only); **Expand all** / **Collapse all** open or close every level.
+- <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>F</kbd> in the panel finds objects.
 
 ### Find path
 
-Right-click a node, select **Find Path**, then click a second node. The extension highlights the deterministic shortest dependency path between them.
+Right-click a node and select **Find Path**, then type the name of a second node in the bar and pick it. The graph shows the shortest dependency path between them, trying the first node to the second and then the reverse. The bar shows "No connection found" when neither direction has a path.
 
 ---
 
 ## Detail search
 
-Full-text search inside SQL bodies (procedures, views, functions) and column definitions. Toolbar search icon. This is distinct from **Quick Jump** (<kbd>/</kbd>), which matches object names only, and from Command Palette **Data Lineage: Search Objects**, which opens a VS Code Quick Pick over loaded object names.
+Case-insensitive search inside SQL bodies (procedures, views) and column names (tables, external tables). Toolbar search icon. This is distinct from **Quick Jump** (<kbd>/</kbd>), which matches object names only, and from Command Palette **Data Lineage: Search Objects**, which opens a VS Code Quick Pick over loaded object names.
 
 ---
 
 ## Node details
 
-Right-click a node and select **Show Details** to open the detail bar at the bottom.
+Right-click a node and select **Show Details** to open an info bar for it.
 
 - **In / Out** — count of connected input / output nodes (hover for the full list).
-- **Unresolved** — references not found in the data source (dynamic SQL, cross-server references).
-- **Excluded** — nodes hidden by your exclusion patterns.
+- **Unresolved** — references the parser found that match no object in the loaded catalog.
+- **Excluded** — objects it references that your exclusion patterns removed.
 
-For tables, views, external tables, and TVFs, the panel shows available column metadata: name, data type, nullability, primary key, and source-provided constraints. Views and TVFs include a **Columns / DDL** toggle. Live-database constraint rows are not currently attached to the detail model; see [`DMV_QUERIES.md`](DMV_QUERIES.md).
+**Show Table Details** (tables and external tables) and **Show DDL** (other objects) open a detail panel beside the graph. It shows column metadata (name, data type, nullability, primary key) and, for tables from a `.dacpac`, foreign keys. Views and functions that have both columns and a definition get **DDL** and **Columns** tabs.
 
 ---
 
@@ -218,11 +165,8 @@ For tables, views, external tables, and TVFs, the panel shows available column m
 
 The analysis dropdown finds disconnected groups, hubs, unconnected objects,
 long dependency paths, cycles, and external references. Select a result group
-to focus the graph on that subset.
-
-The structural algorithms use
-[graphology](https://graphology.github.io/). Their thresholds are configurable
-under **Data Lineage** settings.
+to focus the graph on that subset. Thresholds are set under **Data Lineage**
+settings ([Layout, trace and analysis](#layout-trace-and-analysis)).
 
 ---
 
@@ -236,196 +180,95 @@ Export the current graph to a `.drawio` file with coloured nodes, directed edges
 
 > Database import only. See [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md) for operational details and limitations.
 
-On-demand column statistics via a separate database connection. Profiling runs only on explicit user click — no automatic queries.
+On-demand column statistics for one table, over a separate database connection. Profiling runs only when you request it. It issues read-only row-count and aggregate `SELECT` queries and needs `SELECT` permission on the profiled tables.
 
-### Modes
+- **Quick** — row count, null count and distinct count per column, plus completeness and uniqueness percentages.
+- **Standard** — adds min/max, average and standard deviation for numbers, min/max for dates, string length and empty-string counts, and zero counts.
 
-- **Quick** — row count, null count and distinct count per column, plus the completeness and uniqueness percentages derived from them.
-- **Standard** — adds min/max, AVG and STDEV for numeric columns, min/max for dates, string length and empty-string counts, and a zero count on nullable numeric columns.
+Standard mode can be disabled with `dataLineageViz.tableStatistics.standardModeEnabled`.
 
-Standard mode can be disabled via `dataLineageViz.tableStatistics.standardModeEnabled`.
-
-### Safety for large databases
-
-- Tables above a configurable row threshold are **sampled** instead of fully scanned.
-- **External tables** are skipped by default (they query remote data sources like S3, Blob, or other databases).
-- Each query has a configurable timeout.
-- Profiling lifecycle events are logged to the Output channel (`View → Output → Data Lineage Viz`) at INFO level; the bounded SQL preview is logged at DEBUG level.
-
-Full setting reference and SQL examples in [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
+Tables above `tableStatistics.sampleThreshold` rows are sampled instead of fully scanned; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md#sampling). External tables are skipped by default, because they query remote data sources. Each query has a timeout, and columns above `tableStatistics.maxColumns` are skipped.
 
 ---
 
 ## `@lineage` AI
 
-Type `@lineage` in VS Code Chat to explore your loaded lineage graph in natural
-language. VS Code supplies the model selected for the request; GitHub Copilot
-is one supported language-model provider. The assistant is instructed and
-mechanically constrained to the loaded model.
+`@lineage` is an optional VS Code Chat participant. It uses the model selected in VS Code for the chat request, reads the loaded model and the SQL definitions in it, and records column mappings for the question asked. It does not connect to the database. The answers are the model's reading of that material: best-effort and not complete.
 
-### Core features vs AI-enhanced capabilities
+How to use it:
 
-The extension provides **object-level lineage** as its core feature — tracing dependencies between tables, views, procedures, and functions. This works deterministically from the loaded data model.
+- Load a graph, then type `@lineage` in VS Code Chat and ask a question, for example *"what does spProcA do?"* or *"what reads from the Employee table?"*. The answer appears in chat.
+- `/search` looks up objects by name. `/trace` starts a deeper analysis of an object or column.
+- **Show graph preview** opens a temporary **AI Preview** in the graph view. **Save as Bookmark** keeps it; **Data Lineage: Show AI Trace in Graph** reopens the session's current AI view. When a run records column findings, the preview offers an **Objects / Detail** switch that shows traced columns and their connections.
+- Deep analysis (`/trace`, the **Start deeper hop-by-hop analysis** follow-up, or a question over the discovery budget) shows a plan first. A hop is one procedure, view or function read in one step. The plan lists depth, scope (estimated hops and nodes), schemas, objects in scope, exclusions, the tracing type (object or column trace) and the analysis type (business, technical or both, which sets the sections of the written result). Choose **Approve & Proceed**, **Change scope** or **Cancel**, or reply in words. After approval, chat shows a hop counter and a short finding per hop.
+- The plan shows upstream and downstream depth separately; `0` turns a direction off. A level count you give is the limit; if you give none, the assistant picks a starting depth. The trace-level settings do not affect AI depth.
+- A deep analysis must fit `dataLineageViz.ai.maxRounds` and, for column traces, `dataLineageViz.ai.maxTraceColumns`. Otherwise chat names the setting so you can narrow the scope or raise the limit. Discovery answers are limited by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; larger requests are offered as a deep analysis. See the [settings reference](#settings-reference).
+- The assistant sees the trace, analysis or bookmark on screen. Type `#lineageView` in the chat input to attach it explicitly, then ask *"explain this"*.
+- **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml), which controls the summary, badges and notes. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
-The `@lineage` assistant goes further by analysing available DDL, column
-definitions, and constraints. The extension owns scope, approval gates, route
-validation, retries, and termination; the selected model does not own process
-state.
+Requirements: a VS Code Language Model Chat provider, such as
+[GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
+or a compatible BYOK provider. Your question, recent `@lineage` chat and the SQL or metadata the tools read are passed to that model, including for a local DACPAC.
 
-VS Code supplies exactly the model the user selected for that chat request,
-including a native or BYOK model exposed by the host. The extension does not
-select, replace, or fall back to another model.
-
-The user-visible flow has the following paths:
-
-#### Discovery (chat answers, no graph)
-
-The default state. The AI uses snapshot catalog tools to inspect loaded scope, DDL, columns, neighbours, and graph patterns, then answers in chat.
-
-- Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
-- `/search` pins this path deterministically, skipping the entry-detection model call. `/trace` pins the deep-analysis path below.
-- Discovery scope is bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` (further capped at one eighth of the selected model's input window); over-budget requests are redirected to the approval-gated deep-analysis path.
-- Before approval, deep analysis must fit `dataLineageViz.ai.maxRounds` and, for column traces, `dataLineageViz.ai.maxTraceColumns`. If it exceeds either limit, chat names the setting and asks you to narrow the scope or raise the limit. See the [settings reference](#settings-reference) for how rounds and columns are counted.
-- An explicit graph/render request is answered by discovery like any other question; the picture itself is the separate bounded preview below, reached by follow-up, not deep analysis.
-
-#### Bounded graph preview
-
-Triggered by the **Show graph preview** follow-up. The assistant resolves a
-finite scope and opens an **AI Preview** in
-the side panel. The preview is transient; use **Save as Bookmark** to retain it.
-**Data Lineage: Show AI Trace in Graph** (Command Palette) re-opens the session's
-current AI-authored view in the graph panel.
-
-#### Detail view in an AI preview
-
-When a run records column findings, the preview offers an **Objects / Detail** switch.
-Detail shows traced columns and their connections, with procedures and scalar
-functions as transformation hubs. Objects without traced columns stay visible as
-plain boxes, joined by dashed object-level edges. Hover a column to highlight its thread; hover
-a transform chip to read its explanation. AI badges and notes carry over from
-Objects view, and layout uses the same direction and spacing settings.
-
-These mappings are best-effort AI findings. Verify them against the database for
-compliance-critical claims.
-
-#### Deep analysis
-
-Triggered by `/trace`, a named-column trace, the **Start deeper hop-by-hop
-analysis** follow-up, or a discovery request that exceeds the configured
-budget. It begins only after the user approves the consent gate.
-
-- The proposal summarizes depth, scope, tracing mode, columns, and exclusions. **Show full plan** lists the complete plan and every in-scope object.
-- Choose **Approve & Proceed**, **Change scope**, or **Cancel**, or reply in plain language. **Change scope** returns you to chat to revise the proposal.
-- The extension walks the approved scope one object at a time and validates routes against the loaded catalog. Chat shows a hop counter and a short finding as each hop completes.
-
-### Mission types
-
-When you ask `@lineage` a question, the assistant labels the mission as `business`, `technical`, or `both`. The label drives which capture template fires per hop and which subsection appears in the final document. See [`AI_PROMPTS.md`](AI_PROMPTS.md) for how this maps to YAML keys.
-
-### Depth handling
-
-The approval gate shows upstream and downstream depths separately; zero disables
-that direction. An explicit level count is a hard boundary. If you leave depth
-unstated, the assistant chooses a starting depth and may explore further within
-the approved schema and exclusion boundaries. “All” starts with the full reachable
-scope. GUI `trace.default*Levels` settings do not control AI depth.
-
-Review these boundaries before approving and use **Change scope** to revise them.
-Objects beyond a stated depth or schema boundary can appear as follow-up leads.
-A follow-up naming one object brings in that object, rather than its entire schema.
-
-### Tips
-
-- **Column-level questions are best-effort.** The AI traces column mappings, joins, and formulas from the loaded metadata. Always verify against the database for compliance-critical claims.
-- **Ask for a graph preview.** Try *"show me the lineage for `dbo.udfLeadingZeros` in the app"*. The preview is transient; save it explicitly if you want a bookmark.
-- **The assistant is context-aware.** It knows what filters are active and which schemas are visible. Ask *"what's filtered out?"*.
-- **It also sees the screen.** With a trace, a graph analysis, or a bookmark applied, ask *"explain this"*, *"what am I looking at?"*, or — for an AI bookmark — *"what did you find about X?"*, *"which objects did you drop and why?"*, *"has anything changed since?"*. Type `#lineageView` in the chat input to attach the screen explicitly; the lineage tools appear in the `#` picker once a model is loaded.
-- **Customise output.** Command Palette → **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). See [`AI_PROMPTS.md`](AI_PROMPTS.md) for what each key controls.
-
-### Requirements
-
-- A VS Code version allowed by `engines.vscode` in `package.json`.
-- A VS Code Language Model Chat provider, such as
-  [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
-  or a compatible BYOK provider.
-
-### Disable
-
-Set `dataLineageViz.ai.enabled` to `false` to disable the `@lineage` participant and all AI tools:
-nothing registers and nothing can execute, and the manifest's `when` clauses hide the participant
-and the tools from the chat and tool pickers. Reload the window after changing the setting so the
-registration follows it.
+To turn `@lineage` off, set `dataLineageViz.ai.enabled` to `false` and reload the window. The participant and the AI tools are then not registered.
 
 ---
 
 ## Advanced settings
 
-Run **Data Lineage: Settings** or search "dataLineageViz" in VS Code Settings. The Settings UI and
-`contributes.configuration` section of `package.json` are the source of truth
-for current defaults, ranges, and descriptions; the Settings text stays short and links here for detail.
-Controls are grouped around import/parsing, database connection, table statistics, graph layout,
-trace/analysis, and `@lineage`.
+Run **Data Lineage: Settings** or search "dataLineageViz" in VS Code Settings.
 
-Settings that apply only after the data source is reloaded: `maxNodes`, `excludePatterns`,
-`externalRefs.enabled`, `parseRulesFile` and `dmvQueriesFile`. `ai.enabled` applies after a window reload;
-the other `ai.*` limits are read on every request.
+- Reload the data source after changing `maxNodes`, `excludePatterns`, `externalRefs.enabled`, `parseRulesFile` or `dmvQueriesFile`.
+- `ai.enabled` needs a window reload; the other `ai.*` limits are read on every request.
 
-Customization contracts are documented separately:
+Customization files are documented separately:
 
 - [`PARSE_RULES.md`](PARSE_RULES.md) for SQL extraction rules;
 - [`DMV_QUERIES.md`](DMV_QUERIES.md) for live-import queries;
 - [`AI_PROMPTS.md`](AI_PROMPTS.md) for AI output templates; and
 - [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md) for profiling behavior.
 
-For temporary AI diagnostics, run **Data Lineage: Enable AI Trace Logging for
-This Session** from the Command Palette. Logging stops when the extension host
-restarts. An open workspace folder is required; the trace is saved under its
-`tmp/lm-trace/` directory and the exact file path is shown in a notification.
-The file includes sanitized provider-error records for failed model requests, so
-the command does not open or change VS Code's output-channel log-level picker.
-The diagnostics can contain schema, table, column, SQL, prompt, response, and
-tool-payload text; never commit them and review them before sharing.
+To debug AI answers, run **Data Lineage: Enable AI Trace Logging for This Session** (needs an open workspace folder). The trace is saved under the folder's `tmp/lm-trace/` directory and the file path is shown in a notification. It can contain schema, table, column, SQL, prompt and response text, so review it before sharing and do not commit it. Logging stops when the extension host restarts.
 
 ### Settings reference
 
-Defaults and ranges below match `package.json`; the Settings UI shows the short form of each description.
+All keys start with `dataLineageViz.`.
 
 #### Import and parsing
 
 | Setting | Default | Detail |
 |---|---|---|
-| `maxNodes` | 2000 (10–5000) | Objects, including virtual external-reference nodes, admitted to the working graph. A selection over the limit is refused with an error that names the count, the limit and the setting; nothing is loaded. Select fewer schemas or raise the limit; a larger working graph takes longer to load. See [Rendering limits](#rendering-limits). |
-| `renderLimit` | 750 (100–1500) | Nodes drawn at once. Above it, the graph shows a *Render limit reached* notice instead of drawing, which keeps the webview responsive on very large graphs. See [Rendering limits](#rendering-limits). |
+| `maxNodes` | 2000 (10–5000) | Objects, including virtual external-reference nodes, loaded. A selection over the limit is refused. See [Rendering limits](#rendering-limits). |
+| `renderLimit` | 750 (100–1500) | Nodes drawn at once. Above it, the graph shows a *Render limit reached* notice. |
 | `excludePatterns` | `[]` | Case-insensitive regular expressions, matched against `schema.name` and the full name; `%` is a wildcard. Applied when a source is opened. For filtering without a reload use the toolbar exclusion rules ([Exclusion rules](#exclusion-rules)). |
-| `externalRefs.enabled` | on | Detects references that are not catalog objects — `OPENROWSET` file paths and cross-database three-part names — and draws them as virtual external nodes. Off creates none. External Tables are catalog objects and are unaffected. |
-| `overview.enabled` | on | Allows Schema View. Off keeps every load in Object View and hides the Schema View toggle. See [Schema View](#schema-view). |
-| `overview.threshold` | 150 (10–1000) | Object count above which a new load starts in Schema View; at or below it the graph starts in Object View. Values above `renderLimit` count as `renderLimit`. Checked on load and on **Refresh View**, then the toolbar toggle decides. |
+| `externalRefs.enabled` | on | Draws `OPENROWSET` file paths and cross-database three-part names as virtual external nodes. Off creates none. External tables are unaffected. |
+| `overview.enabled` | on | Allows Schema View. Off keeps every load in Object View and hides the Schema View toggle. |
+| `overview.threshold` | 150 (10–1000) | Object count above which a new load starts in Schema View. Values above `renderLimit` count as `renderLimit`. |
 | `overview.schemaDoubleClickBehavior` | `expandOnly` | `expand` adds the double-clicked schema to the expanded schemas; `expandOnly` makes it the only expanded one. |
-| `parseRulesFile` | empty | Custom parse rules YAML; empty uses the built-in rules. Scaffold with **Data Lineage: Create Parse Rules**; contract in [`PARSE_RULES.md`](PARSE_RULES.md). Applies after reload. |
+| `parseRulesFile` | empty | Custom parse rules YAML; empty uses the built-in rules. Scaffold with **Data Lineage: Create Parse Rules**; see [`PARSE_RULES.md`](PARSE_RULES.md). Applies after reload. |
 
 #### Database connection
 
 | Setting | Default | Detail |
 |---|---|---|
-| `database.connectionProvider` | `mssqlExtension` | Where live connections come from; application-scoped. See [Database connections](#database-connections). |
-| `database.connections` | `[]` | Connections of the `builtIn` provider: server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption. Passwords are kept in VS Code secret storage under `dataLineageViz.database.password.<id>`. Manage entries with **Add / Edit / Remove Database Connection**; replace a password with **Update Database Password**. Hand-editing the JSON is not needed. |
+| `database.connections` | `[]` | Saved connections. Passwords are kept in VS Code secret storage. Manage entries with the connection commands. |
 | `dmvQueryTimeout` | 120 s (10–600) | Time allowed per metadata query; raise for large databases. |
-| `dmvQueriesFile` | empty | Custom DMV queries YAML; empty uses the built-in queries. Scaffold with **Data Lineage: Create DMV Queries**; contract in [`DMV_QUERIES.md`](DMV_QUERIES.md). The file is read at each import; no reload needed. |
+| `dmvQueriesFile` | empty | Custom DMV queries YAML; empty uses the built-in queries. Scaffold with **Data Lineage: Create DMV Queries**; see [`DMV_QUERIES.md`](DMV_QUERIES.md). Read at each import. |
 
 #### Table statistics
 
-Database import only; behavior and limits in [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
+Database import only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 
 | Setting | Default | Detail |
 |---|---|---|
-| `tableStatistics.enabled` | on | Shows column statistics and row counts in the table design viewer. |
-| `tableStatistics.standardModeEnabled` | on | Offers Standard mode (adds MIN/MAX, string length range, AVG, STDEV, zero and empty counts). Off leaves Quick mode, which runs lighter queries. |
-| `tableStatistics.excludeExternalTables` | on | Skips external tables, which query remote sources (S3, Blob, other databases) and can be slow and costly. |
+| `tableStatistics.enabled` | on | Shows column statistics and row counts in the detail panel. Profiling still runs only on request. |
+| `tableStatistics.standardModeEnabled` | on | Offers Standard mode. Off leaves Quick mode, which runs lighter queries. |
+| `tableStatistics.excludeExternalTables` | on | Skips external tables, which query remote sources (S3, Blob, other databases). |
 | `tableStatistics.queryTimeout` | 60 s (10–600) | Time allowed per profiling query. |
-| `tableStatistics.sampleThreshold` | 100000 (0–999999999) | Row count above which a table is sampled instead of fully scanned; `0` always samples. |
-| `tableStatistics.sampleSize` | 10000 (100–1000000) | Rows sampled on large tables. |
-| `tableStatistics.useApproxDistinct` | on | Uses `APPROX_COUNT_DISTINCT` instead of exact `COUNT(DISTINCT)`: much faster, about 2% error. Requires SQL Server 2019 or later; turn off on older versions. |
-| `tableStatistics.maxColumns` | 50 (1–500) | Columns profiled per table; the rest are skipped, which keeps queries on wide tables bounded. |
+| `tableStatistics.sampleThreshold` | 100000 (0–999999999) | Row count above which a table is sampled instead of fully scanned; `0` samples every nonempty table. |
+| `tableStatistics.sampleSize` | 10000 (100–1000000) | Approximate number of rows read when a large table is sampled. |
+| `tableStatistics.useApproxDistinct` | on | Uses `APPROX_COUNT_DISTINCT` instead of `COUNT(DISTINCT)`: faster, about 2% error. Needs SQL Server 2019 or later; turn off on older versions. |
+| `tableStatistics.maxColumns` | 50 (1–500) | Columns profiled per table; the rest are skipped. |
 
 #### Layout, trace and analysis
 
@@ -436,23 +279,21 @@ Database import only; behavior and limits in [`PROFILING_PATTERNS.md`](PROFILING
 | `layout.edgeAnimation` | on | Animates edges while a trace runs. |
 | `layout.highlightAnimation` | off | Animates edges when a node is clicked. |
 | `layout.minimapEnabled` | on | Shows the minimap. |
-| `layout.rankSeparation` | 120 px (20–300) | Gap between dependency layers; horizontal in `LR`, vertical in `TB`. |
+| `layout.rankSeparation` | 120 px (20–300) | Gap between dependency layers. |
 | `layout.nodeSeparation` | 30 px (10–200) | Gap between nodes within a layer. |
-| `trace.defaultUpstreamLevels` | 3 (0–99) | Levels of inputs a trace starts with. |
-| `trace.defaultDownstreamLevels` | 3 (0–99) | Levels of outputs a trace starts with. |
+| `trace.defaultUpstreamLevels` | 3 (0–99) | Levels of inputs a trace starts with; `0` leaves out the upstream direction. |
+| `trace.defaultDownstreamLevels` | 3 (0–99) | Levels of outputs a trace starts with; `0` leaves out the downstream direction. |
 | `analysis.hubMinDegree` | 8 (1–50) | Connections an object needs to be listed as a hub. |
-| `analysis.islandMaxSize` | 500 (2–1000) | Largest connected group reported as an island; lower it (for example 5) to list only small isolated groups. |
+| `analysis.islandMaxSize` | 500 (2–1000) | Largest connected group reported as an island; lower it to list only small isolated groups. |
 | `analysis.longestPathMinNodes` | 5 (2–50) | Objects a chain needs to appear in longest-path analysis. |
 
 #### `@lineage`
 
 | Setting | Default | Detail |
 |---|---|---|
-| `ai.enabled` | on | Registers the `@lineage` participant and the AI tools; see [Disable](#disable). Reload the window after changing it. |
-| `ai.maxRounds` | 50 (5–100) | Rounds per deep analysis, one for each procedure, view or function it reads; a table counts only where the analysis reads it itself. An analysis that needs more is not started and the chat says so. |
-| `ai.maxTraceColumns` | 10 (min 1) | Starting columns one column trace may follow; columns picked up along the way are not counted. A trace that selects more is not started and the chat names the limit. |
+| `ai.enabled` | on | Registers the `@lineage` participant and the AI tools. Reload the window after changing it. |
+| `ai.maxRounds` | 50 (5–100) | Rounds per deep analysis, one for each procedure, view or function it reads. An analysis that needs more is not started. |
+| `ai.maxTraceColumns` | 10 (min 1) | Starting columns one column trace may follow. A trace that selects more is not started. |
 | `ai.discoveryNodeCap` | 10 (1–30) | Scope nodes a discovery answer may pull in one request before it is offered as a deep analysis for approval. |
-| `ai.discoveryTokenBudget` | 10000 (1000–32000) | Estimated DDL tokens for one discovery request, further capped at one eighth of the selected model's input window. Exceeding it or the node cap offers a deep analysis for approval. |
-| `ai.outputTemplateFile` | empty | Custom output templates YAML controlling summary, description, badges, highlights and notes; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |
-
-The `ai.*` limits are read on every request.
+| `ai.discoveryTokenBudget` | 10000 (1000–32000) | Estimated DDL tokens for one discovery request, capped at one eighth of the selected model's input window. Exceeding it or the node cap offers a deep analysis for approval. |
+| `ai.outputTemplateFile` | empty | Custom output templates YAML; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |

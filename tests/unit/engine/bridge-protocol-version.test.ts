@@ -66,21 +66,15 @@ describe('bridge protocol envelope', () => {
 
   it('stamps detail frames without disturbing their payload fields', async () => {
     const { sent, panel } = fakePanel();
-    await postToDetail(panel as never, { type: 'table-stats-error', message: 'boom' }, silentLogger);
+    await postToDetail(panel as never, { type: 'table-stats-error', objectRef: { schema: 'dbo', objectName: 'a' }, message: 'boom' }, silentLogger);
 
     const parsed = ExtensionToDetailMsgSchema.safeParse(sent[0]);
-    expect(parsed.success && parsed.data).toEqual({ type: 'table-stats-error', message: 'boom' });
+    expect(parsed.success && parsed.data).toEqual({ type: 'table-stats-error', objectRef: { schema: 'dbo', objectName: 'a' }, message: 'boom' });
   });
 
   /** The webview-side rule: host always stamps, so absent or different is a rejection. */
   const webviewAccepts = (frame: unknown) =>
     (frame as BridgeEnvelope | undefined)?.protocolVersion === BRIDGE_PROTOCOL_VERSION;
-
-  /** The host-side rule: webview→host frames are unstamped, so only a wrong version is a skew. */
-  const hostAccepts = (frame: unknown) => {
-    const v = (frame as BridgeEnvelope | undefined)?.protocolVersion;
-    return v === undefined || v === BRIDGE_PROTOCOL_VERSION;
-  };
 
   it('rejects a mismatched version at a webview receive site', async () => {
     const { sent, panel } = fakePanel();
@@ -89,13 +83,6 @@ describe('bridge protocol envelope', () => {
     expect(webviewAccepts(sent[0])).toBe(true);
     expect(webviewAccepts({ type: 'detail-closed', protocolVersion: BRIDGE_PROTOCOL_VERSION + 1 })).toBe(false);
     expect(webviewAccepts({ type: 'detail-closed' })).toBe(false);
-  });
-
-  it('rejects only a mismatched version at a host receive site', () => {
-    expect(hostAccepts({ type: 'ready' })).toBe(true);
-    expect(hostAccepts({ type: 'ready', protocolVersion: BRIDGE_PROTOCOL_VERSION })).toBe(true);
-    expect(hostAccepts({ type: 'ready', protocolVersion: BRIDGE_PROTOCOL_VERSION + 1 })).toBe(false);
-    expect(hostAccepts({ type: 'ready', protocolVersion: 'v1' })).toBe(false);
   });
 
   it('keeps the protocol version a positive integer so comparisons stay exact', () => {

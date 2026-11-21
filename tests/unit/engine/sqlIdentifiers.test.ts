@@ -10,8 +10,9 @@ describe('stripBrackets', () => {
     expect(stripBrackets('[a]')).toBe('a');
   });
 
-  it('unescapes a doubled bracket to the single literal character', () => {
+  it('unescapes a doubled bracket to the single literal character, and only inside brackets', () => {
     expect(stripBrackets('[a]]b]')).toBe('a]b');
+    expect(stripBrackets('[a""b]')).toBe('a""b');
   });
 
   it('unwraps every part of a qualified name', () => {
@@ -24,8 +25,10 @@ describe('stripBrackets', () => {
     expect(stripBrackets('dbo.Table')).toBe('dbo.Table');
   });
 
-  it('unescapes a doubled quote to the single literal character', () => {
+  it('unescapes a doubled quote to the single literal character, and only inside quotes', () => {
     expect(stripBrackets('"a""b"')).toBe('a"b');
+    expect(stripBrackets('"a]]b"')).toBe('a]]b');
+    expect(stripBrackets('[a]]b]."c""d"')).toBe('a]b.c"d');
   });
 
   it('drops stray delimiters from an unbalanced name', () => {
