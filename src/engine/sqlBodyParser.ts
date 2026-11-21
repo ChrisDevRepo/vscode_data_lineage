@@ -35,6 +35,8 @@ interface ParsedDependencies {
   sources: string[];
   /** Schema-qualified names of objects written to (e.g. `[dbo].[Table]`), from INSERT/UPDATE. */
   targets: string[];
+  /** Physical mutations on decoded, qualified components; catalog binding decides identity. */
+  mutations: Array<{ parts: string[]; kind: 'write' | 'delete' }>;
   /** Schema-qualified names of procedures executed (e.g. `[dbo].[Proc]`), from EXEC/EXECUTE. */
   execCalls: string[];
   /** Full 3-part names of cross-database sources (`db.schema.object`), apart from local reads. */
@@ -696,6 +698,7 @@ export function parseSqlBody(
   clean = normalizeAnsiCommaJoins(clean);
 
   clean = substituteCteUpdateAliases(clean, identifierCaseSensitive);
+  const mutations = collectMutations(clean, identifierCaseSensitive);
 
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing' && rule.name !== 'clean_sql' && rule.replacement !== undefined) {
@@ -755,6 +758,7 @@ export function parseSqlBody(
   return {
     sources: Array.from(sources),
     targets: Array.from(targets),
+    mutations,
     execCalls: Array.from(execCalls),
     crossDbSources: Array.from(crossDbSources),
     crossDbTargets: Array.from(crossDbTargets),
@@ -801,17 +805,30 @@ const UNRESOLVED_BINDING = '\0';
  * other count of bindings leaves the alias unresolved.
  */
 function resolveUpdateAliasTarget(sql: string, scan: AliasScan, match: RegExpExecArray, identifierCaseSensitive: boolean): string | null {
-  if (match.index > scan.unclosedFrom) return null;
-  const codeMask = scan.mask;
   // Read from the matched text, not a capture group: a custom rule file may capture something else.
   const alias = match[0].match(new RegExp(`^UPDATE(?:\\s+|\\s*(?=\\[))(${ANY_IDENT.source})(?:\\s+|(?<=\\])\\s*)SET\\b`, 'iu'))?.[1];
-  if (!alias) return null;
+  return alias ? resolveAliasTarget(sql, scan, match.index, 'UPDATE'.length, alias, identifierCaseSensitive) : null;
+}
+
+/**
+ * Resolves one statement-local UPDATE/DELETE target; a direct name (`allowDirect`) stays raw until
+ * metadata binding.
+ */
+function resolveAliasTarget(
+  sql: string, scan: AliasScan, start: number, keywordLength: number, alias: string,
+  identifierCaseSensitive: boolean, allowDirect = false, targetEnd = start + keywordLength,
+): string | null {
+  if (start > scan.unclosedFrom) return null;
+  const codeMask = scan.mask;
   const aliasKey = normalizeColName(alias, identifierCaseSensitive);
-  const { depth0Spans, closed } = scanStatement(sql, codeMask, match.index, 'UPDATE'.length);
-  if (!closed) scan.unclosedFrom = match.index;
-  const bindings = new RegExp(`\\b(?:FROM|JOIN)(?:\\s+|\\s*(?=\\[))(${QUALIFIED_NAME.source})(?:(?:\\s+(?:AS\\s+)?|(?<=\\])\\s*(?=\\[))(${ANY_IDENT.source}))?`, 'giu');
+  const { depth0Spans, closed } = scanStatement(sql, codeMask, start, keywordLength);
+  if (!closed) scan.unclosedFrom = start;
+  const bindingName = allowDirect ? `(?:${QUALIFIED_NAME.source}|${ANY_IDENT.source})` : QUALIFIED_NAME.source;
+  const bindings = new RegExp(`\\b(?:FROM|JOIN)(?:\\s+|\\s*(?=\\[))(${bindingName})(?:(?:\\s+(?:AS\\s+)?|(?<=\\])\\s*(?=\\[))(${ANY_IDENT.source}))?`, 'giu');
   const targets = new Set<string>();
-  for (const [from, to] of depth0Spans) {
+  for (const [spanStart, to] of depth0Spans) {
+    // The optional FROM before a DELETE target is not a source binding.
+    const from = Math.max(spanStart, targetEnd);
     if (from >= to) continue;
     collectMatchesWith(sql.slice(from, to), bindings, targets, (reference, binding) => {
       const hasAlias = binding[2] && !KEYWORDS_RE.test(binding[2]);
@@ -830,7 +847,60 @@ function resolveUpdateAliasTarget(sql: string, scan: AliasScan, match: RegExpExe
     targets.add(singleQueryTable(sql, codeMask, to + 1, close) ?? UNRESOLVED_BINDING);
   }
   const [target, ...others] = targets;
-  return target !== undefined && others.length === 0 && target !== UNRESOLVED_BINDING ? target : null;
+  if (target === undefined) return allowDirect ? alias : null;
+  return others.length === 0 && target !== UNRESOLVED_BINDING ? target : null;
+}
+
+/** Captures physical mutation facts on the existing cleansed surface, before custom rewrites. */
+function collectMutations(sql: string, identifierCaseSensitive: boolean): ParsedDependencies['mutations'] {
+  const scan: AliasScan = { mask: sqlCommentMask(sql, { markLiterals: true }), unclosedFrom: Infinity };
+  const mutations = new Map<string, ParsedDependencies['mutations'][number]>();
+  const completeName = new RegExp(`^(?:${QUALIFIED_NAME.source}|${ANY_IDENT.source})$`, 'u');
+  const cteScopes: Array<{ from: number; to: number; names: Set<string> }> = [];
+  for (const withMatch of sql.matchAll(/\bWITH\b/giu)) {
+    if (scan.mask[withMatch.index!] !== SQL_CODE) continue;
+    const list = readCteList(sql, scan.mask, withMatch.index!);
+    if (!list) continue;
+    const from = skip(sql, '\\s*', list.end);
+    const statement = /^(?:UPDATE|DELETE|INSERT|MERGE)\b/iu.exec(sql.slice(from));
+    if (!statement) continue;
+    cteScopes.push({
+      from,
+      to: scanStatement(sql, scan.mask, from, statement[0].length).end,
+      names: new Set(list.definitions.map(item => normalizeColName(item.name, identifierCaseSensitive))),
+    });
+  }
+  const clause = /(?<![\p{L}\p{Nd}_@$#.])(?:THEN\s+DELETE|UPDATE|INSERT|MERGE|DELETE|TRUNCATE\s+TABLE|INTO)\b/giu;
+  for (const match of sql.matchAll(clause)) {
+    if (scan.mask[match.index!] !== SQL_CODE || /^THEN\b/iu.test(match[0])) continue;
+    let at = skip(sql, '(?:\\s+|\\s*(?=\\[))', match.index! + match[0].length);
+    if (at < 0) continue;
+    const top = skip(sql, 'TOP\\s*(?=\\()', at);
+    if (top >= 0) {
+      const close = closingParen(sql, scan.mask, top);
+      if (close < 0) continue;
+      at = skip(sql, '\\s*(?:PERCENT\\s*)?', close + 1);
+    }
+    const qualifier = skip(sql, '(?:INTO|FROM)(?:\\s+|\\s*(?=\\[))', at);
+    if (qualifier >= 0) at = qualifier;
+    TABLE_NAME_RE.lastIndex = at;
+    const name = TABLE_NAME_RE.exec(sql)?.[0];
+    if (!name || !completeName.test(name) || KEYWORDS_RE.test(name)) continue;
+    if (sql[skip(sql, '\\s*', at + name.length)] === '.') continue;
+    let reference = name;
+    if (/^(?:UPDATE|DELETE)$/iu.test(match[0]) && splitSqlName(name).length === 1) {
+      const resolved = resolveAliasTarget(sql, scan, match.index!, match[0].length, name, identifierCaseSensitive, true, at + name.length);
+      if (resolved === null) continue;
+      reference = resolved;
+    }
+    const parts = splitSqlName(reference).map(part => unmaskIdentifier(stripBrackets(part)));
+    if (!parts.at(-1) || (parts.length === 1 && parts[0].startsWith('@')) || isTempObject(parts)) continue;
+    if (parts.length === 1 && cteScopes.some(scope => match.index! >= scope.from && match.index! < scope.to
+      && scope.names.has(normalizeColName(reference, identifierCaseSensitive)))) continue;
+    const kind = /^(?:DELETE|TRUNCATE)/iu.test(match[0]) ? 'delete' : 'write';
+    mutations.set(JSON.stringify([parts, kind]), { parts, kind });
+  }
+  return [...mutations.values()];
 }
 
 /**
