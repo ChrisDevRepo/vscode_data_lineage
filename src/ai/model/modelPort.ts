@@ -349,9 +349,7 @@ export type ToolGenerationResult =
       readonly content: readonly [];
       readonly text: '';
       readonly toolCalls: readonly [];
-      readonly error: string;
-      readonly providerError: ProviderErrorDiagnostic;
-      /** Source and code of the failure, decided once by {@link classifyTurnStop}. */
+      /** Source, code and sanitized chain of the failure, decided once by {@link classifyTurnStop}. */
       readonly turnStop: TurnStop;
     };
 
@@ -441,8 +439,6 @@ export function errorToolTurnResult(error: unknown, diagnostic: ProviderErrorDia
     content: [],
     text: '',
     toolCalls: [],
-    error: diagnostic.message,
-    providerError: diagnostic,
     turnStop: classifyTurnStop(error, diagnostic),
   };
 }

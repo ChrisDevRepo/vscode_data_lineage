@@ -205,8 +205,10 @@ export class AgentRuntime {
           errorCode?: AgentErrorCode | null;
           activeStop?: string | null;
         };
-        const outcome: TurnOutcome = state.outcome ?? (state.error ? 'error' : 'ok');
-        return this.close(outcome, state.error ?? undefined, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
+        if (state.error) return this.close('error', state.error, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
+        // `fail` writes `outcome: 'error'` together with its `TurnStop`; one without is a graph bug.
+        if (state.outcome === 'error') throw new Error('Graph ended in error without a TurnStop.');
+        return this.close(state.outcome ?? 'ok');
       }
     } catch (err) {
       if (isCancellationOutcome(err, this.signal) || isPortCancellation(err)) {
@@ -214,8 +216,8 @@ export class AgentRuntime {
         await this.dispatchSettled();
         return this.close('cancelled');
       }
-      // A model-port error carries provider text: the participant logs it at debug only.
-      if (!(err instanceof ModelPortError)) this.logger?.error('[AI] LangGraph turn', err);
+      // The error line is the participant's; a thrown text or stack can echo content: debug only.
+      if (!(err instanceof ModelPortError)) this.logger?.debug(`[AI] LangGraph turn failed — ${err instanceof Error ? err.stack : String(err)}`);
       const stop = classifyTurnStop(err, sanitizeProviderErrorDiagnostic(err, 'turn'));
       return this.close('error', err instanceof GraphRecursionError ? { ...stop, code: 'recursion_limit' } : stop);
     }
@@ -252,21 +254,22 @@ export class AgentRuntime {
     });
   }
 
-  private close(status: TurnOutcome, error?: TurnStop, detail?: { readonly code?: AgentErrorCode; readonly stop?: string }): TurnOutcome {
+  /** Claims the turn's terminal; an error close always carries its `TurnStop`, rendered once here. */
+  private close(
+    ...[status, error, detail]: [status: 'ok' | 'cancelled'] | [status: 'error', error: TurnStop, detail?: { readonly code?: AgentErrorCode; readonly stop?: string }]
+  ): TurnOutcome {
     let claimed: boolean;
     let sinkFailure: { readonly cause: unknown } | undefined;
     const message = error && describeTurnStop(error, this.model.identity.name);
     try {
-      claimed = status === 'error' && message
-        ? this.sink.fail(message)
-        : this.sink.result(status, message);
+      claimed = message ? this.sink.fail(message) : this.sink.result(status);
     } catch (cause) {
       claimed = true;
       sinkFailure = { cause };
     }
     if (!claimed) return this.sink.terminalStatus ?? status;
 
-    this.lastFailureDetail = status !== 'ok' && error && message
+    this.lastFailureDetail = error && message
       ? { message, turnStop: error, code: detail?.code, stop: detail?.stop }
       : undefined;
     if (status === 'cancelled' || status === 'error') {

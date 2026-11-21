@@ -209,7 +209,7 @@ export interface TurnStop {
   readonly code: string;
   /** Model-call or attempt phase in which the turn stopped, when known. */
   readonly phase?: string;
-  /** Data Lineage's own reason (stop reason, last rejection); never external text. */
+  /** Data Lineage's own reason (stop reason, last rejection, catalog name); plain text, escaped when rendered. */
   readonly detail?: string;
   /** Sanitized error chain; its message is quoted verbatim for an external source. */
   readonly diagnostic?: ProviderErrorDiagnostic;
@@ -228,6 +228,9 @@ const STOP_LINE: Readonly<Record<StopSource, { readonly verb: 'failed' | 'stoppe
   model_replies: { verb: 'stopped', label: 'model replies rejected' },
 };
 
+/** Closing sentence of every {@link describeTurnStop} line; replayed history drops a line that ends in it. */
+export const TURN_STOP_LINE_END = `Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
+
 /**
  * Builds the one chat line of a turn-ending error (Markdown): what happened, the source with its
  * model or code, then the external message quoted verbatim (sanitized by
@@ -241,12 +244,12 @@ export function describeTurnStop(stop: TurnStop, modelName: string): string {
   const { verb, label } = STOP_LINE[stop.source];
   const quoted = stop.source === 'provider' || stop.source === 'network' ? stop.diagnostic : undefined;
   const codes = quoted ? causeCodes(quoted) : [stop.code];
-  // Codes are diagnostic-safe tokens; only the model's display name needs escaping.
+  // Codes are diagnostic-safe tokens; the model name, quote and detail (catalog names) are escaped.
   const sender = stop.source === 'provider' ? [escapeMarkdownText(modelName), ...codes] : stop.source === 'model_replies' ? [] : codes;
-  const text = quoted ? `"${escapeMarkdownText(quoted.message)}"` : stop.detail;
+  const text = quoted ? `"${escapeMarkdownText(quoted.message)}"` : stop.detail && escapeMarkdownText(stop.detail);
   const body = `**Request ${verb}:** ${label}${sender.length ? ` (${sender.join(', ')})` : ''}`
     + (text ? `${sender.length ? ': ' : ' '}${text}` : '');
-  return `${/[.!?]"?$/.test(body) ? body : `${body}.`} Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
+  return `${/[.!?]"?$/.test(body) ? body : `${body}.`} ${TURN_STOP_LINE_END}`;
 }
 
 function safeDiagnosticToken(value: string, fallback: string): string {

@@ -24,6 +24,7 @@ import {
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../session/session';
 import { contextBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
+import { TURN_STOP_LINE_END } from '../support/text';
 import { GATE_CARD_HEADER, HOLD_GATE_NOTICE, REPLACE_ANALYSIS_NOTICE, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
 
 /** Replaces evicted turns so the model knows the transcript is a tail, not the whole chat. */
@@ -166,6 +167,7 @@ function groupBytes(group: readonly ModelMessage[]): number {
  * template ("Approve, change or cancel with the buttons below") with no origin, columns or tool
  * call, which the model then completes as text instead of calling `lineage_start_exploration`
  * again. The plan between header and trailer is kept; only the interactive frame is not context.
+ * A recoverable stop line (ends in {@link TURN_STOP_LINE_END}) quotes provider text: it is dropped too.
  */
 function neutralizeGateCardArtifacts(markdown: string): string {
   if (!markdown) return markdown;
@@ -173,7 +175,8 @@ function neutralizeGateCardArtifacts(markdown: string): string {
     .split(GATE_CARD_HEADER).join(GATE_CARD_REPLAY_LEAD_IN)
     .split(HOLD_GATE_NOTICE).join('')
     .split(REPLACE_ANALYSIS_NOTICE).join('')
-    .split(UNREAD_GATE_REPLY).join('');
+    .split(UNREAD_GATE_REPLY).join('')
+    .split('\n').filter(line => !line.endsWith(TURN_STOP_LINE_END)).join('\n');
 }
 
 function responseMarkdown(response: vscode.ChatResponseTurn['response']): string {

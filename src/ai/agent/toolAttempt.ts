@@ -34,7 +34,6 @@ import {
   escapePromptText,
   formatProviderErrorDiagnostic,
   sanitizeProviderErrorDiagnostic,
-  type ProviderErrorDiagnostic,
   type TurnStop,
 } from '../support/text';
 import type {
@@ -248,9 +247,20 @@ interface ToolAttemptCall extends ToolOutcomeIdentity {
 }
 
 /** Graph-visible outcome of exactly one generation and one ordered dispatch batch. */
-export interface ToolAttemptResult {
-  /** Graph routing outcome for this single generation and dispatch batch. */
-  readonly stop: 'final' | 'continue' | 'gate' | 'reroute' | 'refused' | 'phase_complete' | 'cancelled' | 'error';
+export type ToolAttemptResult = ToolAttemptBody & (
+  | {
+      /** Graph routing outcome for this single generation and dispatch batch. */
+      readonly stop: 'final' | 'continue' | 'gate' | 'reroute' | 'refused' | 'phase_complete' | 'cancelled';
+    }
+  | {
+      readonly stop: 'error';
+      /** Source, code and sanitized chain of the failed provider generation. */
+      readonly turnStop: TurnStop;
+    }
+);
+
+/** The fields every {@link ToolAttemptResult} carries. */
+interface ToolAttemptBody {
   /** Physical requests observed during this model-port invocation. */
   readonly providerCalls: number;
   /** Ordered disposition of every provider-emitted call. */
@@ -272,10 +282,6 @@ export interface ToolAttemptResult {
   readonly gate?: unknown;
   /** The user's refusal text when a successful call ended the request at admission. */
   readonly refusal?: string;
-  /** Secret-sanitized diagnostic retained for tracing and logs. */
-  readonly providerError?: ProviderErrorDiagnostic;
-  /** Source and code of a failed provider generation. */
-  readonly turnStop?: TurnStop;
 }
 
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` if none. */
@@ -1392,7 +1398,6 @@ async function executeToolGenerationAttempt(
       rejections: [],
       messages: [],
       text: '',
-      providerError: generated.providerError,
       turnStop: generated.turnStop,
     };
   }

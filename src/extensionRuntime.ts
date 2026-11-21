@@ -58,7 +58,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     notifyWarning(
       projectLogger,
       'Project store validation',
-      `Data Lineage: ${skipped} could not be read and ${dropped + droppedViews === 1 ? 'was' : 'were'} skipped. See the Data Lineage Viz output channel for details.`,
+      `Data Lineage: ${skipped} could not be read and ${dropped + droppedViews === 1 ? 'was' : 'were'} skipped. See the ${OUTPUT_CHANNEL_NAME} output channel for details.`,
       { droppedProjects: dropped, droppedViews, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
     );
   };

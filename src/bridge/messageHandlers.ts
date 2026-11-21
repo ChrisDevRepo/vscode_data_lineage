@@ -9,6 +9,7 @@ import {
   sanitizeForLog,
   safeStringifyForLog,
   LOG_TRUNC_JSON,
+  OUTPUT_CHANNEL_NAME,
   type LogCategory,
 } from '../utils/log';
 import { notifyError, notifyWarning } from '../utils/notifications';
@@ -973,8 +974,8 @@ export function createMessageHandlers(
       });
 
       const userMessage = source === 'error-boundary'
-        ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
-        : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
+        ? `Data Lineage hit an error and is reloading the view — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`
+        : `Data Lineage encountered an unexpected error — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`;
 
       host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}`, err);
       host.log('debug', 'Bridge', `Webview ${sanitizeForLog(source)} error context=${contextLine}`);

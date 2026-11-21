@@ -393,17 +393,16 @@ export class LineageParticipant {
         return { metadata };
       }
 
-      const failure = result.failure;
-      const message = failure?.message ?? 'Data Lineage could not complete this request.';
+      const { message, turnStop, code, stop } = result.failure;
       // Provider text can echo prompt content, so error level carries enumerated fields only; the
       // chat text and the sanitized cause chain (names, codes, messages) go to debug.
       this.logger.error(
-        `[${session.id}] native turn terminal status=error source=${failure?.turnStop.source ?? 'none'}`
-        + ` phase=${failure?.turnStop.phase ?? 'none'} model=${request.model.id} stop=${failure?.stop ?? 'none'}`
+        `[${session.id}] native turn terminal status=error source=${turnStop.source}`
+        + ` phase=${turnStop.phase ?? 'none'} model=${request.model.id} stop=${stop ?? 'none'}`
         + ` modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
-        `code=${failure?.turnStop.code ?? 'none'}`,
+        `code=${turnStop.code}${code ? ` errorCode=${code}` : ''}`,
       );
-      const chain = failure?.turnStop.diagnostic;
+      const chain = turnStop.diagnostic;
       this.logger.debug(`[${session.id}] native turn failure message: ${message}${chain ? ` ${formatProviderErrorDiagnostic(chain)}` : ''}`);
       return { metadata, errorDetails: { message } };
     } finally {

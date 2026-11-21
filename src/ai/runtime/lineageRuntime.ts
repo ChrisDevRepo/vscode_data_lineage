@@ -42,14 +42,14 @@ export interface LineageRuntimeRunInput {
 }
 
 /** Terminal runtime outcome and provider-call accounting for one lineage turn. */
-export interface LineageRuntimeResult {
-  /** Terminal status of the turn. */
-  readonly outcome: TurnOutcome;
+export type LineageRuntimeResult = {
   /** Provider calls attempted through the request's model port. */
   readonly modelCalls: number;
-  /** Diagnostic detail when the turn ended other than `ok`. */
-  readonly failure?: AgentFailureDetail;
-}
+} & (
+  | { readonly outcome: Exclude<TurnOutcome, 'error'> }
+  /** An error outcome always carries its rendered stop. */
+  | { readonly outcome: 'error'; readonly failure: AgentFailureDetail }
+);
 
 /** Long-lived dependencies used to construct request-scoped lineage turns. */
 export interface LineageRuntimeDeps {
@@ -109,9 +109,9 @@ export class LineageRuntime {
       durationMs: elapsedMs(startedAt),
     });
     input.sink.result(outcome);
-    const stop = result.status === 'error' ? result.turnStop : undefined;
-    return { outcome, modelCalls: input.model.modelCalls, ...(stop
-      ? { failure: { message: describeTurnStop(stop, input.model.identity.name), turnStop: stop } } : {}) };
+    const modelCalls = input.model.modelCalls;
+    if (result.status !== 'error') return { outcome: result.status === 'completed' ? 'ok' : result.status, modelCalls };
+    return { outcome: 'error', modelCalls, failure: { message: describeTurnStop(result.turnStop, input.model.identity.name), turnStop: result.turnStop } };
   }
 
   /**
@@ -217,13 +217,9 @@ export class LineageRuntime {
         modelCalls: input.model.modelCalls,
         durationMs: elapsedMs(startedAt),
       });
-      return {
-        outcome,
-        modelCalls: input.model.modelCalls,
-        ...(runtime.lastFailureDetail
-          ? { failure: runtime.lastFailureDetail }
-          : {}),
-      };
+      // Only an error close records a failure, and every error close records one.
+      return failure ? { outcome: 'error', modelCalls: input.model.modelCalls, failure }
+        : { outcome: outcome === 'cancelled' ? 'cancelled' : 'ok', modelCalls: input.model.modelCalls };
     } finally {
       if (input.request.priorMessages !== undefined) session.clearDiscoveryTranscript();
       eventObserver.dispose();

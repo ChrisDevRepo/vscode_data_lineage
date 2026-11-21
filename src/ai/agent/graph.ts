@@ -4,6 +4,7 @@ import {
   modelAssistantMessage,
   modelUserMessage,
   messageContentToText,
+  classifyTurnStop,
   ModelPortError,
   type ModelMessage,
   type ModelPort,
@@ -46,7 +47,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type ProviderErrorDiagnostic, type TurnStop } from '../support/text';
+import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, describeTurnStop, formatProviderErrorDiagnostic, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type TurnStop } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -297,9 +298,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return { ...fail(stopped.stop, stopped.errorCode), activeStop: stopped.reason };
   };
 
-  /** The one provider-failure stop every phase funnels through; the participant logs it. */
-  const providerStop = (res: { readonly turnStop?: TurnStop }): TurnStop => res.turnStop ?? { source: 'internal', code: 'no_diagnostic' };
-
   /**
    * Announces one in-phase repair retry in the hop counter's progress grammar. A semantic failure
    * inside a self-looping phase is otherwise invisible in chat. Fires only when the attempt just
@@ -389,7 +387,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     subject: string,
     onStop?: () => void,
   ): AgentStateUpdate | null => {
-    if (res.stop === 'error') return { ...fail(providerStop(res)), toolAttempt: nextAttempt };
+    if (res.stop === 'error') return { ...fail(res.turnStop), toolAttempt: nextAttempt };
     const stopped = attemptStop(nextAttempt, subject);
     if (stopped) {
       onStop?.();
@@ -419,8 +417,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * Logs a connection-level interruption before any reply and waits the transport-retry delay.
    * Returns false, without waiting, for any other failure or once the turn is aborted.
    */
-  const waitForTransportRetry = async (failure: ProviderErrorDiagnostic): Promise<boolean> => {
-    if (!isTransportProviderError(failure) || failure.replyReceived || deps.signal?.aborted) return false;
+  const waitForTransportRetry = async (stop: TurnStop): Promise<boolean> => {
+    const failure = stop.source === 'network' ? stop.diagnostic : undefined;
+    if (!failure || failure.replyReceived || deps.signal?.aborted) return false;
     deps.logger?.debug(`[AI] transport-retry ${formatProviderErrorDiagnostic(failure)}`);
     await abortableDelay(TRANSPORT_RETRY_DELAY_MS, deps.signal);
     return true;
@@ -455,8 +454,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       projectRejectedSubmission: input => (deps.getSession().stateMachine as NavigationEngine | null)?.projectRejectedSubmission(input) ?? null,
     });
     const first = await attempt();
-    if (first.stop !== 'error' || !first.providerError) return first;
-    return await waitForTransportRetry(first.providerError) ? attempt() : first;
+    if (first.stop !== 'error') return first;
+    return await waitForTransportRetry(first.turnStop) ? attempt() : first;
   };
 
   /**
@@ -472,7 +471,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return await attempt();
     } catch (error) {
       if (!(error instanceof ModelPortError)) throw error;
-      if (!await waitForTransportRetry(sanitizeProviderErrorDiagnostic(error, plan.frame.phase))) throw error;
+      if (!await waitForTransportRetry(classifyTurnStop(error, sanitizeProviderErrorDiagnostic(error, plan.frame.phase)))) throw error;
       return attempt();
     }
   };
@@ -506,10 +505,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const paths = last?.issuePaths?.length ? ` at ${last.issuePaths.join(', ')}` : '';
     return { reason, stop: {
       source: 'model_replies', code: last?.code ?? reason, phase: nextAttempt.phase,
-      detail: `${MAX_TOOL_PROVIDER_CALLS} times ${at ? `at \`${at.object}\`` : `in ${subject}`}`
+      detail: `${MAX_TOOL_PROVIDER_CALLS} times ${at ? `at ${at.object}` : `in ${subject}`}`
         + (last ? ` (${last.toolName} ${last.code}${paths})` : ''),
     } };
   };
+
+  /** Rejected model replies of a phase whose last reply ended (`res.stop`) without its `missing` result. */
+  const repliesStop = (nextAttempt: ToolPhaseAttemptState, res: ToolAttemptResult, subject: string, missing: string): TurnStop =>
+    ({ source: 'model_replies', code: `stop_${res.stop}`, phase: nextAttempt.phase, detail: `in ${subject} (no ${missing})` });
 
   type StandardPhaseDraft = Omit<ConversePlanDraft, 'kind' | 'registry' | 'sink' | 'signal'>;
   type StandardPhaseFailure = readonly [subject: string, onStop?: () => void];
@@ -737,11 +740,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           && nextAttempt.rejections.every(rejection => rejection.code === REJECTION_CODES.emptyStructuredOutput);
         if (emptyStructuredOnly) {
           return {
-            ...failStopped({
-              ...stopped,
-              stop: { ...stopped.stop, code: 'incompatible_tool_call_format' },
-              errorCode: 'incompatible_tool_call_format',
-            }, nextAttempt),
+            ...failStopped({ ...stopped, errorCode: 'incompatible_tool_call_format' }, nextAttempt),
             ctx,
             messages,
             toolAttempt: nextAttempt,
@@ -795,7 +794,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'discover' };
-    if (res.stop !== 'final') return { ...fail({ source: 'model_replies', code: `stop_${res.stop}`, phase: 'discover', detail: 'in Discovery (no accepted answer)' }), toolAttempt: nextAttempt };
+    if (res.stop !== 'final') return { ...fail(repliesStop(nextAttempt, res, 'Discovery', 'accepted answer')), toolAttempt: nextAttempt };
 
     const sess = deps.getSession();
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
@@ -858,7 +857,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'gate') return fail('Visual preview unexpectedly opened an exploration gate.');
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'visual_preview' };
     if (res.stop !== 'phase_complete' || !sess.presentResultCalledThisTurn) {
-      return { ...fail({ source: 'model_replies', code: `stop_${res.stop}`, phase: 'visual_preview', detail: 'in Visual preview (no committed preview)' }), toolAttempt: nextAttempt };
+      return { ...fail(repliesStop(nextAttempt, res, 'Visual preview', 'committed preview')), toolAttempt: nextAttempt };
     }
     const confirmation = 'Preview shown in the graph.';
     deps.sink.stream(`${sess.takeClosingNotices()}\n\n${confirmation}`);
@@ -894,7 +893,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
     const nextAttempt = recordAttempt(priorAttempt, res, 'sm_entry', startedAt);
     if (res.stop === 'error') {
-      return { ...fail(providerStop(res)), toolAttempt: nextAttempt };
+      return { ...fail(res.turnStop), toolAttempt: nextAttempt };
     }
     if (res.stop === 'gate') {
       return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
@@ -937,8 +936,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const sess = deps.getSession();
     const proposal = sess.pendingExploration;
-    const keepPendingGate = (reason: string): AgentStateUpdate => {
-      deps.sink.error(`Scope change was not applied: ${reason} The existing proposal is still pending.`, true);
+    /** Keeps the proposal pending; a model-side stop is named by the one stop line. */
+    const keepPendingGate = (reason: string | TurnStop): AgentStateUpdate => {
+      deps.sink.error(typeof reason === 'string'
+        ? `Scope change was not applied: ${reason} The existing proposal is still pending.`
+        : `Scope change was not applied; the existing proposal is still pending.\n\n${describeTurnStop(reason, deps.model.identity.name)}`, true);
       return {
         gate: state.gate,
         gateDecision: null,
@@ -982,8 +984,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
     const nextAttempt = recordAttempt(priorAttempt, res, 'gate_refine', refineStartedAt);
     if (res.stop === 'error') {
-      deps.logger?.warn(`[AI] Scope refinement failed — ${providerStop(res).source} error, proposal kept pending`);
-      return keepPendingGate('the model/provider could not complete the change.');
+      deps.logger?.warn(`[AI] Scope refinement failed — source=${res.turnStop.source} code=${res.turnStop.code}, proposal kept pending`);
+      return keepPendingGate(res.turnStop);
     }
     if (res.stop === 'gate') {
       return {
@@ -999,7 +1001,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const stopped = attemptStop(nextAttempt, 'Scope refinement');
     if (stopped?.reason === 'backend_fault') return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
-    if (stopped) return keepPendingGate(`the model's replies were not accepted (${stopped.stop.code}).`);
+    if (stopped) return keepPendingGate(stopped.stop);
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'gate_refine' };
     if (res.stop === 'final') {
       return { outcome: 'ok', messages: [modelAssistantMessage(res.text)], gateDecision: null, toolAttempt: null, phase: 'done' };
@@ -1036,7 +1038,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     if (activation.kind === 'rejected') {
       deps.logger?.debug(`[AI] approved proposal activation rejected — revision=${expectedRevision} reason=${sanitizeForLog(activation.reason)}`);
-      return fail(`Approved exploration could not start: ${activation.reason}`);
+      return fail({ source: 'internal', code: 'activation_rejected', phase: 'gate_approve' });
     }
     deps.clearPreview?.();
     const engine = activation.engine as NavigationEngine;
@@ -1100,8 +1102,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     try {
       classification = sess.requireLockedClassification();
     } catch (err) {
-      deps.logger?.error('[AI] classification lock missing in active worker', err);
-      return fail(err instanceof Error ? err.message : String(err));
+      // The error line is the participant's; the thrown text and stack stay at debug.
+      deps.logger?.debug(`[AI] classification lock missing in active worker — ${err instanceof Error ? err.stack : String(err)}`);
+      return fail(classifyTurnStop(err, sanitizeProviderErrorDiagnostic(err, 'active')));
     }
 
     const focusId = engine.currentFocus;
@@ -1175,7 +1178,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     if (res.stop === 'error') {
       return {
-        ...failActiveIncomplete(state, engine, 'provider_error', providerStop(res)),
+        ...failActiveIncomplete(state, engine, 'provider_error', res.turnStop),
         toolAttempt: nextAttempt,
       };
     }
@@ -1259,8 +1262,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     try {
       classification = sess.requireLockedClassification();
     } catch (err) {
-      deps.logger?.error('[AI] classification lock missing at synthesis', err);
-      return fail(err instanceof Error ? err.message : String(err));
+      // The error line is the participant's; the thrown text and stack stay at debug.
+      deps.logger?.debug(`[AI] classification lock missing at synthesis — ${err instanceof Error ? err.stack : String(err)}`);
+      return fail(classifyTurnStop(err, sanitizeProviderErrorDiagnostic(err, 'synthesis')));
     }
     deps.sink.status('synthesizing', 'Synthesising...');
     const result = engine.getResult();
@@ -1309,7 +1313,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       deps.logger?.info(
         `[ai-present] phase=synthesis gate=present_committed status=fail attempts=${sess.presentResultAttemptCountThisTurn}`
       );
-      return { ...fail({ source: 'model_replies', code: `stop_${res.stop}`, phase: 'synthesis', detail: 'in Synthesis (no rendered result)' }), toolAttempt: nextAttempt };
+      return { ...fail(repliesStop(nextAttempt, res, 'Synthesis', 'rendered result')), toolAttempt: nextAttempt };
     }
     deps.logger?.info(
       `[ai-present] phase=synthesis gate=present_committed status=pass attempts=${sess.presentResultAttemptCountThisTurn} envelopeChars=${envelopeJson.length}`
@@ -1374,7 +1378,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'follow_up' };
     if (res.stop !== 'final' && res.stop !== 'phase_complete') {
-      return { ...fail({ source: 'model_replies', code: `stop_${res.stop}`, phase: 'completed', detail: 'in Follow-up (no accepted answer or action)' }), toolAttempt: nextAttempt };
+      return { ...fail(repliesStop(nextAttempt, res, 'Follow-up', 'accepted answer or action')), toolAttempt: nextAttempt };
     }
     let assistantText = res.stop === 'final' ? res.text : '';
     const followUpAnswer = sess.presentResultCalledThisTurn ? presentedChatAnswer(sess) : null;

@@ -8,6 +8,7 @@
 
 ### Changed
 - AI output templates version 3: re-create custom template files.
+- AI chat: an error that ends a request is one line naming its source (model provider, network or Data Lineage) with the provider's own message.
 
 ### Fixed
 - GUI: light-theme colors and contrast, settings, loading and notifications.

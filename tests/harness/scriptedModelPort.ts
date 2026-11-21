@@ -16,7 +16,6 @@ import type {
   ToolGenerationResult,
   ValidGeneratedToolCall,
 } from '../../src/ai/model/modelPort';
-import type { ProviderErrorDiagnostic } from '../../src/ai/support/text';
 import { StructuredOutputError } from '../../src/ai/providers/structuredOutput';
 import {
   DEFAULT_TURN_TOKEN_BUDGET,
@@ -40,8 +39,6 @@ export interface ScriptedGeneration {
   readonly textDeltas?: readonly string[];
   /** User-safe error text for a `'error'` generation. */
   readonly error?: string;
-  /** Sanitized diagnostic for a `'error'` generation. */
-  readonly providerError?: ProviderErrorDiagnostic;
   /** Opaque provider stream parts the generation carried (reasoning, signatures). */
   readonly providerParts?: readonly unknown[];
 }
@@ -141,7 +138,7 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
     }
     if (step.status === 'error') {
       const message = step.error ?? 'scripted provider error';
-      return errorToolTurnResult(new ModelPortError('provider_error', message), step.providerError ?? { phase: input.phase, name: 'Error', message });
+      return errorToolTurnResult(new ModelPortError('provider_error', message), { phase: input.phase, name: 'Error', message });
     }
     const toolCalls = step.toolCalls ?? [];
     const text = step.text ?? '';

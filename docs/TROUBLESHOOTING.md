@@ -1,6 +1,6 @@
 # Troubleshooting
 
-**Output → Data Lineage Viz** is the first place to look. Defaults change between versions; check **Settings → Data Lineage** for current values.
+**Output › Data Lineage Viz** is the first place to look. Defaults change between versions; check **Settings → Data Lineage** for current values.
 
 ## Import and connection
 
@@ -23,7 +23,7 @@
 - **No response.** Load a graph first. Then check that a VS Code chat model provider, such as [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot), is installed and available to Chat.
 - **"Analysis cannot start" or the scope is over budget.** Narrow the scope, or raise `dataLineageViz.ai.maxRounds`, `dataLineageViz.ai.maxTraceColumns`, `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget`. A new value applies from the next request.
 - **The response ends when I click Change scope.** This is by design. Type the change into the prefilled chat input, for example `remove DimCalendar`, and send it.
-- **Deep analysis stops early.** A provider failure or repeated replies without progress can end a run. The error names the object it stopped at. Ask again, or exclude that object.
+- **Deep analysis stops early.** A provider or network failure, or three model replies that are not accepted, ends a run. The chat line names the source and quotes the provider's message; rejected replies name the object. Ask again, or exclude that object.
 - **Long silence during deep analysis.** The model is usually still generating; the hop counter advances as hops finish. Use the chat **Stop** button for a hung request.
 
 ## Table statistics
