@@ -1,6 +1,19 @@
 # Changelog
 
-## [1.2.6] - Unreleased
+## [1.3.0] - Unreleased
+
+### Changed
+- Column traces show join and filter columns as indirect sources.
+- AI follow-ups that name a border table bring in its next-level objects.
+
+### Fixed
+- Saved connections and column-trace edges.
+- AI analysis: indirect lineage in answers, neighbor questions and column roles.
+
+### Dependencies
+- Build and test tooling: Vite 8, TypeScript 6, Vitest 5.
+
+## [1.2.6] - 2026-11-21
 
 ### Removed
 - SQL Server (mssql) extension connection and the `dataLineageViz.database.connectionProvider` setting; a saved mssql project asks to reconnect.
@@ -14,7 +27,7 @@
 - AI analysis: clearer rejection feedback and retries, analysis kept inside the approved scope, column traces, shorter prompts; output templates gain a shared section for business and technical capture.
 
 ### Dependencies
-- Security updates: dompurify, zod, fast-xml-parser, @azure/msal-node.
+- Security updates: dompurify, zod, fast-xml-parser, @azure/msal-node, undici, vite, fast-uri, markdown-it, @vitest/mocker.
 - Dependency updates (patch and minor releases).
 
 ## [1.2.5] - 2026-10-07
