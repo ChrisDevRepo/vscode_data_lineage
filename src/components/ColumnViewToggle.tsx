@@ -10,7 +10,7 @@ interface ColumnViewToggleProps {
 /** Objects/Detail switch shared by the live AI preview banner and the restored-bookmark banner. */
 export const ColumnViewToggle = memo(function ColumnViewToggle({ active, onToggle }: ColumnViewToggleProps) {
   return (
-    <Tooltip content={'Objects shows dependencies between objects.\nDetail shows the column-level findings of this analysis.'} placement="bottom" multiline>
+    <Tooltip content={'Objects shows dependencies between objects.\nDetail shows the column-level findings of this analysis, with the join and filter columns each step uses listed apart from the traced columns.'} placement="bottom" multiline>
       <div className="flex items-center gap-0.5" role="group" aria-label="View detail level">
         <button
           onClick={() => onToggle(false)}

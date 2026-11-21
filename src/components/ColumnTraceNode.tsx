@@ -19,6 +19,8 @@ import {
 import { useColumnHover } from '../contexts/ColumnHoverContext';
 import { TYPE_COLORS, SHORT_TYPE_LABELS, getSchemaColor } from '../utils/schemaColors';
 import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
+import { Tooltip } from './ui/Tooltip';
+import { COLUMN_TRANSFORM_CLASS_LABELS } from './ColumnTraceEdge';
 import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import { NodeRemoveButton, TraceControlsRail, TraceNeighborPickerToolbar } from './CustomNode';
 import { useTraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
@@ -83,6 +85,7 @@ function ColumnTraceRowLine({
   nodeId,
   nodeTitle,
   lineState,
+  startsIndirect,
   focused,
   isTabStop,
   registerRef,
@@ -95,6 +98,8 @@ function ColumnTraceRowLine({
   nodeId: string;
   nodeTitle: string;
   lineState: ColumnLineState | undefined;
+  /** First of the indirect-only rows, which follow the direct rows below a dashed rule. */
+  startsIndirect: boolean;
   focused: boolean;
   isTabStop: boolean;
   registerRef: (name: string, el: HTMLDivElement | null) => void;
@@ -110,6 +115,8 @@ function ColumnTraceRowLine({
 
   const style: CSSProperties = {
     height: COLUMN_ROW_HEIGHT,
+    boxSizing: 'border-box',
+    ...(startsIndirect ? { borderTop: '1px dashed var(--ln-border-light)' } : {}),
     display: 'flex',
     alignItems: 'center',
     gap: 6,
@@ -123,7 +130,8 @@ function ColumnTraceRowLine({
     transition: ROW_TRANSITION,
   };
 
-  const ariaLabel = `${nodeTitle} column ${row.name}${row.dataType ? `, ${row.dataType}` : ''}`;
+  const marks = row.indirect?.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]);
+  const ariaLabel = `${nodeTitle} column ${row.name}${row.dataType ? `, ${row.dataType}` : ''}${marks ? `, ${marks.join(' · ')}` : ''}`;
 
   return (
     <div
@@ -132,6 +140,7 @@ function ColumnTraceRowLine({
       role="listitem"
       tabIndex={isTabStop ? 0 : -1}
       aria-label={ariaLabel}
+      data-indirect={row.indirect?.join(' ')}
       onKeyDown={event => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
@@ -158,9 +167,16 @@ function ColumnTraceRowLine({
           backgroundColor: lineStateColor(lineState),
         }}
       />
-      <span className="text-[10px]" style={{ color: 'var(--ln-fg)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isHoveredRow ? 600 : 400 }}>
+      <span className="text-[10px]" style={{ color: row.indirectOnly ? 'var(--ln-fg-muted)' : 'var(--ln-fg)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isHoveredRow ? 600 : 400 }}>
         {row.name}
       </span>
+      {marks && (
+        <Tooltip content={row.clause ?? marks.join(' · ')} placement="top" multiline asChild>
+          <span className="text-[10px]" aria-hidden="true" style={{ color: 'var(--ln-fg-muted)', flexShrink: 0, fontStyle: 'italic', whiteSpace: 'nowrap' }}>
+            {marks.join(' · ')}
+          </span>
+        </Tooltip>
+      )}
       {row.dataType && (
         <span className="text-[9px]" style={{ color: 'var(--ln-fg-muted)', flexShrink: 0, whiteSpace: 'nowrap' }}>
           {row.dataType}
@@ -372,9 +388,10 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
           </div>
 
           <div role="list" style={{ position: 'relative', height: rowsBlockHeight, flexShrink: 0 }}>
-            {view.rows.map((row) => (
+            {view.rows.map((row, i) => (
               <ColumnTraceRowLine
                 key={row.name}
+                startsIndirect={!!row.indirectOnly && !view.rows[i - 1]?.indirectOnly && i > 0}
                 row={row}
                 nodeId={id}
                 nodeTitle={nodeTitle}

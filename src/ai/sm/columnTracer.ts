@@ -8,7 +8,6 @@ import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName, schemaKey } from '../../utils/sql';
-import { sanitizeForLog } from '../../utils/log';
 import { DirectedGraph } from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 
@@ -170,6 +169,7 @@ export class ColumnTracer {
   ): Array<{ node: string; col: string }> {
     const endpoints = new Map<string, { node: string; col: string }>();
     for (const e of this.aspect.edges) {
+      if (isIndirectOnly(e.transforms)) continue;
       const node = traceDirection === 'downstream' ? e.to_node : e.from_node;
       const col = traceDirection === 'downstream' ? e.to_col : e.from_col;
       if (!col || (node !== candidateNodeId && !writtenCarrierIds.has(node))) continue;
@@ -191,7 +191,7 @@ export class ColumnTracer {
    */
   getColumnLineageQuestionsByNode(focusId: string, hopCount: number): Map<string, string[]> {
     const hopEdges = this.aspect.edges.filter(
-      e => e.hop_node === focusId && e.hop === hopCount && e.from_node !== e.hop_node,
+      e => e.hop_node === focusId && e.hop === hopCount && e.from_node !== e.hop_node && !isIndirectOnly(e.transforms),
     );
     const byNode = new Map<string, string[]>();
     if (hopEdges.length === 0) return byNode;
@@ -287,13 +287,13 @@ export class ColumnTracer {
     const activeNorm = this.aspect.active_columns.map(this.columnKey);
     const entryEdges = new Map<number, ColumnEdge[]>();
     const endpointKey = columnEndpointKeyFactory(nodeMap, model.identifierCaseSensitive);
-    const committedRefs = this.aspect.edges.flatMap(edge => [
+    const committedRefs = this.aspect.edges.filter(edge => !isIndirectOnly(edge.transforms)).flatMap(edge => [
       { node: edge.from_node, col: edge.from_col },
       { node: edge.to_node, col: edge.to_col },
     ]);
     const anchors = new Map((incomingRefs ?? committedRefs)
       .map(ref => [endpointKey(ref.node, ref.col), `${resolveModelNodeId(ref.node, nodeMap, model.identifierCaseSensitive) ?? ref.node}.${ref.col}`]));
-    if (incomingRefs === undefined && this.aspect.edges.length === 0) {
+    if (incomingRefs === undefined && committedRefs.length === 0) {
       for (const col of this.aspect.active_columns) anchors.set(endpointKey(focusId, col), `${focusId}.${col}`);
     }
 
@@ -377,7 +377,8 @@ export class ColumnTracer {
       }
       const toNodeForEdge = toNodeId ?? focusId;
 
-      const rowRoleOnly: string[] = [];
+      let directStaged = false;
+      let indirectSeen = false;
       for (let refIndex = 0; refIndex < entry.upstream_columns.length; refIndex++) {
         const cont = entry.upstream_columns[refIndex];
         if (cont.col.trim().length === 0) {
@@ -472,12 +473,15 @@ export class ColumnTracer {
           continue;
         }
 
-        // Direct lineage only: a column that just joins, filters, groups or orders rows is object
-        // lineage; its node is a row-role visit and the hop's sections explain the rule.
-        if (!continuationNeighbors && isIndirectOnly(cont.transforms)) {
-          rowRoleOnly.push(`${fromNode}.${cont.col} (${(cont.transforms ?? []).join('+')}${cont.note ? `: ${sanitizeForLog(cont.note)}` : ''})`);
-          continue;
-        }
+        // A column that only joins, filters, groups or orders rows is a stored indirect fact of this
+        // output: one per hop, endpoint pair and class set; it never carries or continues the trace.
+        const edgeIndirect = isIndirectOnly(cont.transforms);
+        indirectSeen ||= edgeIndirect;
+        if (edgeIndirect && [...this.aspect.edges, ...stagedEdges].some(edge => edge.hop_node === focusId
+          && edge.from_node === fromNode && this.columnKey(edge.from_col) === this.columnKey(cont.col)
+          && edge.to_node === toNodeForEdge && this.columnKey(edge.to_col) === this.columnKey(toCol)
+          && [...edge.transforms ?? []].sort().join() === [...cont.transforms ?? []].sort().join())) continue;
+        if (!edgeIndirect) directStaged = true;
 
         stagedEdges.push({
           hop: 0, // Assigned by caller
@@ -491,14 +495,10 @@ export class ColumnTracer {
         });
       }
 
-      if (rowRoleOnly.length > 0) {
-        log?.('debug', `[Normalize] column_flow.${entryIndex} into "${entry.out_col}" — row role only, not a column source: [${rowRoleOnly.join(', ')}]`);
-      }
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
-      const sourceStaged = stagedEdges.length > stagedBeforeEntry;
       if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
-        && (entry.upstream_columns.length === 0 || (sourceStaged ? anchors.has(endpointKey(focusId, entry.out_col)) : rowRoleOnly.length > 0))) {
+        && (entry.upstream_columns.length === 0 || (directStaged ? anchors.has(endpointKey(focusId, entry.out_col)) : indirectSeen))) {
         stagedEdges.push({
           hop: 0, // Assigned by caller
           hop_node: focusId,
@@ -517,8 +517,9 @@ export class ColumnTracer {
     const closureEdges = [...this.aspect.edges, ...stagedEdges];
     const attached = columnAttachment(roots, closureEdges, mixed ? 'upstream' : traceDirection, endpointKey);
     const downstreamAttached = mixed ? columnAttachment(roots, closureEdges, 'downstream', endpointKey) : undefined;
+    // Only a direct link must attach; an indirect fact rides on its entry.
     const detachedIn = (edges: ColumnEdge[], closure: ColumnAttachment): ColumnEdge[] =>
-      edges.filter(edge => !closure.attaches(edge));
+      edges.filter(edge => !isIndirectOnly(edge.transforms) && !closure.attaches(edge));
     const rejectDetached = (entryIndex: number, detached: ColumnEdge[]): void => {
       const entry = columnFlow[entryIndex];
       const tracked = [...anchors.values()].join(', ');
@@ -568,9 +569,10 @@ export class ColumnTracer {
           continue;
         }
       }
-      if (edges.length === 0 && entry.upstream_columns.length > 0) continue;
-      const attachedUpstream = edges.length === 0 ? anchors.has(endpointKey(focusId, entry.out_col)) : upDetached.length === 0;
-      const attachedDownstream = edges.length > 0 && downDetached?.length === 0;
+      const directEdges = edges.filter(edge => !isIndirectOnly(edge.transforms));
+      if (directEdges.length === 0 && entry.upstream_columns.length > 0) continue;
+      const attachedUpstream = directEdges.length === 0 ? anchors.has(endpointKey(focusId, entry.out_col)) : upDetached.length === 0;
+      const attachedDownstream = directEdges.length > 0 && downDetached?.length === 0;
       const upstream = attachedUpstream && activeNorm.includes(this.columnKey(entry.out_col));
       if (mixed ? upstream || attachedDownstream : attachedUpstream) {
         entrySides.push({ index: entryIndex, upstream, downstream: attachedDownstream });
@@ -633,7 +635,7 @@ export function reachableColumnEndpoints(
 }
 
 /** The fields of a column edge that {@link columnClosure} reads. */
-export type ColumnClosureEdge = Pick<ColumnEdge, 'hop_node' | 'from_node' | 'from_col' | 'to_node' | 'to_col'>;
+export type ColumnClosureEdge = Pick<ColumnEdge, 'hop_node' | 'from_node' | 'from_col' | 'to_node' | 'to_col' | 'transforms'>;
 
 /** Which column endpoints and edges are attached to the trace; see {@link columnAttachment}. */
 export interface ColumnAttachment {
@@ -658,7 +660,8 @@ export interface ColumnAttachment {
  * Upstream: the requested outputs and everything that feeds them. Downstream: the outputs,
  * everything they feed, and every input of what they feed (a second contributor to a reached output
  * is attached, its other outputs are not). Both: the union. An edge is attached when its `to`
- * endpoint is.
+ * endpoint is. An indirect edge (every class INDIRECT) is no link: it extends nothing and is
+ * attached when either endpoint is.
  *
  * The origin's explicit write of a requested output (an edge from the root out of the origin hop to
  * another node) attaches that destination when the direction rule does not already hold it, with
@@ -674,7 +677,8 @@ export function columnAttachment(
   endpointKey: (node: string, col: string) => string,
 ): ColumnAttachment {
   const rootKeys = new Set(roots.map(root => endpointKey(root.node, root.col)));
-  const links = edges.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) }));
+  const direct = edges.filter(edge => !isIndirectOnly(edge.transforms));
+  const links = direct.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) }));
   const endpoints = new Set(rootKeys);
   if (direction !== 'downstream') for (const key of reachableColumnEndpoints(rootKeys, links, 'upstream')) endpoints.add(key);
   const flowing = new Set(rootKeys);
@@ -684,13 +688,13 @@ export function columnAttachment(
     for (const key of reachableColumnEndpoints(fed, links, 'upstream')) endpoints.add(key);
   }
   const ownWrites = new Map<string, string>();
-  edges.forEach((edge, index) => {
+  direct.forEach((edge, index) => {
     if (edge.from_node === edge.hop_node && edge.to_node !== edge.from_node && rootKeys.has(links[index].from)
       && !endpoints.has(links[index].to)) ownWrites.set(links[index].to, edge.hop_node);
   });
   if (ownWrites.size > 0) {
     const ownInputs = new Set<string>();
-    edges.forEach((edge, index) => { if (ownWrites.get(links[index].to) === edge.hop_node) ownInputs.add(links[index].from); });
+    direct.forEach((edge, index) => { if (ownWrites.get(links[index].to) === edge.hop_node) ownInputs.add(links[index].from); });
     for (const key of ownWrites.keys()) endpoints.add(key);
     for (const key of reachableColumnEndpoints(ownInputs, links.filter(link => !ownWrites.has(link.to)), 'upstream')) endpoints.add(key);
   }
@@ -699,6 +703,7 @@ export function columnAttachment(
     flowing,
     attaches: edge => {
       const to = endpointKey(edge.to_node, edge.to_col);
+      if (isIndirectOnly(edge.transforms)) return endpoints.has(to) || endpoints.has(endpointKey(edge.from_node, edge.from_col));
       return endpoints.has(to) && (!ownWrites.has(to) || ownWrites.get(to) === edge.hop_node);
     },
   };
@@ -728,7 +733,7 @@ export interface ColumnFlowTargetResolution {
  * Resolves where one `column_flow` entry's recorded columns land. Attribution edges (one per
  * upstream real column) land on `writes_to.node` when named, else on the focus.
  * {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier relation, staged only for a
- * source-free entry, an anchored focus output or a row-role-only entry (never beside a source pair);
+ * source-free entry, an anchored focus output or an entry whose sources are all indirect (never beside a direct pair);
  * explicit `null` declares no table write, and omission defaults
  * attribution to the focus without inferring a write target from topology or column names.
  *

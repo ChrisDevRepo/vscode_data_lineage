@@ -283,7 +283,7 @@ describe('columnTraceView', () => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.r'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
     const relations: ColumnTraceRelation[] = [
       { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Total', transforms: ['compute'], note: 'Qty * 2' },
-      { hopNode: 'dbo.p', fromNode: 'dbo.r', fromCol: 'Flag', toNode: 'dbo.t', toCol: 'Total', transforms: ['filter'], note: 'WHERE Flag = 1' },
+      { hopNode: 'dbo.p', fromNode: 'dbo.r', fromCol: 'Flag', toNode: 'dbo.t', toCol: 'Total', transforms: ['compute', 'filter'], note: 'WHERE Flag = 1' },
     ];
 
     const shared = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }).edges
@@ -639,13 +639,8 @@ describe('columnThread — directed trace cone', () => {
   });
 
   it('terminates on a cycle', () => {
-    const cyclic = buildColumnThreadIndex({
-      edges: [
-        { source: 'a', sourceColumn: 'x', target: 'b', targetColumn: 'x' },
-        { source: 'b', sourceColumn: 'x', target: 'a', targetColumn: 'x' },
-      ] as ColumnTraceViewEdge[],
-      portBridges: [],
-    });
+    const edges = [['a', 'b'], ['b', 'a']].map(([source, target]) => ({ source, sourceColumn: 'x', target, targetColumn: 'x' })) as ColumnTraceViewEdge[];
+    const cyclic = buildColumnThreadIndex({ edges, nodes: [], objectEdges: [], portBridges: [] });
     expect(columnThread(cyclic, columnRowKey('a', 'x')).size).toBe(2);
   });
 });

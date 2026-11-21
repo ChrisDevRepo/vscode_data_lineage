@@ -1741,7 +1741,9 @@ export function GraphCanvas({
         !highlightedNodeId || edge.source === highlightedNodeId || edge.target === highlightedNodeId;
 
       const objectEdges = columnTraceView.objectEdges.map(edge => {
-        const lit = !hoveredColumnPath && litBySelection(edge);
+        const lit = hoveredColumnPath
+          ? !!edge.columns?.some(column => hoveredColumnPath.has(columnRowKey(edge.source, column, model?.identifierCaseSensitive)))
+          : litBySelection(edge);
         return {
           id: edge.id,
           type: 'columnTraceEdge',
@@ -1758,10 +1760,11 @@ export function GraphCanvas({
           data: {
             state: 'unknown',
             lit,
-            focused: lit && !!highlightedNodeId,
+            focused: lit && (!!hoveredColumnPath || !!highlightedNodeId),
             sourceColumn: '',
             targetColumn: '',
             objectLevel: true,
+            ...(edge.columns ? { columns: edge.columns, transforms: edge.transforms, ...(edge.note ? { note: edge.note } : {}) } : {}),
           } satisfies ColumnTraceEdgeData,
         };
       });

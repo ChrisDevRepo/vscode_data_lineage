@@ -9,7 +9,7 @@
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName, schemaKey } from '../utils/sql';
-import type { ColumnAspectEdge, ColumnTransformClass, NodeVerdict } from './shared/bridgeContract';
+import { COLUMN_TRANSFORM_CLASSES, isIndirectOnly, type ColumnAspectEdge, type ColumnTransformClass, type NodeVerdict } from './shared/bridgeContract';
 import type { ExtensionConfig } from './types';
 
 /**
@@ -28,6 +28,18 @@ export type ColumnLineState = 'passthrough' | 'transformation' | 'unknown';
 export interface ColumnTraceRow {
   /** Extracted column name when available, else the recorded or borrowed transform-port name. */
   name: string;
+  /**
+   * Indirect classes (`COLUMN_TRANSFORM_DIRECTION`) the column plays at a step, in class order,
+   * beside any direct role; absent when no indirect fact names the column.
+   */
+  indirect?: ColumnTransformClass[];
+  /**
+   * The column only shapes rows and carries no value: no direct relation touches it. Such rows
+   * follow the direct rows of their node.
+   */
+  indirectOnly?: true;
+  /** One-clause model notes of its indirect facts ("ON c.Id = f.CustId"), one per line. */
+  clause?: string;
   /**
    * Declared SQL data type from the extracted model (backend metadata, never an AI claim); absent
    * for borrowed transform-port names and columns the host model declares no type for.
@@ -115,6 +127,15 @@ interface ColumnTraceViewObjectEdge {
   sourceHandle?: string;
   /** Handle on the target node: its first row's handle, absent on a node without rows. */
   targetHandle?: string;
+  /**
+   * Indirect columns of the source the target step uses (join keys and filter columns, once each
+   * however many traced columns repeat them); absent on a plain dependency.
+   */
+  columns?: string[];
+  /** Indirect classes of those columns, in class order. */
+  transforms?: ColumnTransformClass[];
+  /** The columns' model notes, one per line, each once. */
+  note?: string;
 }
 
 /**
@@ -273,9 +294,11 @@ export interface ColumnThreadIndex {
 /**
  * Indexes a column view's edges and port bridges by direction, once per view. A port bridge runs
  * `fromColumn → toColumn` as the value crosses the hop, so it is indexed like an edge; without it a
- * thread entering a renaming procedure would stop at its inbound port.
+ * thread entering a renaming procedure would stop at its inbound port. A combined line's columns link
+ * to the direct rows of the step using them, so a thread through the step lights its keys; no direct
+ * edge ever leaves one.
  */
-export function buildColumnThreadIndex(view: Pick<ColumnTraceView, 'edges' | 'portBridges' | 'identifierCaseSensitive'>): ColumnThreadIndex {
+export function buildColumnThreadIndex(view: Pick<ColumnTraceView, 'nodes' | 'edges' | 'objectEdges' | 'portBridges' | 'identifierCaseSensitive'>): ColumnThreadIndex {
   const index: ColumnThreadIndex = { down: new Map(), up: new Map() };
   const link = (from: string, to: string): void => {
     const down = index.down.get(from);
@@ -284,6 +307,14 @@ export function buildColumnThreadIndex(view: Pick<ColumnTraceView, 'edges' | 'po
     if (up) up.push(from); else index.up.set(to, [from]);
   };
   for (const edge of view.edges) link(columnRowKey(edge.source, edge.sourceColumn, view.identifierCaseSensitive), columnRowKey(edge.target, edge.targetColumn, view.identifierCaseSensitive));
+  const steps = new Map(view.nodes.map(node => [node.id, node]));
+  for (const { source, target, columns } of view.objectEdges) {
+    for (const column of columns ?? []) {
+      for (const row of steps.get(target)?.rows ?? []) {
+        if (!row.indirectOnly) link(columnRowKey(source, column, view.identifierCaseSensitive), columnRowKey(target, row.name, view.identifierCaseSensitive));
+      }
+    }
+  }
   for (const bridge of view.portBridges) link(columnRowKey(bridge.nodeId, bridge.fromColumn, view.identifierCaseSensitive), columnRowKey(bridge.nodeId, bridge.toColumn, view.identifierCaseSensitive));
   return index;
 }
@@ -365,21 +396,38 @@ interface NodeAccumulator {
   rowKeys: string[];
   /** Normalised row key to metadata display name, or first-seen spelling without metadata. */
   rowNames: Map<string, string>;
+  /** Row keys a direct relation touches. */
+  direct: Set<string>;
+  /** Row key to the indirect classes and notes of the facts naming it. */
+  indirect: Map<string, { classes: Set<ColumnTransformClass>; notes: string[] }>;
 }
 
-function touchRow(acc: NodeAccumulator, columnName: string, identifierCaseSensitive: boolean | undefined): string {
+/** Adds the column's row on first sight; `direct` false for a column only an indirect fact names. */
+function touchRow(acc: NodeAccumulator, columnName: string, identifierCaseSensitive: boolean | undefined, direct = true): string {
   const rowKey = normalizeColName(columnName, identifierCaseSensitive);
   if (!acc.rowNames.has(rowKey)) {
     acc.rowNames.set(rowKey, acc.object.columnNames?.get(rowKey) ?? columnName);
     acc.rowKeys.push(rowKey);
   }
+  if (direct) acc.direct.add(rowKey);
   return rowKey;
+}
+
+/** Row keys in display order: the direct rows in first-seen order, then the indirect-only rows. */
+function orderedRowKeys(acc: NodeAccumulator): string[] {
+  return [...acc.rowKeys.filter(key => acc.direct.has(key)), ...acc.rowKeys.filter(key => !acc.direct.has(key))];
 }
 
 /** Derives one node's rows: display name and declared type per touched row key. */
 function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
-  return acc.rowKeys.map((rowKey) => {
+  return orderedRowKeys(acc).map((rowKey) => {
     const row: ColumnTraceRow = { name: acc.rowNames.get(rowKey)! };
+    const use = acc.indirect.get(rowKey);
+    if (use) {
+      row.indirect = COLUMN_TRANSFORM_CLASSES.filter(c => use.classes.has(c));
+      if (!acc.direct.has(rowKey)) row.indirectOnly = true;
+      if (use.notes.length) row.clause = use.notes.join('\n');
+    }
     const dataType = acc.object.columnTypes?.get(rowKey);
     if (dataType) row.dataType = dataType;
     return row;
@@ -430,7 +478,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const key = schemaKey(object.id, input.identifierCaseSensitive);
     let acc = nodeAccs.get(key);
     if (!acc) {
-      acc = { object, rowKeys: [], rowNames: new Map() };
+      acc = { object, rowKeys: [], rowNames: new Map(), direct: new Set(), indirect: new Map() };
       nodeAccs.set(key, acc);
     }
     return acc;
@@ -456,9 +504,53 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   const portBridges: ColumnTracePortBridge[] = [];
   const seenBridges = new Set<string>();
 
+  /** Indirect use of one neighbour by one step: a combined line's content. */
+  interface IndirectUse {
+    source: NodeAccumulator;
+    step: NodeAccumulator;
+    columns: Map<string, string>;
+    classes: Set<ColumnTransformClass>;
+    notes: string[];
+  }
+  const indirectUses = new Map<string, IndirectUse>();
+
+  /**
+   * Records an indirect-only relation: a join key or filter column of the neighbour `fromNode` that
+   * the step uses. It becomes a row of the neighbour and one line to the step; no column edge, no
+   * port bridge, no row for the traced column, so it never continues a thread. The step is the hop
+   * node, or the target when the hop is not on the canvas. A transform hub has no column rows, so
+   * its key only reaches the line.
+   */
+  function recordIndirect(relation: ColumnTraceRelation, sourceObj: ColumnTraceViewObject | undefined, stepObj: ColumnTraceViewObject | undefined): void {
+    if (!sourceObj || !stepObj) return;
+    const sourceAcc = getAcc(sourceObj);
+    const stepAcc = getAcc(stepObj);
+    const classes = COLUMN_TRANSFORM_CLASSES.filter(c => relation.transforms?.includes(c));
+    let column = relation.fromCol;
+    if (!isColumnTraceTransformNode(sourceObj)) {
+      const rowKey = touchRow(sourceAcc, relation.fromCol, input.identifierCaseSensitive, false);
+      column = sourceAcc.rowNames.get(rowKey)!;
+      const use = sourceAcc.indirect.get(rowKey) ?? { classes: new Set<ColumnTransformClass>(), notes: [] };
+      sourceAcc.indirect.set(rowKey, use);
+      for (const c of classes) use.classes.add(c);
+      if (relation.note && !use.notes.includes(relation.note)) use.notes.push(relation.note);
+    }
+    if (sourceAcc === stepAcc) return;
+    const pair = JSON.stringify([schemaKey(sourceObj.id, input.identifierCaseSensitive), schemaKey(stepObj.id, input.identifierCaseSensitive)]);
+    const use = indirectUses.get(pair) ?? { source: sourceAcc, step: stepAcc, columns: new Map<string, string>(), classes: new Set<ColumnTransformClass>(), notes: [] };
+    indirectUses.set(pair, use);
+    use.columns.set(normalizeColName(column, input.identifierCaseSensitive), column);
+    for (const c of classes) use.classes.add(c);
+    if (relation.note && !use.notes.includes(relation.note)) use.notes.push(relation.note);
+  }
+
   input.relations.forEach((relation, index) => {
     const sourceObj = input.objects.get(schemaKey(relation.fromNode, input.identifierCaseSensitive));
     const targetObj = input.objects.get(schemaKey(relation.toNode, input.identifierCaseSensitive));
+    if (isIndirectOnly(relation.transforms)) {
+      recordIndirect(relation, sourceObj, input.objects.get(schemaKey(relation.hopNode, input.identifierCaseSensitive)) ?? targetObj);
+      return;
+    }
     if (!sourceObj || !targetObj) return;
 
     const sourceKey = schemaKey(sourceObj.id, input.identifierCaseSensitive);
@@ -571,6 +663,20 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   }
 
   const objectEdges: ColumnTraceViewObjectEdge[] = [];
+  const firstRow = (acc: NodeAccumulator) => {
+    const [key] = orderedRowKeys(acc);
+    return key === undefined ? undefined : acc.rowNames.get(key);
+  };
+  const objectEdge = (from: NodeAccumulator, to: NodeAccumulator, sourceRow: string | undefined): ColumnTraceViewObjectEdge => {
+    const targetRow = firstRow(to);
+    return {
+      id: `object::${from.object.id}->${to.object.id}`,
+      source: from.object.id,
+      target: to.object.id,
+      ...(sourceRow !== undefined ? { sourceHandle: columnHandleId(sourceRow, 'source', input.identifierCaseSensitive) } : {}),
+      ...(targetRow !== undefined ? { targetHandle: columnHandleId(targetRow, 'target', input.identifierCaseSensitive) } : {}),
+    };
+  };
   const seenObjectEdges = new Set<string>();
   for (const { source, target } of input.objectEdges ?? []) {
     const sourceAcc = nodeAccs.get(schemaKey(source, input.identifierCaseSensitive));
@@ -580,16 +686,23 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const pair = JSON.stringify([schemaKey(source, input.identifierCaseSensitive), schemaKey(target, input.identifierCaseSensitive)]);
     if (seenObjectEdges.has(pair)) continue;
     seenObjectEdges.add(pair);
-    const firstRow = (acc: NodeAccumulator) => acc.rowKeys.length > 0 ? acc.rowNames.get(acc.rowKeys[0]) : undefined;
-    const sourceRow = firstRow(sourceAcc);
-    const targetRow = firstRow(targetAcc);
-    objectEdges.push({
-      id: `object::${sourceAcc.object.id}->${targetAcc.object.id}`,
-      source: sourceAcc.object.id,
-      target: targetAcc.object.id,
-      ...(sourceRow !== undefined ? { sourceHandle: columnHandleId(sourceRow, 'source', input.identifierCaseSensitive) } : {}),
-      ...(targetRow !== undefined ? { targetHandle: columnHandleId(targetRow, 'target', input.identifierCaseSensitive) } : {}),
-    });
+    objectEdges.push(objectEdge(sourceAcc, targetAcc, firstRow(sourceAcc)));
+  }
+
+  // One combined line per neighbour and step for every indirect column of the pair, drawn beside a
+  // direct column leg or a plain dependency of the same pair, which it replaces as the line.
+  for (const { source, step, columns, classes, notes } of indirectUses.values()) {
+    const keys = [...columns.values()];
+    const line = {
+      columns: keys,
+      transforms: COLUMN_TRANSFORM_CLASSES.filter(c => classes.has(c)),
+      ...(notes.length ? { note: notes.join('\n') } : {}),
+    };
+    // A hub has no key rows, so its line leaves from its first port (or its own handle).
+    const fromRow = isColumnTraceTransformNode(source.object) ? firstRow(source) : keys[0];
+    const existing = objectEdges.find(e => e.source === source.object.id && e.target === step.object.id);
+    if (existing) Object.assign(existing, objectEdge(source, step, fromRow), line);
+    else objectEdges.push({ ...objectEdge(source, step, fromRow), ...line });
   }
 
   const boxes = new Map(nodes.map(n => [n.id, { width: n.width, height: n.height }]));

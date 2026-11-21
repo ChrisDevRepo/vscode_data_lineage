@@ -11,7 +11,7 @@ import { quoteIds } from '../support/text';
 import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
 import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { FOCUS_NODE_HREF_PREFIX, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
+import { FOCUS_NODE_HREF_PREFIX, isIndirectOnly, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
 import { marked } from 'marked';
@@ -890,23 +890,25 @@ export type ColumnChainEdge = {
 };
 
 /**
- * Builds the engine-owned "Column Chain" preface of a CT result from validated column-flow edges,
- * as one deterministic Output | Source | Role table, so it cannot drift from the recorded edges.
+ * Builds the engine-owned "Column Chain" preface of a CT result from the validated direct
+ * column-flow edges (an indirect fact is not a chain step), as one deterministic
+ * Output | Source | Role table, so it cannot drift from the recorded edges.
  * Rows are grouped by output in first-capture order, then by hop; each output is named on its
  * first row only. The hop index is not shown: it identifies evidence capture, not a storage step.
  * The unnumbered `## Column Chain` heading takes no section number or navigation chip; the
  * renderer collapses it into supporting evidence.
  *
  * @param nodeMap - Catalog nodes by id; a known node is shown by its source-case `fullName`.
- * @returns The preface markdown, or `undefined` when no edge was recorded.
+ * @returns The preface markdown, or `undefined` when no direct edge was recorded.
  */
 export function buildColumnChainPreface(
   edges: readonly ColumnChainEdge[],
   nodeMap?: ReadonlyMap<string, { fullName: string }>,
 ): string | undefined {
-  if (edges.length === 0) return undefined;
+  const direct = edges.filter(edge => !isIndirectOnly(edge.transforms));
+  if (direct.length === 0) return undefined;
   const outputs = new Map<string, ColumnChainEdge[]>();
-  for (const edge of [...edges].sort((a, b) => a.hop - b.hop)) {
+  for (const edge of [...direct].sort((a, b) => a.hop - b.hop)) {
     const key = JSON.stringify([edge.to_node, edge.to_col]);
     const group = outputs.get(key);
     if (group) group.push(edge);
@@ -975,22 +977,23 @@ export function requiredDetailSlotIds(
 }
 
 /**
- * Column-chain node ids a present call must cover with a section link or a note: chain nodes the
- * render keeps that have no detail slot and are not pruned. The synthesis envelope lists this set
+ * Column-chain node ids a present call must cover with a section link or a note: nodes of the
+ * direct column edges the render keeps that have no detail slot and are not pruned. The synthesis envelope lists this set
  * and the present handler enforces it (one source for list and check).
  *
  * @param exemptNodeIds - Node ids with a detail slot or a prune state.
  * @param keyOf - Identifier key under the model's case sensitivity.
  */
 export function requiredCtChainNodeIds(
-  edges: ReadonlyArray<{ from_node: string; to_node: string; hop_node: string }>,
+  edges: ReadonlyArray<{ from_node: string; to_node: string; hop_node: string; transforms?: readonly ColumnTransformClass[] }>,
   renderedNodeIds: readonly string[],
   exemptNodeIds: readonly string[],
   keyOf: (id: string) => string,
 ): string[] {
-  if (edges.length === 0) return [];
+  const direct = edges.filter(edge => !isIndirectOnly(edge.transforms));
+  if (direct.length === 0) return [];
   const exempt = new Set(exemptNodeIds.map(keyOf));
-  const chain = new Set(edges.flatMap(edge => [keyOf(edge.from_node), keyOf(edge.to_node), keyOf(edge.hop_node)]));
+  const chain = new Set(direct.flatMap(edge => [keyOf(edge.from_node), keyOf(edge.to_node), keyOf(edge.hop_node)]));
   return renderedNodeIds.filter(id => chain.has(keyOf(id)) && !exempt.has(keyOf(id)));
 }
 

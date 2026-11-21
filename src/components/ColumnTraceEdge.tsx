@@ -6,7 +6,7 @@ import {
   type EdgeProps,
 } from '@xyflow/react';
 import { Tooltip } from './ui/Tooltip';
-import { isIndirectOnly, type ColumnTransformClass } from '../engine/shared/bridgeContract';
+import type { ColumnTransformClass } from '../engine/shared/bridgeContract';
 import { COLUMN_EDGE_DIM_OPACITY } from '../engine/columnTraceView';
 import type { ColumnLineState } from '../engine/columnTraceView';
 
@@ -17,9 +17,8 @@ const LIT_STROKE_WIDTH = 1.6;
 const DIM_STROKE_WIDTH = 1;
 
 /**
- * Dash pattern of an edge that only shaped which rows arrive, never the value (OpenLineage's
- * INDIRECT class, e.g. a WHERE or JOIN predicate column). An INDIRECT-only edge in
- * `COLUMN_TRANSFORM_DIRECTION` is drawn dashed.
+ * Dash pattern of an object-level line: no column value crosses it, and the combined line of
+ * indirect columns (OpenLineage's INDIRECT class, e.g. a WHERE or JOIN predicate column) is one.
  */
 const INDIRECT_DASH_PATTERN = '5 4';
 
@@ -52,14 +51,16 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
   /** One-clause model note for the edge; absent whenever the model offered none. */
   note?: string;
   /**
-   * Object-level dependency rather than a column thread: drawn broken (no column value crosses it)
-   * and never marked with a chip.
+   * Object-level dependency rather than a column thread: drawn broken (no column value crosses it).
+   * Marked with a chip only when it is the combined line of indirect columns (`transforms` set).
    */
   objectLevel?: boolean;
+  /** Indirect columns a combined object-level line stands for, named in its tooltip. */
+  columns?: string[];
 }
 
 /** Display name of a transform class, as the first line of the chip tooltip; user-facing. */
-const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
+export const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
   pass_through: 'Pass through',
   compute: 'Compute',
   aggregate: 'Aggregate',
@@ -76,19 +77,21 @@ function markedTransformClasses(transforms: readonly ColumnTransformClass[] | un
  * Tooltip text of the marker chip: the class names, then the model's one-clause note when it gave
  * one, else the structural description.
  *
- * A `pass_through`-only edge never reaches here (it renders no chip). `filter`/`combine` are
- * INDIRECT, so the fallback describes what the edge does to the row set, not a value change.
+ * A `pass_through`-only edge never reaches here (it renders no chip). A combined line of indirect
+ * columns (`columns` set) names them, the fallback saying they shape the row set, not a value.
  * Exported so the contract is testable without hover.
  * @internal
  */
-export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
+export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note' | 'columns'>): string {
   const classes = markedTransformClasses(data.transforms);
+  if (data.columns) {
+    const columns = data.columns.join(', ');
+    return `${classes.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${data.note ? `${columns}\n${data.note}` : `${columns} — shapes which rows reach here.`}`;
+  }
   if (classes.length === 0) {
     return data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
   }
-  const indirectOnly = isIndirectOnly(classes);
-  const detail = data.note
-    ?? `${data.sourceColumn} → ${data.targetColumn} — ${indirectOnly ? 'shapes which rows reach here.' : 'the value changes here.'}`;
+  const detail = data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
   return `${classes.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${detail}`;
 }
 
@@ -207,7 +210,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   markerEnd,
   data,
 }: EdgeProps) {
-  const { state, lit, focused, sourceColumn, targetColumn, transforms, note, objectLevel } = (data ?? {}) as ColumnTraceEdgeData;
+  const { state, lit, focused, sourceColumn, targetColumn, transforms, note, columns, objectLevel } = (data ?? {}) as ColumnTraceEdgeData;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -219,12 +222,11 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const opacity = lit ? 1 : COLUMN_EDGE_DIM_OPACITY;
   const classes = markedTransformClasses(transforms);
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
-  const indirect = !!objectLevel || isIndirectOnly(classes);
-  const showChip = !objectLevel && !identityOnly && (state === 'transformation' || classes.length > 0);
+  const showChip = objectLevel ? classes.length > 0 : !identityOnly && (state === 'transformation' || classes.length > 0);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
   const overflow = classes.length - shown.length;
   const stroke = lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)';
-  const description = showChip ? describeColumnEdge({ sourceColumn, targetColumn, transforms, note }) : '';
+  const description = showChip ? describeColumnEdge({ sourceColumn, targetColumn, transforms, note, columns }) : '';
 
   return (
     <>
@@ -235,7 +237,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
           stroke,
           strokeWidth: lit ? LIT_STROKE_WIDTH : DIM_STROKE_WIDTH,
           opacity,
-          ...(indirect ? { strokeDasharray: INDIRECT_DASH_PATTERN } : {}),
+          ...(objectLevel ? { strokeDasharray: INDIRECT_DASH_PATTERN } : {}),
         }}
       />
       {showChip && (

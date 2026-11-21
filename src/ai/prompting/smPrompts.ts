@@ -8,6 +8,7 @@ import { escapePromptText } from '../support/text';
 import { assignEvidenceIds, requiredCtChainNodeIds, requiredDetailSlotIds } from '../tools/presentResult';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
+import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 
 /**
  * Suffix appended when a passthrough-inherited sub-question lands on a bodied focus: names the
@@ -482,8 +483,10 @@ export function buildSmCompletionEnvelope(
 ): SmCompletionEnvelope {
   const presentedNodeIds = result.fullNodes.map(node => node.id);
   const presented = new Set(presentedNodeIds);
-  const flowBlock = result.columnAspect && result.columnAspect.edges.length > 0
-    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.edges, presented)
+  // The synthesis chain is direct lineage; stored indirect facts reach only the view payload.
+  const directColumnEdges = result.columnAspect?.edges.filter(edge => !isIndirectOnly(edge.transforms)) ?? [];
+  const flowBlock = directColumnEdges.length > 0
+    ? '\n' + buildCtSynthesisBlock(result.originNodeId, directColumnEdges, result.edges, presented)
     : result.edges.length > 0
       ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
       : '';
