@@ -2726,6 +2726,15 @@ export class NavigationEngine implements IHopStateMachine {
     return { done: false, sm_status: 'error' };
   }
 
+  /** Open directional neighbours of `focusId` with their route-admission result. */
+  private openDirectionalNeighbors(focusId: string) {
+    return Array.from(this.directionalNeighbors(focusId, this._direction)).flatMap(nid => {
+      if (this.visited.has(nid) || this._agenda.has(nid) || this.removedSet.has(nid)) return [];
+      const node = this.nodeMap.get(nid);
+      return node ? [{ nid, admission: this.admitsRoute(nid, node, focusId) }] : [];
+    });
+  }
+
   /**
    * Unvisited, un-queued, un-removed directional neighbors of `focusId` the router would admit a
    * route to now: the open neighbours a kept submit enqueues unless it prunes them, in both modes.
@@ -2737,12 +2746,7 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns Neighbor ids that must be routed or accounted for before the walk advances.
    */
   public requiredNeighborIds(focusId: string): string[] {
-    return Array.from(this.directionalNeighbors(focusId, this._direction))
-      .filter(nid => !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
-      .filter(nid => {
-        const node = this.nodeMap.get(nid);
-        return node !== undefined && this.admitsRoute(nid, node, focusId).admitted;
-      });
+    return this.openDirectionalNeighbors(focusId).filter(e => e.admission.admitted).map(e => e.nid);
   }
 
   /**
@@ -2752,15 +2756,9 @@ export class NavigationEngine implements IHopStateMachine {
    * only because of the depth border.
    */
   private borderDeferredNeighborIds(focusId: string): string[] {
-    return Array.from(this.directionalNeighbors(focusId, this._direction))
-      .filter(nid => !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
-      .filter(nid => {
-        const node = this.nodeMap.get(nid);
-        if (node === undefined) return false;
-        const admission = this.admitsRoute(nid, node, focusId);
-        if (admission.admitted) return false;
-        return admission.border.kind === 'in_border' && admission.depthBreach !== null;
-      });
+    return this.openDirectionalNeighbors(focusId)
+      .filter(({ admission }) => !admission.admitted && admission.border.kind === 'in_border' && admission.depthBreach !== null)
+      .map(e => e.nid);
   }
 
   /**
@@ -4376,6 +4374,8 @@ export class NavigationEngine implements IHopStateMachine {
    * become arrays); the companion to {@link toJSON}'s top-level fields.
    */
   private serializeInternals(): EngineInternalsSnapshot {
+    const heldFinding = this.heldFindingDraft.get();
+    const heldAuth = this.heldFindingDraft.getAuthorization();
     return {
       originNodeId: this.originNodeId,
       direction: this._direction,
@@ -4414,10 +4414,10 @@ export class NavigationEngine implements IHopStateMachine {
       continuationVersion: 1,
       supplementNodeIds: [...this.supplementNodeIds],
       pruneBallots: [...this.pruneBallots].map(([nodeId, votes]) => ({ nodeId, votes: [...votes].map(([senderId, vote]) => ({ senderId, vote })) })),
-      heldFinding: this.heldFindingDraft.get() ? {
-        focusId: this.heldFindingDraft.getAuthorization()!.focusId, hop: this.heldFindingDraft.getAuthorization()!.hop, mode: this.heldFindingDraft.getAuthorization()!.mode,
-        failed: [...(this.heldFindingDraft.getAuthorization()?.failed ?? [])],
-        finding: structuredClone(this.heldFindingDraft.get()!),
+      heldFinding: heldFinding && heldAuth ? {
+        focusId: heldAuth.focusId, hop: heldAuth.hop, mode: heldAuth.mode,
+        failed: [...heldAuth.failed],
+        finding: structuredClone(heldFinding),
       } : null,
     };
   }

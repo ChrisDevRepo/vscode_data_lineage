@@ -526,22 +526,24 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const sourceAcc = getAcc(sourceObj);
     const stepAcc = getAcc(stepObj);
     const classes = COLUMN_TRANSFORM_CLASSES.filter(c => relation.transforms?.includes(c));
+    const addIndirectFact = (use: { classes: Set<ColumnTransformClass>; notes: string[] }): void => {
+      for (const c of classes) use.classes.add(c);
+      if (relation.note && !use.notes.includes(relation.note)) use.notes.push(relation.note);
+    };
     let column = relation.fromCol;
     if (!isColumnTraceTransformNode(sourceObj)) {
       const rowKey = touchRow(sourceAcc, relation.fromCol, input.identifierCaseSensitive, false);
       column = sourceAcc.rowNames.get(rowKey)!;
       const use = sourceAcc.indirect.get(rowKey) ?? { classes: new Set<ColumnTransformClass>(), notes: [] };
       sourceAcc.indirect.set(rowKey, use);
-      for (const c of classes) use.classes.add(c);
-      if (relation.note && !use.notes.includes(relation.note)) use.notes.push(relation.note);
+      addIndirectFact(use);
     }
     if (sourceAcc === stepAcc) return;
     const pair = JSON.stringify([schemaKey(sourceObj.id, input.identifierCaseSensitive), schemaKey(stepObj.id, input.identifierCaseSensitive)]);
     const use = indirectUses.get(pair) ?? { source: sourceAcc, step: stepAcc, columns: new Map<string, string>(), classes: new Set<ColumnTransformClass>(), notes: [] };
     indirectUses.set(pair, use);
     use.columns.set(normalizeColName(column, input.identifierCaseSensitive), column);
-    for (const c of classes) use.classes.add(c);
-    if (relation.note && !use.notes.includes(relation.note)) use.notes.push(relation.note);
+    addIndirectFact(use);
   }
 
   input.relations.forEach((relation, index) => {
@@ -664,7 +666,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
 
   const objectEdges: ColumnTraceViewObjectEdge[] = [];
   const firstRow = (acc: NodeAccumulator) => {
-    const [key] = orderedRowKeys(acc);
+    const key = acc.rowKeys.find(k => acc.direct.has(k)) ?? acc.rowKeys[0];
     return key === undefined ? undefined : acc.rowNames.get(key);
   };
   const objectEdge = (from: NodeAccumulator, to: NodeAccumulator, sourceRow: string | undefined): ColumnTraceViewObjectEdge => {

@@ -199,28 +199,12 @@ export function applyModelToSession(
   sess.model = model;
   sess.graph = buildBareGraph(model);
   sess.isDbSession = isDb;
-  if (project) {
-    sess.currentProjectId = project.id;
-    sess.projectName = project.name;
-    const p = store?.projects.find((p) => p.id === project.id);
-    if (isDb) {
-      if (p?.connection?.type === 'database') {
-        const ci = p.connection.connectionInfo;
-        sess.sourceLabel = `database (${ci.server} / ${ci.database})`;
-      } else {
-        sess.sourceLabel = 'database';
-      }
-    } else {
-      if (p?.connection?.type === 'dacpac') {
-        sess.sourceLabel = `dacpac (${path.basename(p.connection.path)})`;
-      } else {
-        sess.sourceLabel = 'dacpac';
-      }
-    }
-  } else {
-    sess.currentProjectId = null;
-    sess.sourceLabel = isDb ? 'database' : 'dacpac';
-  }
+  sess.currentProjectId = project?.id ?? null;
+  if (project) sess.projectName = project.name;
+  const conn = project ? store?.projects.find((p) => p.id === project.id)?.connection : undefined;
+  sess.sourceLabel = isDb
+    ? (conn?.type === 'database' ? `database (${conn.connectionInfo.server} / ${conn.connectionInfo.database})` : 'database')
+    : (conn?.type === 'dacpac' ? `dacpac (${path.basename(conn.path)})` : 'dacpac');
   void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
 }
 

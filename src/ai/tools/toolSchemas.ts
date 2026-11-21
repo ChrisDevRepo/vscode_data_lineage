@@ -1371,6 +1371,22 @@ export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[numbe
  */
 const repairPatchSchemaCache = new Map<string, z.ZodType>();
 
+/** A fixed-length repair array of indexed leaf objects whose `index` values must not repeat. */
+function indexedLeafList<T extends z.ZodType<{ index: number }>>(entries: readonly T[], kind: string) {
+  const item = entries.length === 1
+    ? entries[0]!
+    : z.union(entries as unknown as [T, T, ...T[]]);
+  return z.array(item).length(entries.length).superRefine((items, ctx) => {
+    const seen = new Set<number>();
+    for (const [entryIndex, entry] of items.entries()) {
+      if (seen.has(entry.index)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `${kind} index ${entry.index} is duplicated. Send each index once.` });
+      }
+      seen.add(entry.index);
+    }
+  });
+}
+
 /**
  * Builds the strict provider/runtime patch schema for a held-draft repair. Outside the visual
  * preview every presentation field stays sendable and replaces the held value, so extra fields are
@@ -1416,19 +1432,9 @@ export function presentResultRepairPatchSchemaForFields(
       index: z.literal(index).describe('Zero-based index of the held highlight group named by the rejection.'),
       label: HighlightGroupSchema.shape.label.describe('Replacement containing only this held group\'s short shared role or status, ending before any dash, colon, example or member list.'),
     }).strict());
-    const entrySchema = entrySchemas.length === 1
-      ? entrySchemas[0]!
-      : z.union(entrySchemas as [typeof entrySchemas[number], typeof entrySchemas[number], ...Array<typeof entrySchemas[number]>]);
     staged = staged.extend({
-      highlight_groups: z.array(entrySchema).length(labelIndexes.length).superRefine((entries, ctx) => {
-        const seen = new Set<number>();
-        for (const [entryIndex, entry] of entries.entries()) {
-          if (seen.has(entry.index)) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Highlight label index ${entry.index} is duplicated. Send each index once.` });
-          }
-          seen.add(entry.index);
-        }
-      }).describe(`Correct only the held overlong highlight labels at zero-based indexes ${labelIndexes.join(', ')}. Send one {index, label} entry per listed index; colors, node_ids, other labels and group order remain held.`),
+      highlight_groups: indexedLeafList(entrySchemas, 'Highlight label')
+        .describe(`Correct only the held overlong highlight labels at zero-based indexes ${labelIndexes.join(', ')}. Send one {index, label} entry per listed index; colors, node_ids, other labels and group order remain held.`),
     });
   }
   if (sectionLeaves) {
@@ -1441,17 +1447,9 @@ export function presentResultRepairPatchSchemaForFields(
         text: PresentResultSectionSchema.shape.text.describe('Corrected held section body.'),
       } : {}),
     }).strict());
-    const entrySchema = entrySchemas.length === 1
-      ? entrySchemas[0]!
-      : z.union(entrySchemas as [typeof entrySchemas[number], typeof entrySchemas[number], ...Array<typeof entrySchemas[number]>]);
     staged = staged.extend({
-      sections: z.array(entrySchema).length(sectionLeaves.length).superRefine((entries, ctx) => {
-        const seen = new Set<number>();
-        for (const [entryIndex, entry] of entries.entries()) {
-          if (seen.has(entry.index)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Section text index ${entry.index} is duplicated. Send each index once.` });
-          seen.add(entry.index);
-        }
-      }).describe(`Correct only rejected text leaves on held sections: ${sectionLeaves.map(leaf => `${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Node links, other text and order remain held.`),
+      sections: indexedLeafList(entrySchemas, 'Section text')
+        .describe(`Correct only rejected text leaves on held sections: ${sectionLeaves.map(leaf => `${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Node links, other text and order remain held.`),
     });
   }
   const declared = labelIndexes || sectionLeaves
