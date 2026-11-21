@@ -2210,6 +2210,51 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
+  /**
+   * Admits the SQL nodes behind a table a follow-up names: an exact depth border holds for tables,
+   * and only a follow-up naming the table goes one level further. The fold ({@link getHopContext})
+   * forwards the table's task to the same neighbours and drops one outside the scope, so each
+   * admissible one joins the scope here and its pending leads are scheduled like a named object's.
+   * A table itself past the border is added as a simple node with no new hop, so nothing behind it
+   * is admitted.
+   */
+  private admitNextSqlOf(tableId: string): void {
+    const table = this.nodeMap.get(tableId);
+    if (!table || SCRIPT_TYPES.has(table.type)) return;
+    const tableDepth = this.depthFromOrigin.get(tableId);
+    if (this.depthBorderBreach(tableId, tableDepth) !== null) return;
+    for (const nid of this.directionalNeighbors(tableId, this._direction)) {
+      if (this.scopeNodeIds.has(nid) || !this.canAdmitSqlNode(nid, 'supplement')) continue;
+      const depth = this.directedDepthFromOrigin(nid)?.depth ?? (tableDepth ?? 0) + 1;
+      this.admitToScope(nid, depth);
+      this._totalNodes++;
+      this.scheduleLeadsOf(nid);
+      this.log('debug', `[Supplement] admit next SQL node id=${nid} depth=${depth} behind table ${tableId}`);
+    }
+  }
+
+  /** Whether `nodeId` is an unvisited, unpruned SQL node the border `purpose` lets in. */
+  private canAdmitSqlNode(nodeId: string, purpose: BorderPurpose): boolean {
+    const node = this.nodeMap.get(nodeId);
+    return !!node && SCRIPT_TYPES.has(node.type) && !this.visited.has(nodeId) && !this.removedSet.has(nodeId)
+      && this.checkBorder(nodeId, node, purpose).kind === 'in_border';
+  }
+
+  /** Adds a bodied node to the scope at `depth` and records the growth. */
+  private admitToScope(nodeId: string, depth: number): void {
+    this.scopeNodeIds.add(nodeId);
+    this.bodiedScopeSize++;
+    this.depthFromOrigin.set(nodeId, depth);
+    this.budgetExpansions.push({ nodeId, depth, atHop: this.hopCount });
+  }
+
+  /** Schedules every pending lead on `nodeId`. */
+  private scheduleLeadsOf(nodeId: string): void {
+    for (const lead of this.taskLedger.pendingLeads) {
+      if (lead.status === 'pending' && this.identifierKey(lead.nodeId) === this.identifierKey(nodeId)) this.taskLedger.scheduleLead(lead.id);
+    }
+  }
+
   /** Returns pruned objects to the kept set, so a named target arrives with what it needs; `why` names the reason in the log. */
   private restoreConnectors(ids: readonly string[], why: string): void {
     const restored = ids.filter(id => this.removedSet.has(id));
@@ -2410,6 +2455,10 @@ export class NavigationEngine implements IHopStateMachine {
       }),
       'the SQL nodes a named table hands its question to',
     );
+    for (const request of prepared) {
+      const id = resolveModelNodeId(request.nodeId, this.nodeMap, this.model.identifierCaseSensitive);
+      if (id && admittedIds.has(id)) this.admitNextSqlOf(id);
+    }
     const agendaBefore = this._agenda.length;
     let skipped = admission.skipped.length;
     const skippedDetails: SupplementSkip[] = [...admission.skipped];
@@ -2450,9 +2499,7 @@ export class NavigationEngine implements IHopStateMachine {
       const existingDepth = this.depthFromOrigin.get(id);
       const depth = typeof existingDepth === 'number' ? existingDepth : 0;
       if (request.leadId) this.taskLedger.scheduleLead(request.leadId);
-      for (const lead of this.taskLedger.pendingLeads) {
-        if (lead.status === 'pending' && this.identifierKey(lead.nodeId) === this.identifierKey(id)) this.taskLedger.scheduleLead(lead.id);
-      }
+      this.scheduleLeadsOf(id);
       this.enqueueHop(id, request.question, depth, 3, {
         carry: request.carry,
         sourceRefs: request.leg?.sourceRefs,
@@ -3736,13 +3783,7 @@ export class NavigationEngine implements IHopStateMachine {
     } = opts;
     if (!this.scopeNodeIds.has(targetId) && priority !== 3) {
       const contractedTarget = this.nodeMap.get(targetId);
-      const canAdmitContraction = admitContractedBodiedTarget
-        && !!contractedTarget
-        && SCRIPT_TYPES.has(contractedTarget.type)
-        && !this.visited.has(targetId)
-        && !this.removedSet.has(targetId)
-        && this.checkBorder(targetId, contractedTarget, 'contraction').kind === 'in_border';
-      if (!canAdmitContraction) {
+      if (!admitContractedBodiedTarget || !this.canAdmitSqlNode(targetId, 'contraction')) {
         dispositions?.set(targetId, 'not_enqueued');
         this.log('debug', `[Disposition] enqueue drop ${targetId} — out-of-scope target (priority=${priority}, not deferred) via focus=${this.currentFocusNodeId ?? this.originNodeId ?? '(none)'}`);
         return;
@@ -3765,10 +3806,7 @@ export class NavigationEngine implements IHopStateMachine {
         return;
       }
       const admittedDepth = this.directedDepthFromOrigin(targetId)?.depth ?? depth;
-      this.scopeNodeIds.add(targetId);
-      this.bodiedScopeSize++;
-      this.depthFromOrigin.set(targetId, admittedDepth);
-      this.budgetExpansions.push({ nodeId: targetId, depth: admittedDepth, atHop: this.hopCount });
+      this.admitToScope(targetId, admittedDepth);
       this.log('debug', `[Depth] contraction add beyond initial scope id=${targetId} depth=${admittedDepth} hop=${this.hopCount}`);
     }
     if (this.visited.has(targetId) || this.removedSet.has(targetId)) {

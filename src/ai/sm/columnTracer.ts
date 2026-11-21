@@ -496,8 +496,9 @@ export class ColumnTracer {
       }
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
+      const sourceStaged = stagedEdges.length > stagedBeforeEntry;
       if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
-        && (entry.upstream_columns.length === 0 || stagedEdges.length > stagedBeforeEntry || rowRoleOnly.length > 0)) {
+        && (entry.upstream_columns.length === 0 || (sourceStaged ? anchors.has(endpointKey(focusId, entry.out_col)) : rowRoleOnly.length > 0))) {
         stagedEdges.push({
           hop: 0, // Assigned by caller
           hop_node: focusId,
@@ -726,11 +727,12 @@ export interface ColumnFlowTargetResolution {
 /**
  * Resolves where one `column_flow` entry's recorded columns land. Attribution edges (one per
  * upstream real column) land on `writes_to.node` when named, else on the focus.
- * {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier relation keeping the chain
- * connected to the traced origin; explicit `null` declares no table write, and omission defaults
+ * {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier relation, staged only for a
+ * source-free entry, an anchored focus output or a row-role-only entry (never beside a source pair);
+ * explicit `null` declares no table write, and omission defaults
  * attribution to the focus without inferring a write target from topology or column names.
  *
- * @returns The attribution target and writer edge to stage, or `null` when `writes_to` names a node
+ * @returns The attribution target and the writer edge available to stage, or `null` when `writes_to` names a node
  *   absent from the loaded model.
  */
 export function resolveColumnFlowTarget(
