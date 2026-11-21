@@ -530,8 +530,8 @@ const ColumnRefSchema = z.object({
   node: z.string(),
   col: z.string(),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
-    'Classify this source column’s own role end to end; omit when SQL does not determine it. ' +
-    'pass_through: unchanged value. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
+    'Classify this source column’s own role for out_col, end to end; omit when SQL does not determine it. ' +
+    'pass_through: out_col takes this column’s value unchanged. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
     'combine: join, grouping, partition or ordering key. filter: predicate ' +
     'selecting contributing rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
     'display-only sorting contributes no role.',
