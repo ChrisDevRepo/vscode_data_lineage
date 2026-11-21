@@ -51,7 +51,7 @@ describe('AgentRuntime LangSmith egress boundary', () => {
     const runtime = new AgentRuntime({
       threadId: 'thread-no-egress',
       getSession: () => session as never,
-      model: {} as never,
+      model: { identity: { name: 'Test model' } } as never,
       maxRounds: 10,
       registry: {} as never,
       sink,
@@ -59,9 +59,9 @@ describe('AgentRuntime LangSmith egress boundary', () => {
     });
 
     await expect(runtime.run('SECRET-PROMPT-MUST-STAY-LOCAL')).resolves.toBe('error');
-    expect(runtime.lastFailureDetail?.message).toContain(
-      'External LangChain tracing is not supported by @lineage',
-    );
+    expect(runtime.lastFailureDetail?.turnStop).toMatchObject({ source: 'internal', diagnostic: {
+      message: expect.stringContaining('External LangChain tracing is not supported by @lineage'),
+    } });
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(graph.invoke).not.toHaveBeenCalled();

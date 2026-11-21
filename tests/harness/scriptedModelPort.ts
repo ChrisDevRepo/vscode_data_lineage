@@ -23,7 +23,7 @@ import {
   estimateTokens,
   type TurnTokenBudget,
 } from '../../src/ai/support/tokenBudget';
-import { messageContentToText, modelToolCallMessage } from '../../src/ai/model/modelPort';
+import { errorToolTurnResult, messageContentToText, ModelPortError, modelToolCallMessage } from '../../src/ai/model/modelPort';
 import type { MessageContent } from '@langchain/core/messages';
 
 /** One queued provider generation replayed by {@link ScriptedModelPort} in script order. */
@@ -140,18 +140,8 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
       return { status: 'cancelled', content: [], text: '', toolCalls: [] };
     }
     if (step.status === 'error') {
-      return {
-        status: 'error',
-        content: [],
-        text: '',
-        toolCalls: [],
-        error: step.error ?? 'scripted provider error',
-        providerError: step.providerError ?? {
-          phase: input.phase,
-          name: 'Error',
-          message: step.error ?? 'scripted provider error',
-        },
-      };
+      const message = step.error ?? 'scripted provider error';
+      return errorToolTurnResult(new ModelPortError('provider_error', message), step.providerError ?? { phase: input.phase, name: 'Error', message });
     }
     const toolCalls = step.toolCalls ?? [];
     const text = step.text ?? '';

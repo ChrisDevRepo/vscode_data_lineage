@@ -4,7 +4,7 @@ import { getSession } from './ai/session/session';
 import { registerCommands } from './commands';
 import { openPanel, getActivePanel, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { postToWebview } from './bridge/host';
-import { Logger } from './utils/log';
+import { Logger, OUTPUT_CHANNEL_NAME } from './utils/log';
 import { notifyError, notifyWarning } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } from './engine/projectStore';
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
@@ -29,7 +29,7 @@ let activeTraceWriter: AiTraceWriter | undefined;
  * integration.
  */
 export async function activateRuntime(context: vscode.ExtensionContext) {
-  outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
+  outputChannel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME, { log: true });
   context.subscriptions.push(outputChannel);
   const logger = Logger.create(outputChannel, 'Config');
 

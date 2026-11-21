@@ -18,6 +18,7 @@ import type { TurnOutcome } from '../core/agentCore';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
 import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { describeTurnStop } from '../support/text';
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
 interface LineageRuntimeRequest {
@@ -108,8 +109,9 @@ export class LineageRuntime {
       durationMs: elapsedMs(startedAt),
     });
     input.sink.result(outcome);
-    return { outcome, modelCalls: input.model.modelCalls, ...(result.status === 'error'
-      ? { failure: { message: result.error } } : {}) };
+    const stop = result.status === 'error' ? result.turnStop : undefined;
+    return { outcome, modelCalls: input.model.modelCalls, ...(stop
+      ? { failure: { message: describeTurnStop(stop, input.model.identity.name), turnStop: stop } } : {}) };
   }
 
   /**

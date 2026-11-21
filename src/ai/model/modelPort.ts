@@ -8,10 +8,7 @@ import {
 import type { ToolCall } from '@langchain/core/messages/tool';
 import type { ZodType } from 'zod';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import {
-  describeProviderErrorForUser,
-  type ProviderErrorDiagnostic,
-} from '../support/text';
+import { causeCodes, isTransportProviderError, type ProviderErrorDiagnostic, type TurnStop } from '../support/text';
 import type { TurnTokenBudget } from '../support/tokenBudget';
 
 /** LangChain's provider-neutral message hierarchy is the graph's sole history type. */
@@ -354,6 +351,8 @@ export type ToolGenerationResult =
       readonly toolCalls: readonly [];
       readonly error: string;
       readonly providerError: ProviderErrorDiagnostic;
+      /** Source and code of the failure, decided once by {@link classifyTurnStop}. */
+      readonly turnStop: TurnStop;
     };
 
 /** Input contract for one schema-constrained generation. */
@@ -433,18 +432,35 @@ export function cancelledToolTurnResult(): ToolGenerationResult {
 /**
  * Creates the canonical provider-error result without retaining raw provider output.
  *
- * @param userMessage - Optional user-facing message; derived from `diagnostic` when omitted.
+ * @param error - The thrown value, classified once by {@link classifyTurnStop}.
+ * @param diagnostic - Its sanitized chain, as the caller's sink already redacted it.
  */
-export function errorToolTurnResult(
-  diagnostic: ProviderErrorDiagnostic,
-  userMessage?: string,
-): ToolGenerationResult {
+export function errorToolTurnResult(error: unknown, diagnostic: ProviderErrorDiagnostic): ToolGenerationResult {
   return {
     status: 'error',
     content: [],
     text: '',
     toolCalls: [],
-    error: userMessage ?? describeProviderErrorForUser(diagnostic),
+    error: diagnostic.message,
     providerError: diagnostic,
+    turnStop: classifyTurnStop(error, diagnostic),
   };
+}
+
+/**
+ * Classifies a turn-ending error once, by class, keeping the error untouched (the
+ * `DbConnectionError`/`describeConnectionError` split; the text is added by `describeTurnStop`).
+ * Every provider failure reaches the runtime as a {@link ModelPortError}: a transport code on its
+ * chain makes it a network error, `unsupported_response` rejected model replies, `invalid_request`
+ * a malformed request of Data Lineage. Any other throw is Data Lineage's own code: internal.
+ */
+export function classifyTurnStop(error: unknown, diagnostic: ProviderErrorDiagnostic): TurnStop {
+  const base = { phase: diagnostic.phase, diagnostic };
+  if (!(error instanceof ModelPortError)) return { ...base, source: 'internal', code: diagnostic.code ?? diagnostic.name };
+  if (isTransportProviderError(diagnostic)) return { ...base, source: 'network', code: causeCodes(diagnostic)[0] ?? error.code };
+  if (error.code === 'unsupported_response') {
+    return { ...base, source: 'model_replies', code: error.code, detail: `(${error.message.replace(/\.$/, '')})` };
+  }
+  if (error.code === 'invalid_request') return { ...base, source: 'internal', code: error.code, detail: error.message };
+  return { ...base, source: 'provider', code: error.code };
 }

@@ -5,6 +5,7 @@
  */
 
 import { stripFocusNodeLinks } from '../../engine/shared/bridgeContract';
+import { OUTPUT_CHANNEL_NAME } from '../../utils/log';
 
 /** Max characters retained from a provider error before truncation (avoid dumping a body). */
 const PROVIDER_ERROR_MAX = 300;
@@ -186,7 +187,7 @@ export function isTransportProviderError(diagnostic: ProviderErrorCauseDiagnosti
   return false;
 }
 
-/** Ordered codes carried by a diagnostic and its causes, used only for the user-facing detail. */
+/** Ordered codes carried by a diagnostic and its causes. */
 function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): string[] {
   const codes: string[] = [];
   for (let cursor: ProviderErrorCauseDiagnostic | undefined = diagnostic; cursor; cursor = cursor.cause) {
@@ -195,33 +196,57 @@ function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): strin
   return codes;
 }
 
-/** Plain-words explanation per `vscode.LanguageModelError` code; provider text has no remedy. */
-const LANGUAGE_MODEL_ERROR_TEXT: Readonly<Record<string, string>> = {
-  NoPermissions: 'The extension is not allowed to use the selected language model. Grant it access in the model picker or the chat provider settings, then try again.',
-  Blocked: 'The AI provider blocked the request. Try again later or choose another model.',
-  NotFound: 'The selected language model is no longer available. Choose another model and try again.',
+/** Where the error that ended a chat turn came from; decides its chat label and log `source=`. */
+export type StopSource = 'provider' | 'network' | 'model_replies' | 'internal';
+
+/**
+ * One turn-ending failure in content-free fields, plus the sanitized error chain behind it.
+ * Built once where the stop is decided and rendered once by {@link describeTurnStop}.
+ */
+export interface TurnStop {
+  readonly source: StopSource;
+  /** Content-free code: model-port, transport or rejection code, or the app's stop reason. */
+  readonly code: string;
+  /** Model-call or attempt phase in which the turn stopped, when known. */
+  readonly phase?: string;
+  /** Data Lineage's own reason (stop reason, last rejection); never external text. */
+  readonly detail?: string;
+  /** Sanitized error chain; its message is quoted verbatim for an external source. */
+  readonly diagnostic?: ProviderErrorDiagnostic;
+}
+
+/** Codes carried by an error's causes: the provider's or transport's own, not the port's. */
+export function causeCodes(diagnostic: ProviderErrorDiagnostic): string[] {
+  return diagnostic.cause ? providerErrorCodeChain(diagnostic.cause) : [];
+}
+
+/** Per source: the verb after `Request` and the plain-words source label. */
+const STOP_LINE: Readonly<Record<StopSource, { readonly verb: 'failed' | 'stopped'; readonly label: string }>> = {
+  provider: { verb: 'failed', label: 'model provider error' },
+  network: { verb: 'failed', label: 'network error' },
+  internal: { verb: 'failed', label: 'Data Lineage internal error' },
+  model_replies: { verb: 'stopped', label: 'model replies rejected' },
 };
 
 /**
- * Renders a sanitized provider diagnostic as the single user-facing chat error line. Classification
- * is code-based only (never message prose), via {@link isTransportProviderError}: a known
- * connection-level code names a temporary network/service interruption; a
- * `vscode.LanguageModelError` code is named in plain words; anything else stays a plain provider
- * error. The transport branch reports the code chain, not the provider's message, which is
- * boilerplate shared across network-class failures and can offer a contradictory remedy (the full
- * message stays in the debug log and trace). A provider *verdict* keeps its message, since there
- * the prose is the answer.
+ * Builds the one chat line of a turn-ending error (Markdown): what happened, the source with its
+ * model or code, then the external message quoted verbatim (sanitized by
+ * {@link sanitizeProviderErrorDiagnostic}, Markdown-escaped) or Data Lineage's own reason, then
+ * where the details are. Follows the `DbConnectionError`/`describeConnectionError` split: the
+ * error stays untouched and the presentation is added here only.
+ *
+ * @param modelName - Display name of the request's model, naming a provider error's sender.
  */
-export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic): string {
-  const codes = providerErrorCodeChain(diagnostic);
-  if (isTransportProviderError(diagnostic)) {
-    return `The AI provider connection was interrupted (${codes.join(' → ') || diagnostic.name}).`
-      + ' This is usually a temporary network or service issue — please try again.';
-  }
-  const plain = codes.map(code => LANGUAGE_MODEL_ERROR_TEXT[code]).find((text): text is string => text !== undefined);
-  if (plain !== undefined) return plain;
-  const detail = `${diagnostic.name}${codes.length ? ` [${codes.join(' → ')}]` : ''}: ${diagnostic.message}`;
-  return `The AI provider reported an error (${detail}).`;
+export function describeTurnStop(stop: TurnStop, modelName: string): string {
+  const { verb, label } = STOP_LINE[stop.source];
+  const quoted = stop.source === 'provider' || stop.source === 'network' ? stop.diagnostic : undefined;
+  const codes = quoted ? causeCodes(quoted) : [stop.code];
+  // Codes are diagnostic-safe tokens; only the model's display name needs escaping.
+  const sender = stop.source === 'provider' ? [escapeMarkdownText(modelName), ...codes] : stop.source === 'model_replies' ? [] : codes;
+  const text = quoted ? `"${escapeMarkdownText(quoted.message)}"` : stop.detail;
+  const body = `**Request ${verb}:** ${label}${sender.length ? ` (${sender.join(', ')})` : ''}`
+    + (text ? `${sender.length ? ': ' : ' '}${text}` : '');
+  return `${/[.!?]"?$/.test(body) ? body : `${body}.`} Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
 }
 
 function safeDiagnosticToken(value: string, fallback: string): string {

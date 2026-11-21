@@ -7,6 +7,7 @@ import type { TurnOutcome } from '../core/agentCore';
 import type { StagePromptContext } from '../prompting/hostPrompts';
 import type { PendingGate } from '../session/sessionPhase';
 import type { ToolPhaseAttemptState } from './toolAttempt';
+import type { TurnStop } from '../support/text';
 
 /**
  * Explicit entry route chosen before phase execution starts: an AI-owned semantic verdict.
@@ -109,7 +110,7 @@ export const AgentState = Annotation.Root({
   phase: Annotation<AgentGraphPhase>({ reducer: lastValue, default: () => 'init' }),
   outcome: Annotation<TurnOutcome | null>({ reducer: lastValue, default: () => null }),
   errorCode: Annotation<AgentErrorCode | null>({ reducer: lastValue, default: () => null }),
-  error: Annotation<string | null>({ reducer: lastValue, default: () => null }),
+  error: Annotation<TurnStop | null>({ reducer: lastValue, default: () => null }),
   activeStop: Annotation<string | null>({ reducer: lastValue, default: () => null }),
   /** Compact phase-local observations and cumulative budgets for graph-owned model attempts. */
   toolAttempt: Annotation<ToolPhaseAttemptState | null>({ reducer: lastValue, default: () => null }),

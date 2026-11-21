@@ -35,6 +35,7 @@ import {
   formatProviderErrorDiagnostic,
   sanitizeProviderErrorDiagnostic,
   type ProviderErrorDiagnostic,
+  type TurnStop,
 } from '../support/text';
 import type {
   GeneratedToolCall,
@@ -271,10 +272,10 @@ export interface ToolAttemptResult {
   readonly gate?: unknown;
   /** The user's refusal text when a successful call ended the request at admission. */
   readonly refusal?: string;
-  /** User-safe error text for a failed provider generation. */
-  readonly error?: string;
   /** Secret-sanitized diagnostic retained for tracing and logs. */
   readonly providerError?: ProviderErrorDiagnostic;
+  /** Source and code of a failed provider generation. */
+  readonly turnStop?: TurnStop;
 }
 
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` if none. */
@@ -1391,8 +1392,8 @@ async function executeToolGenerationAttempt(
       rejections: [],
       messages: [],
       text: '',
-      error: generated.error,
       providerError: generated.providerError,
+      turnStop: generated.turnStop,
     };
   }
   if (providerCalls !== 1) {
