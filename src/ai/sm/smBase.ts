@@ -14,7 +14,7 @@ import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { buildDeleteOnlyRelevanceCheck, buildPassthroughReAnchor } from '../prompting/smPrompts';
-import { edgeApiType } from '../support/aiPresenter';
+import { edgeApiType, presentColumnCompact } from '../support/aiPresenter';
 import { analyzeRemoval, bfsDepthMap, bfsReachable, type LogFn, type RemovalAnalysis } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
@@ -4064,8 +4064,10 @@ export class NavigationEngine implements IHopStateMachine {
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
       const edgeDirection = inSet.has(nid) ? 'upstream' : 'downstream';
+      // A visited table was folded (no hop of its own), so this line is the only place its column types and nullability reach the model.
+      const foldedTable = !SCRIPT_TYPES.has(n.type) && this.visited.has(nid);
       const cols = this.tracer
-        ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name)
+        ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => foldedTable ? presentColumnCompact(c) : c.name)
         : undefined;
       const attributedColumns = this.tracer
         ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log, this.columnTraceDirection())
