@@ -758,7 +758,8 @@ export interface SubmitFindingsHopColumns {
    * admitted by the parse so the scope check refuses them as `column_out_of_scope`.
    */
   readonly outOfScopeNodeIds?: readonly string[];
-  /** A procedure focus's served `writes_to.node` values: the in-scope objects it writes. */
+  /** A procedure focus's in-scope write targets: an empty list serves only the `writes_to: null`
+   * exit. The ids are not served as a node enum. */
   readonly writesToNodeIds?: readonly string[];
 }
 
@@ -778,9 +779,11 @@ function columnSourceNodeSchema(sources: readonly string[], offered: readonly st
 
 /**
  * Projects {@link ColumnFlowSchema} onto one hop: `out_col` as the tracked-column enum, `writes_to`
- * for procedures. A `node` enum serves only the ids the approved-scope check admits; with none, the
- * field serves only its exit (`upstream_columns: []`, `writes_to: null`). The parse still admits
- * every metadata source and write target, so the scope check states its own refusal.
+ * for procedures. The `upstream_columns[].node` enum serves only the ids the approved-scope check
+ * admits; with none, the field serves only its exit (`upstream_columns: []`). `writes_to` serves the
+ * base object-or-null shape, or only its exit (`writes_to: null`) when no written object is in
+ * scope. The parse still admits every metadata source and write target, so the scope check states
+ * its own refusal.
  */
 function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const [first, ...rest] = hop.outCols ?? [];
@@ -795,9 +798,9 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     : ColumnFlowEntrySchema.shape.upstream_columns;
   const writeTargets = hop.writesToNodeIds;
   const anyWrite = ColumnFlowEntrySchema.shape.writes_to.unwrap();
-  const writesTo = !writeTargets ? anyWrite
-    : writeTargets.length ? ColumnFlowWritesToObject.extend({ node: z.string().meta({ enum: [...writeTargets] }) }).strict().nullable()
-      : anyWrite.meta({ anyOf: [{ type: 'null' }] });
+  // No served node enum: nested in the null anyOf, the probable inducer of bare-object column_flow
+  // on small local models (DEF-656); the scope check refuses an out-of-scope destination on its own.
+  const writesTo = writeTargets?.length === 0 ? anyWrite.meta({ anyOf: [{ type: 'null' }] }) : anyWrite;
   const shape = {
     out_col: outCol,
     upstream_columns: upstreamColumns,
