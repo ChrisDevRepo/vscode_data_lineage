@@ -196,46 +196,38 @@ function isSystemRef(name: string, ctx?: EdgeContext): boolean {
   return SYSTEM_SCHEMAS.has(schema);
 }
 
-/**
- * Heuristically classifies how a script mutates a specific object, looking for
- * INSERT/UPDATE/DELETE/MERGE/TRUNCATE keywords preceding the object name; used to infer flow
- * direction for SPs.
- *
- * @returns `'delete'` when every matched mutation is a DELETE or TRUNCATE (rows removed, no column
- *   data supplied) and no INSERT, UPDATE or MERGE names the object by a three-part name; `'write'`
- *   when any matched mutation is an INSERT, UPDATE or MERGE; otherwise `'read'`.
- */
-function classifyBodyMutation(body: string, schema: string, name: string, identifierCaseSensitive = false): 'write' | 'delete' | 'read' {
-  const esc = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const identifier = (value: string) =>
-    `(?:${esc(quoteIdentifier(value))}|${esc(value)}(?![\\p{L}\\p{N}_@$#]))`;
-  const pattern = new RegExp(
-    `\\b(UPDATE|INSERT|DELETE|MERGE|TRUNCATE\\s+TABLE)\\s+` +
-    `(?:TOP\\s*\\([^)]*\\)\\s*(?:PERCENT\\s+)?)?(?:(?:INTO|FROM)\\s+)?(?:(${identifier(schema)})\\s*\\.\\s*)?(${identifier(name)})(?!\\s*\\.)`,
-    'giu',
-  );
-  let deleted = false;
-  for (const match of body.matchAll(pattern)) {
-    if ((match[2] === undefined || schemaKey(stripBrackets(match[2]), identifierCaseSensitive) === schemaKey(schema, identifierCaseSensitive))
-      && schemaKey(stripBrackets(match[3]), identifierCaseSensitive) === schemaKey(name, identifierCaseSensitive)) {
-      if (!/^(?:DELETE|TRUNCATE)/iu.test(match[1])) return 'write';
-      deleted = true;
-    }
-  }
-  if (!deleted) return 'read';
-  const threePart = new RegExp(
-    `\\b(?:UPDATE|INSERT(?:\\s+INTO)?|MERGE(?:\\s+INTO)?)\\s+(?:\\[[^\\]]+\\]|[\\p{L}_][\\p{L}\\p{N}_@$#]*)\\s*\\.\\s*${identifier(schema)}\\s*\\.\\s*${identifier(name)}`,
-    'iu',
-  );
-  return threePart.test(body) ? 'write' : 'delete';
+/** Compares a three-part reference database with known current-database metadata. */
+function isCurrentDatabase(db: string, currentDatabase: string | undefined): boolean {
+  return !!currentDatabase && stripBrackets(db).toLowerCase() === stripBrackets(currentDatabase).toLowerCase();
 }
 
 /**
- * Heuristically determines if a script writes to a specific object: `'write'` when the SQL mutates
- * it (DELETE and TRUNCATE included), else `'read'`.
+ * Classifies how a script mutates a specific object from the parsed mutation statements, never the
+ * body text; used to infer flow direction for SPs.
+ *
+ * @param target - `[schema, object]` of a local object, or the full parts of a cross-database one.
+ * @returns `'delete'` when every matching mutation is a DELETE or TRUNCATE (rows removed, no column
+ *   data supplied); `'write'` when any is an INSERT, UPDATE or MERGE; otherwise `'read'`.
  */
-function inferBodyDirection(body: string, schema: string, name: string, identifierCaseSensitive = false): 'write' | 'read' {
-  return classifyBodyMutation(body, schema, name, identifierCaseSensitive) === 'read' ? 'read' : 'write';
+function classifyMutation(
+  mutations: ReturnType<typeof parseSqlBody>['mutations'],
+  target: string[],
+  currentDatabase: string | undefined,
+  identifierCaseSensitive: boolean,
+): 'write' | 'delete' | 'read' {
+  const same = (a: string, b: string) => schemaKey(a, identifierCaseSensitive) === schemaKey(b, identifierCaseSensitive);
+  let deleted = false;
+  for (const { parts, kind } of mutations) {
+    const matches = target.length === 2
+      ? parts.length === 1 ? same(parts[0], target[1])
+        : parts.length === 2 ? parts.every((part, i) => same(part, target[i]))
+        : parts.length === 3 && isCurrentDatabase(parts[0], currentDatabase) && parts.slice(1).every((part, i) => same(part, target[i]))
+      : parts.length === target.length && parts.every((part, i) => same(part, target[i]));
+    if (!matches) continue;
+    if (kind === 'write') return 'write';
+    deleted = true;
+  }
+  return deleted ? 'delete' : 'read';
 }
 
 /**
@@ -370,6 +362,9 @@ function groupDependencies(
 /** Shared context for processing dependency edges per node. */
 interface EdgeContext {
   identifierCaseSensitive: boolean;
+  currentDatabase?: string;
+  /** Parsed mutations of every procedure body, by node id. */
+  mutationsByNode: Map<string, ReturnType<typeof parseSqlBody>['mutations']>;
   /** IDs of all nodes in the current filtered scope. */
   nodeIds: Set<string>;
   /** IDs of all nodes in the database catalog. */
@@ -535,6 +530,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
 function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
   const parsed = parseNode(node, ctx);
+  ctx.mutationsByNode.set(sourceId, parsed.mutations);
   const spLabel = `${node.schema}.${node.name}`;
   const spInRefs: string[] = [];
   const spOutRefs: string[] = [];
@@ -561,7 +557,7 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
         (depNode?.type === 'table' || depNode?.type === 'external') &&
         node.bodyScript
       ) {
-        const mutation = classifyBodyMutation(node.bodyScript, depNode.schema, depNode.name, ctx.identifierCaseSensitive);
+        const mutation = classifyMutation(parsed.mutations, [depNode.schema, depNode.name], ctx.currentDatabase, ctx.identifierCaseSensitive);
         if (mutation === 'read') addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
         else addEdge(ctx.edges, ctx.edgeKeys, sourceId, depId, 'body', mutation === 'delete');
       } else {
@@ -577,7 +573,7 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
       } else if (
         (meta?.type === 'table' || meta?.type === 'external') &&
         node.bodyScript &&
-        inferBodyDirection(node.bodyScript, meta.schema, meta.name, ctx.identifierCaseSensitive) === 'write'
+        classifyMutation(parsed.mutations, [meta.schema, meta.name], ctx.currentDatabase, ctx.identifierCaseSensitive) !== 'read'
       ) {
         ctx.neighborPairs.push({ source: sourceId, target: csDepId });
       } else {
@@ -639,7 +635,7 @@ function buildNodesAndEdges(
     : undefined;
   const traceStartBudget = parseTrace?.budget ?? 0;
 
-  const ctx: EdgeContext = { identifierCaseSensitive, nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs, parseTrace };
+  const ctx: EdgeContext = { identifierCaseSensitive, currentDatabase, mutationsByNode: new Map(), nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs, parseTrace };
 
   if (onDebugLog) onDebugLog(`Starting processing of ${nodes.length} nodes...`);
   let scriptedCount = 0;
@@ -667,7 +663,7 @@ function buildNodesAndEdges(
     onDebugLog!(`Parse trace sample limit reached (${traceStartBudget} bodies) — see [Parse] aggregate stats for full counts`);
   }
 
-  createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, identifierCaseSensitive, externalRefsEnabled);
+  createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, ctx.mutationsByNode, currentDatabase, identifierCaseSensitive, externalRefsEnabled);
 
   const typeById = new Map(nodes.map(n => [n.id, n.type]));
   const sanitized: LineageEdge[] = [];
@@ -705,6 +701,7 @@ function lastUrlSegment(url: string, maxLen = 40): string {
  *
  * @param crossDbRegexRefs - 3-part references found by regex.
  * @param crossDbMetaDeps - 3-part references found in model metadata.
+ * @param mutationsByNode - Parsed mutations per procedure, deciding the edge direction.
  * @param externalRefsEnabled - When false, only references to the current database become local
  *   edges.
  */
@@ -715,6 +712,7 @@ function createVirtualNodes(
   edgeKeys: Set<string>,
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>,
   crossDbMetaDeps: Map<string, string[]>,
+  mutationsByNode: EdgeContext['mutationsByNode'],
   currentDatabase?: string,
   identifierCaseSensitive = false,
   externalRefsEnabled = true,
@@ -745,13 +743,8 @@ function createVirtualNodes(
     }
   }
 
-  const isLocalRef = (db: string, localId: string): boolean => {
-    const normDb = stripBrackets(db).toLowerCase();
-    const normLocal = normalizeName(localId, identifierCaseSensitive);
-    if (currentDatabase && normDb === stripBrackets(currentDatabase).toLowerCase()) return true;
-    if (!currentDatabase && nodeIds.has(normLocal)) return true;
-    return false;
-  };
+  const isLocalRef = (db: string, localId: string): boolean =>
+    isCurrentDatabase(db, currentDatabase) || (!currentDatabase && nodeIds.has(normalizeName(localId, identifierCaseSensitive)));
 
   const addLocalEdge = (sourceId: string, localId: string, isWrite: boolean): void => {
     const resolved = normalizeName(localId, identifierCaseSensitive);
@@ -816,8 +809,8 @@ function createVirtualNodes(
       if (CLR_TYPE_METHODS.has(object.toLowerCase())) continue;
       const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
       const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
-      const isWrite = sourceNode?.type === 'procedure' && !!sourceNode.bodyScript
-        && inferBodyDirection(sourceNode.bodyScript, schema, object, identifierCaseSensitive) === 'write';
+      const isWrite = sourceNode?.type === 'procedure'
+        && classifyMutation(mutationsByNode.get(sourceId) ?? [], isCurrentDatabase(db, currentDatabase) ? [schema, object] : parts, currentDatabase, identifierCaseSensitive) !== 'read';
       if (isLocalRef(db, localId)) {
         addLocalEdge(sourceId, localId, isWrite);
         continue;
