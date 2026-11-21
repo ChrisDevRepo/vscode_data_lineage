@@ -71,6 +71,7 @@ import {
   initialToolPhaseAttemptState,
   MAX_TOOL_PROVIDER_CALLS,
   recordToolAttempt,
+  rejectionLevel,
   renderToolAttemptContext,
   type SyntheticRejectionTrace,
   type ToolAttemptResult,
@@ -372,6 +373,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       + `${startedAt !== undefined ? ` durationMs=${Math.max(0, Date.now() - startedAt)}` : ''}`
       + `${last ? ` lastReject=${last.toolName}:${last.code}` : ''}`,
     );
+    // Escalation level 3 only; levels 1 and 2 stay at debug.
+    const level = rejectionLevel(priorAttempt);
+    if (last && res.rejections.length > 0 && level === MAX_TOOL_PROVIDER_CALLS) {
+      deps.logger?.warn(`[AI] [Escalation] phase=${nextAttempt.phase} tool=${last.toolName} code=${last.code} level=${level}`);
+    }
     return nextAttempt;
   };
 
@@ -420,6 +426,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   const waitForTransportRetry = async (stop: TurnStop): Promise<boolean> => {
     const failure = stop.source === 'network' ? stop.diagnostic : undefined;
     if (!failure || failure.replyReceived || deps.signal?.aborted) return false;
+    deps.logger?.warn(`[AI] transport-retry source=${stop.source} code=${stop.code}`);
     deps.logger?.debug(`[AI] transport-retry ${formatProviderErrorDiagnostic(failure)}`);
     await abortableDelay(TRANSPORT_RETRY_DELAY_MS, deps.signal);
     return true;
@@ -439,6 +446,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const attempt = () => executeToolAttempt(deps.model, plan, {
       priorState,
       debugLog: message => deps.logger?.debug(message),
+      errorLog: message => deps.logger?.error(message, undefined),
       traceSyntheticRejection: deps.traceSyntheticRejection,
       presentResultRepairDraftContext: () => {
         const held = deps.getSession().presentResultRepairDraft.get();
@@ -1001,7 +1009,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const stopped = attemptStop(nextAttempt, 'Scope refinement');
     if (stopped?.reason === 'backend_fault') return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
-    if (stopped) return keepPendingGate(stopped.stop);
+    if (stopped) {
+      // The turn goes on, so no turn-terminal error line follows this stop.
+      deps.logger?.error(`[AI] [Stop] phase=${stopped.stop.phase} reason=${stopped.reason} code=${stopped.stop.code} disposition=proposal_pending`, undefined);
+      return keepPendingGate(stopped.stop);
+    }
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'gate_refine' };
     if (res.stop === 'final') {
       return { outcome: 'ok', messages: [modelAssistantMessage(res.text)], gateDecision: null, toolAttempt: null, phase: 'done' };

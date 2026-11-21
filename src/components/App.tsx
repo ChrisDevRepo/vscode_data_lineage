@@ -706,6 +706,7 @@ export function App() {
 
       const node = model?.nodes.find(n => n.id === nodeId);
       if (!node) {
+        window.vscode?.postMessage({ type: 'log', level: 'warn', text: '[Bridge] handleNodeClick: node not in model' });
         window.vscode?.postMessage({ type: 'log', text: `[Bridge] handleNodeClick: "${nodeId}" not in model (${model?.nodes.length ?? 0} nodes)` });
         return;
       }
@@ -1395,7 +1396,7 @@ export function App() {
 
   const handleSaveView = useCallback((name: string) => {
     if (!activeProjectId) {
-      vscodeApi.postMessage({ type: 'log', text: '[SaveView] No active project — view not saved' });
+      vscodeApi.postMessage({ type: 'log', level: 'warn', text: '[SaveView] No active project — view not saved' });
       return;
     }
     const profile: FilterProfile = {

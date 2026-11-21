@@ -76,7 +76,7 @@ export function notifyError(
   context?: NotifyContext,
   showErrorMessage: (message: string) => unknown = vscode.window.showErrorMessage,
 ): void {
-  logger.error(operation, error ?? 'no error detail');
+  logger.error(operation, error);
   showErrorMessage(noticeDetailAndToast(logger, operation, userMessage, context));
 }
 
@@ -102,4 +102,43 @@ export function notifyWarning(
 ): void {
   logger.warn(operation);
   showWarningMessage(noticeDetailAndToast(logger, operation, userMessage, context));
+}
+
+/** Toasts already shown this session, keyed on operation and text; the logger still records every occurrence. */
+const shownToasts = new Set<string>();
+
+/** Forgets the shown toasts, so a setting change that fixes and then re-breaks a config shows again. */
+export function clearOnceToasts(): void {
+  shownToasts.clear();
+}
+
+/** True the first time this operation and toast text is seen this session. */
+export function isFirstToast(operation: string, userMessage: string): boolean {
+  const key = `${operation}\n${userMessage}`;
+  if (shownToasts.has(key)) return false;
+  shownToasts.add(key);
+  return true;
+}
+
+/** {@link notifyError} that shows its toast once per session for the same operation and text. */
+export function notifyErrorOnce(
+  logger: Logger,
+  operation: string,
+  userMessage: string,
+  error?: unknown,
+  context?: NotifyContext,
+  showErrorMessage: (message: string) => unknown = vscode.window.showErrorMessage,
+): void {
+  notifyError(logger, operation, userMessage, error, context, isFirstToast(operation, userMessage) ? showErrorMessage : () => {});
+}
+
+/** {@link notifyWarning} that shows its toast once per session for the same operation and text. */
+export function notifyWarningOnce(
+  logger: Logger,
+  operation: string,
+  userMessage: string,
+  context?: NotifyContext,
+  showWarningMessage: (message: string) => unknown = vscode.window.showWarningMessage,
+): void {
+  notifyWarning(logger, operation, userMessage, context, isFirstToast(operation, userMessage) ? showWarningMessage : () => {});
 }

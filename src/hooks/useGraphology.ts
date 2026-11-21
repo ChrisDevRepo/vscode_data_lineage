@@ -87,7 +87,7 @@ export function useGraphology(): UseGraphologyReturn {
     refuseOverObjectLimit(filterBySchemas(model, filter.schemas), config.maxNodes, 'Filter') !== null, []);
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, skipLayout = false, annotatedNodeIds?: readonly string[]): number => {
-    const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
+    const log = (text: string, level: 'info' | 'warn' | 'error' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas);
     if (refuseOverObjectLimit(filtered, config.maxNodes, 'Filter') !== null) return -1;
 
@@ -156,11 +156,13 @@ export function useGraphology(): UseGraphologyReturn {
       result = buildGraph(allowlistFiltered, config, annotatedNodeIds);
     } catch (e) {
       layoutFailed = true;
-      log(`[Filter] Layout failed (${e instanceof Error ? e.message : String(e)}) — rendering without positions`, 'info');
+      log('[Filter] Layout failed — rendering without positions', 'debug');
+      log(`[Filter] Layout failed — ${e instanceof Error ? e.message : String(e)}`);
       try {
         result = buildGraphNoLayout(allowlistFiltered, config);
       } catch (e2) {
-        log(`[Filter] Graph build completely failed — ${e2 instanceof Error ? e2.message : String(e2)}`, 'info');
+        log('[Filter] Graph build completely failed', 'error');
+        log(`[Filter] Graph build failed — ${e2 instanceof Error ? e2.message : String(e2)}`);
         setFlowNodes([]);
         setFlowEdges([]);
         setGraph(null);

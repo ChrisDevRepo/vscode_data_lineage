@@ -567,9 +567,12 @@ export class NavigationEngine implements IHopStateMachine {
       this.guiHiddenSchemas = new Set(listedSchemas.filter(s => !schemas.includes(s)));
     }
 
+    let invalidPatterns = 0;
     const isGuiExcluded = compileExclusionMatcher(config.activeFilter?.exclusionPatterns ?? [], (pattern, err) => {
+      invalidPatterns += 1;
       this.log('debug', `[Filter] Skipping invalid GUI exclusion pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`);
     });
+    if (invalidPatterns > 0) this.log('warn', `[Filter] Skipped invalid GUI exclusion patterns count=${invalidPatterns}`);
     if (isGuiExcluded) {
       for (const n of this.nodeMap.values()) {
         if (isGuiExcluded(n)) this.guiExcludedNodeIds.add(this.identifierKey(n.id));
@@ -4373,7 +4376,7 @@ export class NavigationEngine implements IHopStateMachine {
       return parseNavigationSnapshot(snapshot);
     } catch (err) {
       if (err instanceof InvalidEngineCheckpointError) {
-        this.log('error', `[Checkpoint] serialize rejected — paths=${trunc(err.diagnostic, LOG_TRUNC_CONTENT)}`, err);
+        this.log('error', '[Checkpoint] serialize rejected', err);
       }
       throw err;
     }

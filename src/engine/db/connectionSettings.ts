@@ -49,14 +49,17 @@ export async function savePassword(
  * value counts as no saved password, so it is never sent to a host it was not entered for.
  */
 export async function readSavedPassword(
-  secrets: Pick<vscode.SecretStorage, 'get'>, connection: PasswordBinding,
+  secrets: Pick<vscode.SecretStorage, 'get'>, connection: PasswordBinding, logger: Pick<Logger, 'warn'>,
 ): Promise<string | undefined> {
   const raw = await secrets.get(passwordSecretKey(connection.id));
   if (raw === undefined) return undefined;
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  try { parsed = JSON.parse(raw); } catch { parsed = undefined; }
   const saved = SavedPasswordSchema.safeParse(parsed);
-  if (!saved.success) return undefined;
+  if (!saved.success) {
+    logger.warn('Saved password ignored — code=saved_password_unreadable');
+    return undefined;
+  }
   const expected = bindingOf(connection);
   const matches = saved.data.server === expected.server && saved.data.port === expected.port && saved.data.user === expected.user;
   return matches ? saved.data.password : undefined;

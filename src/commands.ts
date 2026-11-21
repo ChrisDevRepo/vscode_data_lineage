@@ -54,7 +54,7 @@ export function registerCommands(
       try {
         const dump = buildDebugDump(context);
         await vscode.env.clipboard.writeText(dump);
-        notifyInfo(configLogger, 'Copy debug info', 'Data Lineage: Debug info copied to clipboard.', { command: 'dataLineageViz.copyDebugInfo' });
+        configLogger.info('Copy debug info — copied to clipboard');
       } catch (err) {
         notifyError(configLogger, 'Copy debug info', 'Data Lineage: Failed to copy debug info.', err, { command: 'dataLineageViz.copyDebugInfo' });
       }
@@ -75,12 +75,8 @@ export function registerCommands(
       const traceRoot = vscode.Uri.joinPath(workspaceFolder.uri, 'tmp').fsPath;
       try {
         const tracePath = await traceWriter.enable(traceRoot);
-        notifyInfo(
-          configLogger,
-          'Enable AI trace logging',
-          `Data Lineage: AI trace logging enabled for this session. Writing to ${tracePath}`,
-          { command: 'dataLineageViz.enableAiTraceLogging' },
-        );
+        configLogger.info('AI trace logging enabled for this session');
+        configLogger.debug(`AI trace logging writes to ${tracePath}`);
         return tracePath;
       } catch (err) {
         notifyError(
@@ -285,7 +281,8 @@ async function createYamlScaffold(
 
     const doc = await vscode.workspace.openTextDocument(targetUri);
     await vscode.window.showTextDocument(doc);
-    notifyInfo(logger, 'Create YAML scaffold', `Created ${fileName} in workspace root. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`, { fileName, settingName });
+    logger.info('Create YAML scaffold — created');
+    logger.debug(`Created ${fileName} in the workspace root; setting dataLineageViz.${settingName}`);
   } catch (err) {
     notifyError(logger, 'Create YAML scaffold', `Data Lineage: Failed to create ${fileName} — check the Output channel for details.`, err, { fileName, sourceAsset, settingName });
     throw err;

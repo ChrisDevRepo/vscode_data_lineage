@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 import type { Logger } from '../../utils/log';
 import { Logger as OutputLogger } from '../../utils/log';
 import { expandNextQuestionSuggestions } from '../prompting/followupSuggestions';
-import { notifyInfo, notifyWarning } from '../../utils/notifications';
+import { notifyError } from '../../utils/notifications';
 import { VscodeModelPort } from '../model/vscodeModelPort';
 import type { AiTraceWriter } from '../observability/aiTraceWriter';
 import { tokenToAbortSignal } from '../providers/cancellation';
@@ -26,7 +26,7 @@ import {
 import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
 import { renderFullPlanMd, renderScopeCardMd, gateCardMd } from '../prompting/scopeSummaryRenderer';
-import { formatProviderErrorDiagnostic, sanitizeDescriptionForChat } from '../support/text';
+import { formatProviderErrorDiagnostic, quotedExternalMessage, sanitizeDescriptionForChat } from '../support/text';
 import {
   createTurnTokenBudget,
   DEFAULT_DISCOVERY_NODE_CAP,
@@ -135,11 +135,7 @@ export class LineageParticipant {
             await vscode.commands.executeCommand('workbench.action.chat.open', action === 'change'
               ? { query: PARTICIPANT_MENTION, isPartialQuery: true }
               : { query: `${PARTICIPANT_MENTION}${submitted!.label}`, blockOnResponse: true });
-            // Change scope only opens an empty chat; without a hint the user does not know the next
-            // step.
-            if (action === 'change') {
-              notifyInfo(this.logger, 'Change scope', `Type your scope change after ${PARTICIPANT_MENTION.trim()} and press Enter.`);
-            }
+            if (action === 'change') this.logger.info('Change scope — opened an empty chat');
           } finally {
             if (this.buttonRequest === submitted) this.buttonRequest = null;
             this.gateCommandBusy = false;
@@ -202,11 +198,12 @@ export class LineageParticipant {
       return resolved ? 'resolved' : 'no_turn';
     } catch (error) {
       this.traceGateResolution(pending, gateId, action, 'failed', undefined, decidedAt);
-      notifyWarning(
+      notifyError(
         this.logger,
         'Native gate action failed',
         'Data Lineage: The approval action could not be completed. The existing proposal is still pending.',
-        { action, requestedGateId: gateId, error },
+        error,
+        { action, requestedGateId: gateId },
       );
       return 'failed';
     }
@@ -394,13 +391,16 @@ export class LineageParticipant {
       }
 
       const { message, turnStop, code, stop } = result.failure;
-      // Provider text can echo prompt content, so error level carries enumerated fields only; the
-      // chat text and the sanitized cause chain (names, codes, messages) go to debug.
+      // The error line carries enumerated fields; a provider or network stop adds the external message
+      // the chat line quotes (redacted, length-capped), an internal stop never a message. The chat
+      // text and the sanitized cause chain (names, codes, messages) go to debug.
+      const quoted = quotedExternalMessage(turnStop);
       this.logger.error(
         `[${session.id}] native turn terminal status=error source=${turnStop.source}`
         + ` phase=${turnStop.phase ?? 'none'} model=${request.model.id} stop=${stop ?? 'none'}`
-        + ` modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
-        `code=${turnStop.code}${code ? ` errorCode=${code}` : ''}`,
+        + ` modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`
+        + ` code=${turnStop.code}${code ? ` errorCode=${code}` : ''}${quoted ? ` message=${quoted}` : ''}`,
+        undefined,
       );
       const chain = turnStop.diagnostic;
       this.logger.debug(`[${session.id}] native turn failure message: ${message}${chain ? ` ${formatProviderErrorDiagnostic(chain)}` : ''}`);
@@ -518,12 +518,9 @@ export class LineageParticipant {
         }
         const renderDegradedReason = session.consumeSynthesisRenderDegraded();
         if (renderDegradedReason) {
-          notifyWarning(
-            this.logger,
-            'Synthesis render degraded',
-            'Data Lineage: The AI preview could not be rendered. The answer text is in the chat; see the debug log for details.',
-            { requestId, reason: renderDegradedReason },
-          );
+          // The chat already carries the failed-render notice, so this is a log line, not a toast.
+          this.logger.warn('Synthesis render degraded');
+          this.logger.debug(`Synthesis render degraded requestId=${requestId} reason=${renderDegradedReason}`);
         }
         return;
       }

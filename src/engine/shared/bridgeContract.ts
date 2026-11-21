@@ -800,7 +800,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-settings') }),
   z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string().max(EXPORT_FILE_MAX_CHARS) }),
   z.object({ type: z.literal('ai-open-in-editor'), markdown: z.string().max(AI_REPORT_MARKDOWN_MAX_CHARS) }),
-  z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string().max(WEBVIEW_LOG_MAX_CHARS) }),
+  z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'error', 'debug']).optional(), text: z.string().max(WEBVIEW_LOG_MAX_CHARS) }),
   WebviewErrorMessageSchema,
   WebviewWarningMessageSchema,
   z.object({ type: z.literal('view-render-result'), rendered: z.number(), of: z.number(), unresolved: z.array(z.string()) }),

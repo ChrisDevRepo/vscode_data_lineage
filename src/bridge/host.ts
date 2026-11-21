@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { z } from 'zod';
 import { Logger, type LogCategory } from '../utils/log';
-import { notifyError } from '../utils/notifications';
+import { notifyErrorOnce } from '../utils/notifications';
 import {
   BRIDGE_PROTOCOL_VERSION,
   ExtensionToWebviewMsgSchema,
@@ -86,7 +86,7 @@ function postValidated<S extends z.ZodTypeAny>(
       );
       return Promise.resolve(false);
     }
-    notifyError(
+    notifyErrorOnce(
       logger,
       `${label}(${type})`,
       `Data Lineage dropped an internal "${type}" message that failed validation — the view may be incomplete. See the Data Lineage output channel for detail.`,

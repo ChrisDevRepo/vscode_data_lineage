@@ -12,7 +12,7 @@ import type { SimpleExecuteResult } from '../types/database';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
-import { notifyWarning } from '../utils/notifications';
+import { clearOnceToasts, notifyWarningOnce } from '../utils/notifications';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
 import { DbConnectionError, type DbSession } from './db/dbSession';
 import { MSSQL_RECONNECT_NOTICE, usesMssqlExtension } from './db/mssqlRetiring';
@@ -84,7 +84,7 @@ export async function loadDmvQueries(
 
         const builtInConfig = await loadBuiltInDmvConfig(outputChannel, extensionUri);
         if (parsed.version !== builtInConfig.version) {
-          notifyWarning(
+          notifyWarningOnce(
             logger,
             'Load custom DMV queries',
             `Custom DMV queries declare version ${String(parsed.version ?? 'missing')} but this release ships ` +
@@ -114,7 +114,7 @@ export async function loadDmvQueries(
             const loadedNames = new Set(valid.map(q => q.name));
             const missingNames = KNOWN_NAMES.filter(n => !loadedNames.has(n));
             if (missingNames.length > 0) {
-              notifyWarning(
+              notifyWarningOnce(
                 logger,
                 'Load custom DMV queries',
                 `Custom DMV queries missing: ${missingNames.join(', ')}. DB import may fail.`,
@@ -122,18 +122,18 @@ export async function loadDmvQueries(
               );
             }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
-            logger.info(`Applied DMV queries: ${valid.length} loaded from custom, ${skipped} skipped`);
+            logger[skipped > 0 ? 'warn' : 'info'](`Applied DMV queries: ${valid.length} loaded from custom, ${skipped} skipped`);
             return valid;
           }
         }
-        notifyWarning(
+        notifyWarningOnce(
           logger,
           'Load custom DMV queries',
           'Custom DMV queries invalid — using built-in defaults.',
           { reason: 'missing or invalid queries array', path: resolved, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
         );
       } catch (err) {
-        notifyWarning(
+        notifyWarningOnce(
           logger,
           'Load custom DMV queries',
           'Failed to load custom DMV queries — using built-in defaults. Check Output channel.',
@@ -141,7 +141,7 @@ export async function loadDmvQueries(
         );
       }
     } else {
-      notifyWarning(
+      notifyWarningOnce(
         logger,
         'Load custom DMV queries',
         `Cannot resolve DMV queries path "${customPath}" — using built-in defaults.`,
@@ -184,7 +184,10 @@ export function createDmvQueryCache(load: () => Promise<DmvQuery[]>): DmvQueryCa
   let subscription: vscode.Disposable | undefined;
   const reload = (): Promise<DmvQuery[]> => {
     subscription ??= vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration(DMV_QUERIES_FILE_SETTING) && configuredDmvQueriesFile() !== loadedFile) cached = undefined;
+      if (e.affectsConfiguration(DMV_QUERIES_FILE_SETTING) && configuredDmvQueriesFile() !== loadedFile) {
+        cached = undefined;
+        clearOnceToasts();
+      }
     });
     loadedFile = configuredDmvQueriesFile();
     const loading = load();

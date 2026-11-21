@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { type AiSession } from './ai/session/session';
 import { Logger, OUTPUT_CHANNEL_NAME } from './utils/log';
-import { notifyError } from './utils/notifications';
+import { notifyErrorOnce } from './utils/notifications';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
@@ -132,7 +132,7 @@ export function openPanel(
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
     const parsed = MainPanelToExtensionMsgSchema.safeParse(rawMsg);
     if (!parsed.success) {
-      bridgeLogger.warn(`Rejected malformed webview message (type=${rawMsg?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
+      bridgeLogger.error('Rejected malformed webview message', new Error(`type=${rawMsg?.type ?? '?'}: ${summarizeZodError(parsed.error)}`));
       return;
     }
     const msg = parsed.data;
@@ -140,7 +140,7 @@ export function openPanel(
     try {
       await handler(msg);
     } catch (err) {
-      notifyError(
+      notifyErrorOnce(
         bridgeLogger,
         `Handler '${msg.type}' threw unexpectedly`,
         `Data Lineage: The requested action failed — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`,

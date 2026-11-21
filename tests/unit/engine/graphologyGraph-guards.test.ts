@@ -39,18 +39,19 @@ describe('buildGraphologyGraph — defensive guards', () => {
     setGraphLogSink(() => {});
   });
 
-  it('skips a node with an empty id and warns with its schema.name', () => {
+  it('skips a node with an empty id and warns with a count, its schema.name at debug', () => {
     const model = modelOf([node({ id: '', schema: 'dbo', name: 'Ghost' })], []);
 
     const graph = buildGraphologyGraph(model);
 
     expect(graph.order).toBe(0);
     expect(logged).toEqual([
-      { level: 'warn', text: '[Graph] Skipping node with empty ID: dbo.Ghost' },
+      { level: 'warn', text: '[Graph] Nodes dropped — count=1' },
+      { level: 'debug', text: '[Graph] Nodes dropped — empty id (dbo.Ghost)' },
     ]);
   });
 
-  it('skips a duplicate node id and warns with the id', () => {
+  it('skips a duplicate node id and warns with a count, the id at debug', () => {
     const model = modelOf(
       [
         node({ id: '[dbo].[table1]', name: 'Table1' }),
@@ -64,7 +65,8 @@ describe('buildGraphologyGraph — defensive guards', () => {
     expect(graph.order).toBe(1);
     expect(graph.getNodeAttribute('[dbo].[table1]', 'name')).toBe('Table1');
     expect(logged).toEqual([
-      { level: 'warn', text: '[Graph] Duplicate node ID skipped: [dbo].[table1]' },
+      { level: 'warn', text: '[Graph] Nodes dropped — count=1' },
+      { level: 'debug', text: '[Graph] Nodes dropped — duplicate id [dbo].[table1]' },
     ]);
   });
 

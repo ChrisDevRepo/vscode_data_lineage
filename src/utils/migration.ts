@@ -8,7 +8,6 @@ import {
   type ProjectStoreDropReport,
 } from '../engine/projectStore';
 import { Logger } from './log';
-import { errorMessage } from './errorMessage';
 
 /**
  * Migrates legacy workspace-state connection metadata (DACPAC and database) into the project store,
@@ -46,7 +45,7 @@ export async function migrateFromWorkspaceState(
       try {
         connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
       } catch (err) {
-        logger.debug(`Legacy connection "${sourceName}" failed validation: ${errorMessage(err)}`);
+        logger.error('Legacy connection validation', err);
       }
     }
   }
@@ -56,9 +55,8 @@ export async function migrateFromWorkspaceState(
     const project = createProject(name, connection);
     const rawStore = context.globalState.get(PROJECT_STORE_KEY);
     const store = migrateProjectStore(rawStore, (report) => {
-      logger.warn(
-        `Legacy migration rewrote the project store without ${report.dropped} unreadable project(s) and ${report.droppedViews ?? 0} unreadable view(s) — fields: ${report.issuePaths.join(', ') || 'unknown'}`,
-      );
+      logger.error(`Legacy migration dropped records — projects=${report.dropped} views=${report.droppedViews ?? 0}`, undefined);
+      logger.debug(`Legacy migration dropped records — fields: ${report.issuePaths.join(', ') || 'unknown'}`);
       onProjectsDropped?.(report);
     });
     const updated = updateProject(store, project);

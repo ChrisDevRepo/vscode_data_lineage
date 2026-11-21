@@ -236,7 +236,7 @@ describe('dagreLayout — layout failure', () => {
     }
   }
 
-  it('returns an empty map and warns the installed sink, naming the error', () => {
+  it('returns an empty map and reports the failure to the installed sink at error level, the message at debug', () => {
     const lines: Array<{ level: string; text: string }> = [];
     setGraphLogSink((level, text) => lines.push({ level, text }));
     try {
@@ -245,10 +245,10 @@ describe('dagreLayout — layout failure', () => {
       setGraphLogSink(() => {});
     }
 
-    expect(lines).toHaveLength(1);
-    expect(lines[0].level).toBe('warn');
-    expect(lines[0].text).toContain('[Graph] Dagre layout failed');
-    expect(lines[0].text).toContain('rank assignment failed');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toEqual({ level: 'error', text: '[Graph] Dagre layout failed' });
+    expect(lines[1].level).toBe('debug');
+    expect(lines[1].text).toContain('rank assignment failed');
   });
 
   it('swallows the failure when no sink is installed', () => {

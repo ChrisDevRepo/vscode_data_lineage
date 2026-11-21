@@ -76,7 +76,10 @@ async function savedAccount(accountId: string): Promise<vscode.AuthenticationSes
 }
 
 /** Lists the directories an account can use, sorted by name; empty when they cannot be listed. */
-export async function listTenants(account: vscode.AuthenticationSessionAccountInformation): Promise<EntraTenant[]> {
+export async function listTenants(
+  account: vscode.AuthenticationSessionAccountInformation,
+  logger: Pick<Logger, 'warn' | 'debug'>,
+): Promise<EntraTenant[]> {
   try {
     provider ??= new VSCodeAzureSubscriptionProvider();
     const tenants: AzureTenant[] = await provider.getTenants(account);
@@ -84,7 +87,9 @@ export async function listTenants(account: vscode.AuthenticationSessionAccountIn
       .filter((t): t is AzureTenant & { tenantId: string } => !!t.tenantId)
       .map((t) => ({ tenantId: t.tenantId, displayName: t.displayName || t.tenantId, ...(t.defaultDomain ? { defaultDomain: t.defaultDomain } : {}) }))
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  } catch {
+  } catch (err) {
+    logger.warn('Tenant listing failed — using the account default');
+    logger.debug(`Tenant listing failed — ${errorMessage(err)}`);
     return [];
   }
 }
@@ -113,14 +118,14 @@ export function defaultTenantId(account: vscode.AuthenticationSessionAccountInfo
  */
 export async function acquireSqlToken(
   connection: { accountId?: string; tenantId?: string },
-  logger: Pick<Logger, 'info' | 'debug'>,
+  logger: Pick<Logger, 'info' | 'warn' | 'debug'>,
 ): Promise<string> {
   const { tenantId } = connection;
   const account = connection.accountId ? await savedAccount(connection.accountId) : undefined;
   let session = await signInForSql(tenantId, { createIfNone: true, ...(account ? { account } : {}) });
   let used = tenantId;
   if (!tenantId) {
-    used = defaultTenantId(session.account, await listTenants(session.account));
+    used = defaultTenantId(session.account, await listTenants(session.account, logger));
     if (used) session = await signInForSql(used, { createIfNone: true, account: session.account });
   }
   logger.info('Entra sign-in completed');

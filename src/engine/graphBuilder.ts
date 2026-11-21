@@ -25,7 +25,7 @@ import {
  * Receives a diagnostic line raised while a graph is built or laid out; `text` already carries its
  * `[Category]` prefix.
  */
-type GraphLogSink = (level: 'info' | 'debug' | 'warn', text: string) => void;
+type GraphLogSink = (level: 'info' | 'debug' | 'warn' | 'error', text: string) => void;
 
 /** Where this module's diagnostics go; a no-op by default so the engine works without `window`. */
 let logSink: GraphLogSink = () => {};
@@ -135,16 +135,21 @@ function buildLineageFlowNode(
 export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
   graph.setAttribute('identifierCaseSensitive', model.identifierCaseSensitive === true);
+  const dropped: string[] = [];
   for (const node of model.nodes) {
     if (!node.id) {
-      logSink('warn', `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}`);
+      dropped.push(`empty id (${node.schema}.${node.name})`);
       continue;
     }
     if (graph.hasNode(node.id)) {
-      logSink('warn', `[Graph] Duplicate node ID skipped: ${node.id}`);
+      dropped.push(`duplicate id ${node.id}`);
       continue;
     }
     graph.addNode(node.id, { ...node });
+  }
+  if (dropped.length > 0) {
+    logSink('warn', `[Graph] Nodes dropped — count=${dropped.length}`);
+    logSink('debug', `[Graph] Nodes dropped — ${dropped.join('; ')}`);
   }
   for (const edge of model.edges) {
     if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
@@ -531,7 +536,8 @@ export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, an
   try {
     dagre.layout(g);
   } catch (e) {
-    logSink('warn', `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}`);
+    logSink('error', `[Graph] Dagre layout failed`);
+    logSink('debug', `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}`);
     return new Map();
   }
 
@@ -709,7 +715,8 @@ export function buildSchemaGraph(
   try {
     dagre.layout(g);
   } catch (e) {
-    logSink('warn', `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}`);
+    logSink('error', `[Graph] Schema layout failed`);
+    logSink('debug', `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const nodes: FlowNode<SchemaNodeData>[] = schemaIds.map((schema) => {

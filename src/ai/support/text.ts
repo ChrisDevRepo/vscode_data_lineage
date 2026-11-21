@@ -232,6 +232,16 @@ const STOP_LINE: Readonly<Record<StopSource, { readonly verb: 'failed' | 'stoppe
 export const TURN_STOP_LINE_END = `Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
 
 /**
+ * The external message of a provider or network stop as the chat line quotes it: already redacted
+ * and length-capped by {@link sanitizeProviderErrorDiagnostic}, Markdown-escaped, in double quotes.
+ * Undefined for any other source, whose text is Data Lineage's own.
+ */
+export function quotedExternalMessage(stop: TurnStop): string | undefined {
+  const external = stop.source === 'provider' || stop.source === 'network' ? stop.diagnostic : undefined;
+  return external && `"${escapeMarkdownText(external.message)}"`;
+}
+
+/**
  * Builds the one chat line of a turn-ending error (Markdown): what happened, the source with its
  * model or code, then the external message quoted verbatim (sanitized by
  * {@link sanitizeProviderErrorDiagnostic}, Markdown-escaped) or Data Lineage's own reason, then
@@ -242,11 +252,11 @@ export const TURN_STOP_LINE_END = `Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
  */
 export function describeTurnStop(stop: TurnStop, modelName: string): string {
   const { verb, label } = STOP_LINE[stop.source];
-  const quoted = stop.source === 'provider' || stop.source === 'network' ? stop.diagnostic : undefined;
-  const codes = quoted ? causeCodes(quoted) : [stop.code];
+  const quoted = quotedExternalMessage(stop);
+  const codes = quoted && stop.diagnostic ? causeCodes(stop.diagnostic) : [stop.code];
   // Codes are diagnostic-safe tokens; the model name, quote and detail (catalog names) are escaped.
   const sender = stop.source === 'provider' ? [escapeMarkdownText(modelName), ...codes] : stop.source === 'model_replies' ? [] : codes;
-  const text = quoted ? `"${escapeMarkdownText(quoted.message)}"` : stop.detail && escapeMarkdownText(stop.detail);
+  const text = quoted ?? (stop.detail && escapeMarkdownText(stop.detail));
   const body = `**Request ${verb}:** ${label}${sender.length ? ` (${sender.join(', ')})` : ''}`
     + (text ? `${sender.length ? ': ' : ' '}${text}` : '');
   return `${/[.!?]"?$/.test(body) ? body : `${body}.`} ${TURN_STOP_LINE_END}`;

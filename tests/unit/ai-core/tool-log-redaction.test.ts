@@ -98,20 +98,26 @@ describe('Logger redaction', () => {
     expect(line).not.toContain(SECRET);
   });
 
-  it('removes a credential from the error line and the stack line', () => {
+  it('keeps the message and stack off the error line and redacts them on the debug line', () => {
     const ch = channel();
-    const err = new Error(`login: Password=${SECRET}`);
-    err.stack = `Error: login: Password=${SECRET}\n    at connect (db.js:1:1)`;
+    const err = Object.assign(new TypeError(`login: Password=${SECRET}`), { code: 'ELOGIN', diagnostic: 'a.b, c' });
+    err.stack = `TypeError: login: Password=${SECRET}\n    at connect (db.js:1:1)`;
     Logger.create(ch as never, 'DB').error(`Open Pwd=${SECRET}`, err);
-    const lines = ch.error.mock.calls.map(([l]) => String(l));
-    expect(lines).toHaveLength(2);
-    expect(lines.join('\n')).not.toContain(SECRET);
-    expect(lines[1]).toContain('at connect (db.js:1:1)');
+    const errorLines = ch.error.mock.calls.map(([l]) => String(l));
+    const debugLines = ch.debug.mock.calls.map(([l]) => String(l));
+    expect(errorLines).toEqual(['[DB] FAILED: Open Pwd=[removed] — TypeError code=ELOGIN']);
+    expect(debugLines).toHaveLength(1);
+    expect(debugLines[0]).toContain('login: Password=[removed]');
+    expect(debugLines[0]).toContain('diagnostic=a.b, c');
+    expect(debugLines[0]).toContain('at connect (db.js:1:1)');
+    expect([...errorLines, ...debugLines].join('\n')).not.toContain(SECRET);
   });
 
-  it('removes a credential from a thrown non-Error value', () => {
+  it('removes a credential from a thrown non-Error value and keeps its text off the error line', () => {
     const ch = channel();
-    Logger.create(ch as never, 'DB').error('Open', `Password=${SECRET}`);
-    expect(String(ch.error.mock.calls[0][0])).not.toContain(SECRET);
+    Logger.create(ch as never, 'DB').error('Open', `rejected Password=${SECRET}`);
+    expect(String(ch.error.mock.calls[0][0])).toBe('[DB] FAILED: Open — NonError');
+    expect(String(ch.debug.mock.calls[0][0])).toContain('Password=[removed]');
+    expect(String(ch.debug.mock.calls[0][0])).not.toContain(SECRET);
   });
 });

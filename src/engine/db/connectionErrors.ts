@@ -89,6 +89,11 @@ export function isDriverError(err: unknown): boolean {
   return errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '');
 }
 
+/** Whether the error is the user cancelling a Microsoft sign-in (including declining consent), not a failure. */
+export function isSignInCancelled(err: unknown): boolean {
+  return classify(err) === 'signInCancelled';
+}
+
 function classify(err: unknown): ErrorKind {
   const text = errorMessage(err);
   const number = errorNumber(err);
@@ -175,7 +180,6 @@ export function describeConnectionError(
     retry: () => make('retry', () => retry()),
     copyGrantStatement: () => make('copyGrantStatement', async () => {
       await vscode.env.clipboard.writeText(grantStatement(target.user));
-      void vscode.window.showInformationMessage('GRANT statement copied to the clipboard.');
     }),
     showLog: () => make('showLog', async () => {
       if (hooks.showLog) hooks.showLog();

@@ -12,7 +12,7 @@ import {
   OUTPUT_CHANNEL_NAME,
   type LogCategory,
 } from '../utils/log';
-import { notifyError, notifyWarning } from '../utils/notifications';
+import { isFirstToast, notifyError, notifyWarning, notifyWarningOnce } from '../utils/notifications';
 import { type BridgeHost } from './host';
 import {
   type DatabaseModel, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
@@ -361,7 +361,8 @@ export function createMessageHandlers(
     try {
       await clearStoredRun(context.globalState, profileId);
     } catch (err) {
-      host.log('warn', 'Bridge', `Failed to clear AI run memory for a saved view: ${err instanceof Error ? err.message : String(err)}`);
+      host.log('warn', 'Bridge', 'Failed to clear AI run memory for a saved view');
+      host.log('debug', 'Bridge', `AI run memory clear failed — ${err instanceof Error ? err.message : String(err)}`);
       host.log('debug', 'Bridge', `AI run memory not cleared for view ${profileId}`);
     }
   }
@@ -521,7 +522,7 @@ export function createMessageHandlers(
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
           const parsed = DetailPanelToExtensionMsgSchema.safeParse(rawM);
           if (!parsed.success) {
-            host.log('warn', 'Bridge', `Rejected malformed detail-panel message (type=${rawM?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
+            host.log('error', 'Bridge', 'Rejected malformed detail-panel message', new Error(`type=${rawM?.type ?? '?'}: ${summarizeZodError(parsed.error)}`));
             return;
           }
           try {
@@ -636,7 +637,7 @@ export function createMessageHandlers(
       const store = loadProjectStore(context);
       const project = store.projects.find(p => p.id === msg.id);
       if (!project) {
-        host.log('error', 'Bridge', 'Load project', 'Project not found');
+        host.log('error', 'Bridge', 'Load project', 'code=project-not-found');
         host.log('debug', 'Bridge', `Project not found: ${msg.id}`);
         host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}` });
         return;
@@ -743,7 +744,7 @@ export function createMessageHandlers(
     'dacpac-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       if (!cachedDacpac) {
-        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedDacpac is null)');
+        host.log('error', 'Bridge', 'Dacpac visualize', 'code=session-expired');
         host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.' });
         return;
       }
@@ -763,7 +764,7 @@ export function createMessageHandlers(
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, progressToken, onConnecting) => {
         if (!lastConnectionInfo) {
-          host.log('error', 'Bridge', 'Database visualize', 'No stored connection info');
+          host.log('error', 'Bridge', 'Database visualize', 'code=no-connection-info');
           host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.' });
           return undefined;
         }
@@ -860,7 +861,8 @@ export function createMessageHandlers(
             logger.debug(`AI run memory kept for "${msg.profile?.name}" — the save resolves to no presented run.`);
           }
         } catch (runErr) {
-          logger.warn(`Failed to store AI run memory for the saved view: ${runErr instanceof Error ? runErr.message : String(runErr)}`);
+          logger.warn('Failed to store AI run memory for the saved view');
+          logger.debug(`AI run memory store failed — ${runErr instanceof Error ? runErr.message : String(runErr)}`);
         }
       } catch (err) {
         logger.error('Failed to save filter view', err);
@@ -940,12 +942,8 @@ export function createMessageHandlers(
         await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
       } catch (err) {
         await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
-        notifyWarning(
-          Logger.create(outputChannel, 'Bridge'),
-          'Markdown preview unavailable',
-          'Data Lineage: the built-in Markdown preview is unavailable, so the report opened as a Markdown document instead.',
-          { messageType: 'ai-open-in-editor', reason: err instanceof Error ? err.message : String(err) },
-        );
+        host.log('warn', 'Bridge', 'Markdown preview unavailable — the report opened as a Markdown document');
+        host.log('debug', 'Bridge', `Markdown preview unavailable — ${err instanceof Error ? err.message : String(err)}`);
       }
     },
     'log': (msg) => {
@@ -977,13 +975,13 @@ export function createMessageHandlers(
         ? `Data Lineage hit an error and is reloading the view — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`
         : `Data Lineage encountered an unexpected error — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`;
 
-      host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}`, err);
-      host.log('debug', 'Bridge', `Webview ${sanitizeForLog(source)} error context=${contextLine}`);
-      host.showErrorMessage(userMessage);
+      host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}`, err);
+      host.log('debug', 'Bridge', `Webview ${sanitizeForLog(source)} error notification="${userMessage}" context=${contextLine}`);
+      if (isFirstToast('Webview error', userMessage)) host.showErrorMessage(userMessage);
     },
     'show-warning': (msg) => {
       const text = typeof msg.text === 'string' ? msg.text : '';
-      notifyWarning(
+      notifyWarningOnce(
         Logger.create(outputChannel, 'Bridge'),
         'Webview warning notification',
         `Data Lineage: ${text}`,
@@ -1127,7 +1125,8 @@ async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: st
       const catalogMap = await executeDmvQueries(session, [allObjectsQuery], outputChannel, undefined, timeoutMs);
       allObjectsResult = catalogMap.get('all-objects');
     } catch (err) {
-      host.log('warn', 'DB', `Object catalog unavailable — cross-schema references stay unresolved: ${err instanceof Error ? err.message : String(err)}`);
+      host.log('warn', 'DB', 'Object catalog unavailable — cross-schema references stay unresolved');
+      host.log('debug', 'DB', `Object catalog query failed — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   const resultMap = await executeDmvQueriesFiltered(session, queries, schemas, outputChannel, (step, total, label) => {
@@ -1196,12 +1195,12 @@ async function loadDatabasePlatform(
       const reason = missingColumns.length > 0
         ? `missing columns: ${missingColumns.join(', ')}`
         : 'no rows';
-      logger.warn(`Platform query returned unusable metadata (${reason}) — ${fallback}`);
+      logger.debug(`Platform query returned unusable metadata (${reason}) — ${fallback}`);
     } catch (err) {
-      logger.warn(`Platform query failed — ${fallback}: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`Platform query failed — ${fallback}: ${err instanceof Error ? err.message : String(err)}`);
     }
   } else {
-    logger.warn(`Custom DMV configuration has no platform-info query — ${fallback}`);
+    logger.debug(`Custom DMV configuration has no platform-info query — ${fallback}`);
   }
   return { serverPlatform: UNKNOWN_DB_PLATFORM };
 }
@@ -1245,13 +1244,15 @@ async function withDbProgressHost(
         host.postMessage({ type: 'db-error', message: reported.message });
       } else {
         const message = redactSecrets(err instanceof Error ? err.message : String(err));
-        host.log('error', 'DB', title, message);
+        host.log('error', 'DB', title, err);
         host.postMessage({ type: 'db-error', message });
       }
     } finally {
       if (session) {
-        await releaseSession(session).catch((err: unknown) =>
-          host.log('warn', 'DB', `Disconnect failed: ${err instanceof Error ? err.message : String(err)}`));
+        await releaseSession(session).catch((err: unknown) => {
+          host.log('warn', 'DB', 'Disconnect failed');
+          host.log('debug', 'DB', `Disconnect failed — ${err instanceof Error ? err.message : String(err)}`);
+        });
       }
     }
   });

@@ -91,10 +91,10 @@ export class Logger {
   debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
   warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
   /**
-   * Logs an error-level message with full stack detail; the stack is extracted from `err` when
-   * available.
+   * Logs the failed operation at error level (operation, error class, code) and the message and
+   * stack on a companion debug line.
    *
-   * @param op - Operation label prepended to the error message.
+   * @param op - Operation label of the error line.
    */
   error(op: string, err: unknown): void { logError(this.ch, this.cat, op, err); }
 }
@@ -172,17 +172,38 @@ export function sanitizeForLog(s: string): string {
     .trim();
 }
 
+/** An error class name or code kept on the error line only when it is a short identifier, never prose. */
+function identifierOrUndefined(value: unknown): string | undefined {
+  const text = typeof value === 'number' ? String(value) : value;
+  return typeof text === 'string' && /^[A-Za-z0-9_$.-]{1,64}$/.test(text) ? text : undefined;
+}
+
+/** A caller-composed enumerated detail such as `code=ECONNRESET number=-` or one bare token: no prose. */
+const ENUMERATED_DETAIL = /^(?:[\w.$-]+|[\w.$-]+=[\w.$-]+(?: [\w.$-]+=[\w.$-]+)*)$/;
+
 /**
- * Logs a critical failure or unhandled exception: the message is taken from `Error` objects, and
- * both the `FAILED:` line and the stack go out at **error** level. Format: `[CAT] FAILED: operation
- * — error detail`
+ * Logs a critical failure or unhandled exception. The **error** line names the operation, the error
+ * class and the code only (`FAILED: op — Class code=X`), so an internal error never shows its text
+ * or location there; the message, the stack and the `diagnostic` issue paths go to one debug line.
+ * A string `err` that is an enumerated detail (`code=… number=…`) stays on the error line; any other
+ * string is prose and goes to debug.
  */
 function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
-  const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));
-  const msg = `FAILED: ${normalizeCategorizedLogMessage(cat, op)} — ${detail}`;
-  ch.error(`[${cat}] ${msg}`);
-  if (err instanceof Error && err.stack) {
-    const stackLine = `Stack: ${normalizeLogMessage(err.stack)}`;
-    ch.error(`[${cat}] ${stackLine}`);
-  }
+  const operation = normalizeCategorizedLogMessage(cat, op);
+  const enumerated = typeof err === 'string' && err.length <= 200 && ENUMERATED_DETAIL.test(err);
+  const code = identifierOrUndefined((err as { code?: unknown } | null | undefined)?.code);
+  const tail = enumerated
+    ? normalizeLogMessage(err)
+    : [err instanceof Error ? identifierOrUndefined(err.name) ?? 'Error' : err === undefined ? '' : 'NonError', code ? `code=${code}` : '']
+      .filter(Boolean).join(' ');
+  ch.error(`[${cat}] FAILED: ${operation}${tail ? ` — ${tail}` : ''}`);
+  if (enumerated || err === undefined) return;
+
+  const diagnostic = (err as { diagnostic?: unknown } | null)?.diagnostic;
+  const parts = [
+    err instanceof Error ? err.message : String(err),
+    typeof diagnostic === 'string' && diagnostic ? `diagnostic=${diagnostic}` : '',
+    err instanceof Error && err.stack ? `Stack: ${err.stack}` : '',
+  ].filter(Boolean);
+  ch.debug(`[${cat}] FAILED detail: ${operation} — ${normalizeLogMessage(parts.join(' | '))}`);
 }

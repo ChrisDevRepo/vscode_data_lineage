@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
 import { openBuiltInSession, type BuiltInEnv } from './builtInProvider';
-import { builtInTarget, CONNECTION_ERROR_LABELS, describeConnectionError } from './connectionErrors';
+import { builtInTarget, CONNECTION_ERROR_LABELS, describeConnectionError, isSignInCancelled } from './connectionErrors';
 import { defaultTenantId, listTenants, pickAccount } from './entraSignIn';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
@@ -241,12 +241,17 @@ export async function runAddConnectionFlow(
           try {
             account = await pickAccount();
           } catch (err) {
-            void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+            const message = err instanceof Error ? err.message : String(err);
+            if (isSignInCancelled(err)) logger.info('Account pick cancelled');
+            else {
+              logger.error('Pick Microsoft account', err);
+              void vscode.window.showErrorMessage(message);
+            }
             return 'back';
           }
           if (account.id !== state.accountId) state.tenantId = undefined;
           state.accountId = account.id;
-          const tenants = await listTenants(account);
+          const tenants = await listTenants(account, logger);
           const preferred = tenants.find((t) => t.tenantId === state.tenantId)?.tenantId ?? defaultTenantId(account, tenants);
           if (tenants.length <= 1) {
             state.tenantId = tenants[0]?.tenantId ?? state.tenantId;
@@ -331,7 +336,6 @@ export async function runAddConnectionFlow(
       await reconcilePassword(env.secrets, existing, connection, state.password);
       logger.info('Saved database connection');
       logger.debug(`Saved database connection ${id} (${describeConnection(connection)})`);
-      void vscode.window.showInformationMessage(`Saved connection "${connection.name}".`);
       return connection;
     }
     if (at < 0) return undefined;
@@ -434,7 +438,6 @@ export function registerConnectionCommands(
       await context.secrets.delete(passwordSecretKey(target.id));
       logger.info('Removed database connection');
       logger.debug(`Removed database connection ${target.id}`);
-      void vscode.window.showInformationMessage(`Removed connection "${target.name}" and its saved password.`);
     }),
 
     vscode.commands.registerCommand('dataLineageViz.updateDatabasePassword', async (arg?: unknown): Promise<boolean> => {

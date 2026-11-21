@@ -209,6 +209,7 @@ class BuiltInSession implements DbSession {
   ) {
     connection.on('error', (err: Error) => {
       this.failure = err;
+      this.logger.warn('Connection error event');
       this.logger.debug(`Connection error on ${label}: ${redactSecrets(err.message)}`);
     });
     connection.on('end', () => { this.closed = true; });
@@ -328,7 +329,7 @@ async function resolveAuthentication(
   if (!connection.user) {
     throw new Error('The SQL login has no user name. Edit the connection to add one.');
   }
-  let password = passwordOverride ?? await readSavedPassword(env.secrets, connection);
+  let password = passwordOverride ?? await readSavedPassword(env.secrets, connection, logger);
   if (password === undefined) {
     logger.debug(`No saved password for connection ${connection.id} — prompting`);
     const prompted = await promptForPassword(connection);

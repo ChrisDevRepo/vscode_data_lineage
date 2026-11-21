@@ -344,6 +344,8 @@ interface ToolGenerationAttemptInput {
   readonly proseGate?: 'buffer-until-tool';
   /** Secret-safe single-line diagnostic sink for unexpected dispatch errors. */
   readonly debugLog?: (message: string) => void;
+  /** Error-level sink for an unexpected dispatch exception: tool and error class only, no message. */
+  readonly errorLog?: (message: string) => void;
   /** See {@link ToolAttemptExecutionOptions.traceSyntheticRejection}. */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
   /** See {@link ToolAttemptExecutionOptions.presentResultRepairDraftContext}. */
@@ -380,6 +382,8 @@ interface ToolAttemptExecutionOptions {
   readonly priorState?: ToolPhaseAttemptState;
   /** Secret-safe single-line diagnostic sink for unexpected dispatch errors. */
   readonly debugLog?: (message: string) => void;
+  /** Error-level sink for an unexpected dispatch exception: tool and error class only, no message. */
+  readonly errorLog?: (message: string) => void;
   /**
    * Observability sink for rejections this module raises without dispatching a tool.
    *
@@ -873,6 +877,15 @@ function repliesLeftAfter(priorState?: ToolPhaseAttemptState): number | undefine
     : undefined;
 }
 
+/**
+ * The escalation level of the reply a rejection answers: its ordinal among the step's rejected
+ * replies, 1 to {@link MAX_TOOL_PROVIDER_CALLS}, counted by the same state as {@link repliesLeftAfter}.
+ * `tools/compare-runs.mjs` reads it as `escalationStage`.
+ */
+export function rejectionLevel(priorState: ToolPhaseAttemptState): number {
+  return Math.min(MAX_TOOL_PROVIDER_CALLS, Math.max(priorState.noProgressCalls, priorState.rejectedTerminalCalls) + 1);
+}
+
 /** Closing line of a rejection that states the replies left; empty when none is left or unknown. */
 function replyBudgetLine(repliesLeft: number | undefined): string[] {
   if (repliesLeft === undefined || repliesLeft < 1) return [];
@@ -988,6 +1001,7 @@ async function dispatchRegistryTool(
       return { resultText: '', cancelled: true, failed: false };
     }
     const diagnostic = sanitizeProviderErrorDiagnostic(error, input.phase);
+    input.errorLog?.(`[AI] tool-execution-error source=dispatcher tool=${call.toolName} class=${diagnostic.name}`);
     input.debugLog?.(`[AI] tool-execution-error source=dispatcher tool=${call.toolName} callId=${safeCallId(call.callId)} ${formatProviderErrorDiagnostic(diagnostic)}`);
     return { resultText: buildToolExecutionError(call.toolName), cancelled: false, failed: true };
   }
@@ -1015,6 +1029,7 @@ export async function executeToolAttempt(
     phase: plan.frame.phase,
     instructionContext: plan.context,
     debugLog: options.debugLog,
+    errorLog: options.errorLog,
     traceSyntheticRejection: options.traceSyntheticRejection,
     presentResultRepairDraftContext: options.presentResultRepairDraftContext,
     holdRejectedSubmission: options.holdRejectedSubmission,

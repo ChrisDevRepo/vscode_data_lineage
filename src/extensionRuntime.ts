@@ -5,7 +5,7 @@ import { registerCommands } from './commands';
 import { openPanel, getActivePanel, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { postToWebview } from './bridge/host';
 import { Logger, OUTPUT_CHANNEL_NAME } from './utils/log';
-import { notifyError, notifyWarning } from './utils/notifications';
+import { clearOnceToasts, notifyErrorOnce, notifyWarning, notifyWarningOnce } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } from './engine/projectStore';
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
 import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
@@ -101,7 +101,8 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   ));
 
   const templateSet = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
-    logger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
+    logger.warn('AI output templates failed to load — using empty defaults');
+    logger.debug(`AI output templates failed to load — ${err instanceof Error ? err.message : String(err)}`);
     return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
   });
   getSession().outputTemplates = templateSet.templates;
@@ -199,6 +200,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration(async (e) => {
       if (!e.affectsConfiguration('dataLineageViz')) return;
       configLogger.debug('Settings changed — dataLineageViz.*');
+      clearOnceToasts();
 
       if (e.affectsConfiguration('dataLineageViz.ai.enabled')) {
         const nowEnabled = vscode.workspace
@@ -214,7 +216,8 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
       if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {
         const t = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
-          configLogger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
+          configLogger.warn('AI output templates failed to load — using empty defaults');
+          configLogger.debug(`AI output templates failed to load — ${err instanceof Error ? err.message : String(err)}`);
           return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
         });
         getSession().outputTemplates = t.templates;
@@ -310,7 +313,7 @@ async function loadAiOutputTemplates(
     }
     sections = readAiOutputSections(parsed).sections;
   } catch (err) {
-    notifyError(
+    notifyErrorOnce(
       logger,
       'Load built-in AI templates',
       'Data Lineage: failed to load built-in AI output templates — AI descriptions may be degraded. Check the Output channel for details.',
@@ -328,7 +331,7 @@ async function loadAiOutputTemplates(
 
   const resolved = resolveWorkspacePath(customPath);
   if (!resolved) {
-    notifyWarning(
+    notifyWarningOnce(
       logger,
       'Load custom AI output templates',
       `Data Lineage: Failed to load custom AI output templates from "${customPath}" — using built-in defaults.`,
@@ -344,7 +347,7 @@ async function loadAiOutputTemplates(
     const parsed = parseAiOutputTemplatesYaml(new TextDecoder().decode(data));
     const customVersion = parsed.schemaVersion;
     if (customVersion !== AI_TEMPLATE_SCHEMA_VERSION) {
-      notifyWarning(
+      notifyWarningOnce(
         logger,
         'Load custom AI output templates',
         `Data Lineage: Custom AI output templates declare schemaVersion ${String(customVersion ?? 'missing')} but this ` +
@@ -375,7 +378,7 @@ async function loadAiOutputTemplates(
         builtIn[key] = entry.instruction.trim();
         overlaid.push(key);
       } else if (entry !== undefined) {
-        logger.debug(`Skipped AI template '${key}': missing or non-string 'instruction' field in custom YAML`);
+        logger.warn(`Skipped AI template '${key}': missing or non-string 'instruction' field in custom YAML`);
       }
     }
     const custom = readAiOutputSections(parsed);
@@ -386,7 +389,7 @@ async function loadAiOutputTemplates(
     await persistAbsolutePath('ai.outputTemplateFile', customPath, resolved);
     logger.info(`Applied AI templates: ${builtInKeys.length} loaded from built-in, ${overlaid.length} overlaid from custom (${overlaid.join(', ') || 'none'})`);
   } catch (err) {
-    notifyWarning(
+    notifyWarningOnce(
       logger,
       'Load custom AI output templates',
       `Data Lineage: Failed to load custom AI output templates from "${customPath}" — using built-in defaults.`,
@@ -415,7 +418,7 @@ async function loadParseRules(
     const data = await vscode.workspace.fs.readFile(builtInUri);
     config = parseParseRulesYaml(new TextDecoder().decode(data));
   } catch (err) {
-    notifyError(
+    notifyErrorOnce(
       logger,
       'Load built-in parse rules',
       'Data Lineage: failed to load built-in parse rules — SQL lineage parsing may be degraded. Check the Output channel for details.',
@@ -439,7 +442,7 @@ async function loadParseRules(
           source = 'custom';
           await persistAbsolutePath('parseRulesFile', customPath, resolved);
         } else {
-          notifyWarning(
+          notifyWarningOnce(
             logger,
             'Load custom parse rules',
             `Custom parse rules invalid at "${resolved}" — using built-in defaults.`,
@@ -447,7 +450,7 @@ async function loadParseRules(
           );
         }
       } catch (err) {
-        notifyWarning(
+        notifyWarningOnce(
           logger,
           'Load custom parse rules',
           `Failed to load custom parse rules from "${resolved}" — using built-in defaults. Check Output channel for details.`,
@@ -455,13 +458,13 @@ async function loadParseRules(
         );
       }
     } else {
-      logger.warn('Fallback parse rules custom → built-in: reason=cannot resolve path');
+      logger.debug('Fallback parse rules custom → built-in: reason=cannot resolve path');
       logger.debug(`Fallback parse rules custom → built-in: path "${customPath}"`);
     }
   }
 
   if (!config) {
-    logger.error('parse rule load', new Error('no config loaded — regex extraction disabled'));
+    logger.error('parse rule load', 'code=no-config');
     return;
   }
 
@@ -474,10 +477,10 @@ async function loadParseRules(
     sess.parseRulesLabel = source === 'custom' ? `custom (${path.basename(customPath)})` : 'built-in rules';
   }
 
-  for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
+  for (const err of result.errors) logger.debug(`Skipped parse rule: ${err}`);
   logger.info(`Applied parse rules: ${result.loaded} loaded from ${appliedFrom}, ${result.skipped.length} skipped`);
   if (result.skipped.length > 0 || result.usedDefaults) {
-    notifyWarning(
+    notifyWarningOnce(
       logger,
       'Apply parse rules',
       result.loaded === 0

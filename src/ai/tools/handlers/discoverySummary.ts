@@ -32,8 +32,8 @@ const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
  * @param model - Text-completion capability only; never dispatches tools.
  * @param signal - Host cancellation signal; an abort re-throws so the caller's cancellation path
  *   surfaces a clean cancel instead of a silently degraded memo.
- * @param logger - Optional diagnostic sink; a lost memo is DEBUG (self-correcting boundary), a
- *   thrown compose call ERROR (implementation/provider failure).
+ * @param logger - Optional diagnostic sink; a lost memo is WARN (degraded result), its rejection
+ *   prose DEBUG, a thrown compose call ERROR (implementation/provider failure).
  * @param engine - The unpublished preview engine already initialized from the proposal being
  *   reviewed.
  */
@@ -89,7 +89,7 @@ export async function composeDiscoverySummaryText(
       logger?.debug(`[AI] [DiscoveryHandoff] attempt=${attempt} rejected reason=${sanitizeForLog(rejectReason)}`);
     }
     if (!parsed?.success) {
-      logger?.debug('[AI] [DiscoveryHandoff] status=degraded reason=invalid_summary_after_retry');
+      logger?.warn('[AI] [DiscoveryHandoff] status=degraded reason=invalid_summary_after_retry');
       return undefined;
     }
     logger?.debug(`[AI] [DiscoveryHandoff] status=composed chars=${parsed.data.length}`);
