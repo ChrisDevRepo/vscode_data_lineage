@@ -11,7 +11,7 @@ import type { ColumnStore } from '../../engine/columnStore';
 import { computeSchemas } from '../../engine/shared/modelSchemas';
 import { bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
-import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
+import { buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { buildDeleteOnlyRelevanceCheck, buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType, presentColumnCompact } from '../support/aiPresenter';
@@ -314,8 +314,6 @@ export class NavigationEngine implements IHopStateMachine {
   /** Logging function for tracing engine activity. */
   protected readonly log: LogFn;
   protected readonly nodeMap: Map<string, LineageNode>;
-  /** Map for resolving edge types based on connected node schemas. */
-  protected readonly edgeTypeMap: Map<string, string>;
   protected memory: AiMemoryManager;
 
   /** Optional session identifier for tracking logs across rounds. */
@@ -552,7 +550,6 @@ export class NavigationEngine implements IHopStateMachine {
     this.log = log;
     this.store = store ?? null;
     this.nodeMap = buildNodeMap(model);
-    this.edgeTypeMap = buildEdgeTypeMap(model);
     this.memory = config.memory ?? new AiMemoryManager();
     const schemas = config.activeFilter?.schemas?.map(s => this.identifierKey(s)) ?? [];
     this.userSchemas = new Set(schemas);
@@ -2669,8 +2666,7 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(entry.nodeId)!;
 
     const focusNode = buildHopFocusNode(
-      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl',
-      this.model.neighborIndex, this.edgeTypeMap, this.identifierCaseSensitive,
+      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl', this.identifierCaseSensitive,
     );
 
     if (this.depthBudget !== null) {
@@ -2786,8 +2782,7 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(focusId);
     if (!node) return null;
     const focusNode = buildHopFocusNode(
-      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl',
-      this.model.neighborIndex, this.edgeTypeMap, this.identifierCaseSensitive,
+      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl', this.identifierCaseSensitive,
     );
     if (this.depthBudget !== null) {
       const d = this.depthFromOrigin.get(focusId);

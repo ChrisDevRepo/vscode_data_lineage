@@ -14,7 +14,6 @@ import {
   type LineageNode,
   type ObjectType,
   type AnalysisType,
-  type NeighborIndex,
 } from '../../engine/types';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { schemaKey } from '../../utils/sql';
@@ -109,7 +108,6 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
  *
  * @param store - Optional high-fidelity column store.
  * @param ddlKey - Key for the DDL property (defaults to 'ddl').
- * @param neighborIndex - Optional pre-computed index attaching in/out edge metadata.
  * @param identifierCaseSensitive - Checked source policy shared with the unresolved-reference map.
  */
 export function buildHopFocusNode(
@@ -118,8 +116,6 @@ export function buildHopFocusNode(
   unrelatedMap: Map<string, string[]>,
   store?: ColumnStore,
   ddlKey = 'ddl',
-  neighborIndex?: NeighborIndex,
-  edgeTypeMap?: Map<string, string>,
   identifierCaseSensitive = false,
 ): Record<string, unknown> {
   const focusNode: Record<string, unknown> = {
@@ -139,15 +135,7 @@ export function buildHopFocusNode(
   const unrel = unrelatedMap.get(unrelKey);
   if (unrel?.length) focusNode.unresolved_refs = unrel;
 
-  const result = strip(focusNode) as Record<string, unknown>;
-
-  if (!SCRIPT_TYPES.has(node.type) && neighborIndex && edgeTypeMap) {
-    const entry = neighborIndex[node.id] ?? { in: [], out: [] };
-    result.in  = entry.in.map(nid  => presentNeighbor(nid, node.id, nodeMap, edgeTypeMap, true));
-    result.out = entry.out.map(nid => presentNeighbor(nid, node.id, nodeMap, edgeTypeMap, false));
-  }
-
-  return result;
+  return strip(focusNode) as Record<string, unknown>;
 }
 
 /**

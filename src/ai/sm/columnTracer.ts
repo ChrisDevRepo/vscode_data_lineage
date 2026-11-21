@@ -226,8 +226,7 @@ export class ColumnTracer {
    * @param removedSet - Node ids already pruned this run (PRUNE-BEFORE-DEMAND); naming one as an
    *   `upstream_columns` supplier is rejected at declare time, rather than staging a demand
    *   `enqueueHop` can never dispatch.
-   * @param traceDirection - Resolves which neighbour side a continuation may name at a body-less
-   *   focus (producers upstream, consumers downstream).
+   * @param traceDirection - The side the task traces: upstream (producers) or downstream (consumers).
    * @param incomingRefs - Transient qualified endpoints from the task context. Omitted: committed
    *   endpoints anchor validation, or the initial focus columns when none are committed. They
    *   select entry sides; attachment is decided by the {@link columnAttachment} of `roots` alone.
@@ -237,9 +236,8 @@ export class ColumnTracer {
    *   {@link columnAttachment} in the hop's direction (both sides at a mixed-side hop).
    * @param contributorIds - Canonical ids a contributor may name besides the focus: its object
    *   neighbors and the read suppliers of its declared scalar callers. A column the object does not
-   *   declare, a literal, or a carrier continuation at a non-writer is refused wherever the object
-   *   sits; any other contributor is dropped with an `absent_contributor` notice. Omitted:
-   *   adjacency is not checked.
+   *   declare or a literal is refused wherever the object sits; any other contributor is dropped
+   *   with an `absent_contributor` notice. Omitted: adjacency is not checked.
    * @returns Validation result: any error, invalid routes, staged edges and the accepted entry
    *   sides when separate downstream obligations were supplied.
    */
@@ -276,12 +274,6 @@ export class ColumnTracer {
 
     const focusNode = nodeMap.get(focusId);
     if (!focusNode) return { invalidRoutes, stagedEdges };
-
-    const focusIsCarrier = !SCRIPT_TYPES.has(focusNode.type);
-    const continuationSide = traceDirection === 'downstream' ? 'out' : 'in';
-    const continuationNeighbors = focusIsCarrier
-      ? new Set((model.neighborIndex[identifierKey(focusId)]?.[continuationSide] ?? []).map((id) => identifierKey(id)))
-      : null;
 
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
     const activeNorm = this.aspect.active_columns.map(this.columnKey);
@@ -433,7 +425,7 @@ export class ColumnTracer {
             : `Column metadata is unavailable for ${neighbor.type} "${neighbor.id}"; upstream column "${cont.col}" cannot be verified.` });
           continue;
         }
-        if (validNeighborCols.size === 0 && neighbor.type === 'procedure' && !continuationNeighbors) {
+        if (validNeighborCols.size === 0 && neighbor.type === 'procedure') {
           const spInbound = model.neighborIndex[identifierKey(neighbor.id)]?.in ?? [];
           const inboundCols = new Set<string>();
           for (const inId of spInbound) {
@@ -448,26 +440,8 @@ export class ColumnTracer {
           log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — ${neighbor.type} metadata fallback`);
         }
 
-        if (continuationNeighbors) {
-          if (continuationNeighbors.size === 0) {
-            log?.('debug', `[CT] unverifiable continuation "${cont.col}" on carrier "${focusId}" from "${cont.node}" — no recorded ${continuationSide === 'in' ? 'writers' : 'readers'}, accepting unverified`);
-          } else {
-            if (!continuationNeighbors.has(identifierKey(neighbor.id))) {
-              invalidRoutes.push({
-                kind: 'non_writer_continuation',
-                id: cont.node,
-                path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`,
-                reason: `focus "${focusId}" has no body of its own, so upstream_columns declare continuation at the nodes that ${continuationSide === 'in' ? 'write it' : 'read from it'} — "${cont.node}" is not one of them`,
-                available_routes: Array.from(continuationNeighbors).sort(),
-              });
-              continue;
-            }
-            log?.('debug', `[CT] continuation edge "${cont.col}" on carrier "${focusId}" from "${cont.node}" — attributed on that node's own hop`);
-          }
-        }
-
-        // Adjacency is judged last so a nonexistent column, a literal or a non-writer continuation
-        // keeps its own refusal wherever the object sits.
+        // Adjacency is judged last so a nonexistent column or a literal keeps its own refusal
+        // wherever the object sits.
         if (contributorIds && neighbor.id !== focusId && !contributorIds.has(neighbor.id)) {
           invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" has no dependency edge to ${focusId}; a column contributor is a neighbor of the focus or a read supplier of its declared scalar caller.` });
           continue;
@@ -533,19 +507,6 @@ export class ColumnTracer {
         available_columns: [...this.aspect.active_columns],
       });
     };
-
-    if (focusIsCarrier) {
-      const rejectedEdges = new Set<ColumnEdge>();
-      for (const [entryIndex, edges] of entryEdges) {
-        const upDetached = detachedIn(edges, attached);
-        const downDetached = downstreamAttached ? detachedIn(edges, downstreamAttached) : upDetached;
-        const detached = downDetached.length < upDetached.length ? downDetached : upDetached;
-        if (detached.length === 0) continue;
-        rejectDetached(entryIndex, detached);
-        for (const edge of edges) rejectedEdges.add(edge);
-      }
-      return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)) };
-    }
 
     const entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> = [];
     const rejectedEdges = new Set<ColumnEdge>();

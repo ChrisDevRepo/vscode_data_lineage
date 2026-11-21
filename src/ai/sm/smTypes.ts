@@ -962,7 +962,6 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'bad_out_col'
       | 'untracked_out_col'
       | 'bad_contributor_col'
-      | 'non_writer_continuation'
       | 'self_loop_column'
       | 'bad_writes_to_target'
       | 'bad_return_target'
@@ -997,7 +996,7 @@ export interface InvalidRoute {
     available_columns?: string[];
     /** Complete catalog column names of this object, never tracked subsets or input unions. */
     actual_columns?: string[];
-    /** Carrier-side neighbours a body-less focus may name (`non_writer_continuation`). */
+    /** Neighbours the focus may still question (`question_closed`). */
     available_routes?: string[];
     /** Fields that carry the fact instead of the refused reference (`column_out_of_scope`). */
     alternatives?: string[];
