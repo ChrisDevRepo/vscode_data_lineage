@@ -16,14 +16,13 @@ import type {
   ToolGenerationResult,
   ValidGeneratedToolCall,
 } from '../../src/ai/model/modelPort';
-import type { ProviderErrorDiagnostic } from '../../src/ai/support/text';
 import { StructuredOutputError } from '../../src/ai/providers/structuredOutput';
 import {
   DEFAULT_TURN_TOKEN_BUDGET,
   estimateTokens,
   type TurnTokenBudget,
 } from '../../src/ai/support/tokenBudget';
-import { messageContentToText, modelToolCallMessage } from '../../src/ai/model/modelPort';
+import { errorToolTurnResult, messageContentToText, ModelPortError, modelToolCallMessage } from '../../src/ai/model/modelPort';
 import type { MessageContent } from '@langchain/core/messages';
 
 /** One queued provider generation replayed by {@link ScriptedModelPort} in script order. */
@@ -40,8 +39,6 @@ export interface ScriptedGeneration {
   readonly textDeltas?: readonly string[];
   /** User-safe error text for a `'error'` generation. */
   readonly error?: string;
-  /** Sanitized diagnostic for a `'error'` generation. */
-  readonly providerError?: ProviderErrorDiagnostic;
   /** Opaque provider stream parts the generation carried (reasoning, signatures). */
   readonly providerParts?: readonly unknown[];
 }
@@ -140,18 +137,8 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
       return { status: 'cancelled', content: [], text: '', toolCalls: [] };
     }
     if (step.status === 'error') {
-      return {
-        status: 'error',
-        content: [],
-        text: '',
-        toolCalls: [],
-        error: step.error ?? 'scripted provider error',
-        providerError: step.providerError ?? {
-          phase: input.phase,
-          name: 'Error',
-          message: step.error ?? 'scripted provider error',
-        },
-      };
+      const message = step.error ?? 'scripted provider error';
+      return errorToolTurnResult(new ModelPortError('provider_error', message), { phase: input.phase, name: 'Error', message });
     }
     const toolCalls = step.toolCalls ?? [];
     const text = step.text ?? '';

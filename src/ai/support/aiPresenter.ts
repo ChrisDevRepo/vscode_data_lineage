@@ -40,8 +40,8 @@ type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & {
 };
 
 /**
- * Optional context that lets {@link presentNode} serve a node's `in`/`out` neighbor split in the
- * shape `buildHopFocusNode` uses for the hop_context route, instead of only the scalar `deg`.
+ * Optional context that lets {@link presentNode} serve a node's `in`/`out` neighbor split instead
+ * of only the scalar `deg`.
  */
 export type NodeNeighborSplitContext = {
   /** Full node lookup, needed to resolve each neighbor id to its schema/name/type. */
@@ -53,8 +53,8 @@ export type NodeNeighborSplitContext = {
 /**
  * Transforms a database node into a compact, token-optimized record. Keys are abbreviated
  * (`s`=schema, `n`=name, `t`=type, `deg`=degree). `deg` alone cannot answer "which side", so
- * `splitContext` (with a `neighborIndex` entry) adds `in`/`out` neighbor arrays in the shape
- * `buildHopFocusNode` emits; omitted elsewhere so the payload only grows where requested.
+ * `splitContext` (with a `neighborIndex` entry) adds `in`/`out` neighbor arrays; omitted elsewhere
+ * so the payload only grows where requested.
  *
  * @param neighborIndex - Optional index to calculate connection density (degree).
  */

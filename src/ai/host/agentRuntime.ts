@@ -16,10 +16,13 @@ import { Command, GraphRecursionError, INTERRUPT, isInterrupted } from '@langcha
 import {
   modelUserMessage,
   isPortCancellation,
+  ModelPortError,
+  classifyTurnStop,
   type ModelMessage,
   type ModelPort,
 } from '../model/modelPort';
 import { isCancellationOutcome } from '../support/cancellation';
+import { describeTurnStop, sanitizeProviderErrorDiagnostic, type TurnStop } from '../support/text';
 import { trackInFlightDispatch, type IToolRegistry } from '../tools/registry';
 import type { Logger } from '../../utils/log';
 import type { TurnEventSink } from '../runtime/turnEventSink';
@@ -35,8 +38,10 @@ export { type GateDecision } from '../agent/state';
 
 /** Diagnostic detail behind a non-`ok` {@link TurnOutcome}. */
 export interface AgentFailureDetail {
-  /** Error prose behind the non-`ok` outcome: graph-state error or caught exception message. */
+  /** Chat text of the stop, rendered once by {@link describeTurnStop}. */
   readonly message: string;
+  /** Source, code and phase of the stop; the content-free fields the error log line carries. */
+  readonly turnStop: TurnStop;
   /** Enumerated {@link AgentErrorCode} when the failure carries one. */
   readonly code?: AgentErrorCode;
   /** Engine stop reason when the turn ended on a stop rather than a hard failure. */
@@ -119,6 +124,8 @@ export class AgentRuntime {
   /** This turn's ownership epoch, carried into guarded session writes so a zombie turn no-ops. */
   private readonly turnEpoch: number;
   private readonly logger: Logger | undefined;
+  /** The turn's model; its display name labels a quoted provider message. */
+  private readonly model: ModelPort;
   private readonly graph: ReturnType<typeof buildAgentGraph>;
   private readonly pendingGates = new Map<string, (d: GateDecision) => void>();
   /**
@@ -139,6 +146,7 @@ export class AgentRuntime {
     this.priorMessages = deps.priorMessages ?? [];
     this.turnEpoch = deps.turnEpoch;
     this.logger = deps.logger;
+    this.model = deps.model;
     const tracked = trackInFlightDispatch(deps.registry);
     this.dispatchSettled = tracked.settled;
     this.graph = buildAgentGraph({
@@ -193,12 +201,14 @@ export class AgentRuntime {
 
         const state = result as {
           outcome?: TurnOutcome | null;
-          error?: string | null;
+          error?: TurnStop | null;
           errorCode?: AgentErrorCode | null;
           activeStop?: string | null;
         };
-        const outcome: TurnOutcome = state.outcome ?? (state.error ? 'error' : 'ok');
-        return this.close(outcome, state.error ?? undefined, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
+        if (state.error) return this.close('error', state.error, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
+        // `fail` writes `outcome: 'error'` together with its `TurnStop`; one without is a graph bug.
+        if (state.outcome === 'error') throw new Error('Graph ended in error without a TurnStop.');
+        return this.close(state.outcome ?? 'ok');
       }
     } catch (err) {
       if (isCancellationOutcome(err, this.signal) || isPortCancellation(err)) {
@@ -206,12 +216,10 @@ export class AgentRuntime {
         await this.dispatchSettled();
         return this.close('cancelled');
       }
-      this.logger?.error('[AI] LangGraph turn', err);
-      if (err instanceof GraphRecursionError) {
-        return this.close('error', 'Analysis stopped: internal step limit reached. The run is incomplete, so no result is shown and the graph was not changed. This is a defect — please report it.');
-      }
-      const msg = err instanceof Error ? err.message : String(err);
-      return this.close('error', msg);
+      // The error line is the participant's; a thrown text or stack can echo content: debug only.
+      if (!(err instanceof ModelPortError)) this.logger?.debug(`[AI] LangGraph turn failed — ${err instanceof Error ? err.stack : String(err)}`);
+      const stop = classifyTurnStop(err, sanitizeProviderErrorDiagnostic(err, 'turn'));
+      return this.close('error', err instanceof GraphRecursionError ? { ...stop, code: 'recursion_limit' } : stop);
     }
   }
 
@@ -246,20 +254,24 @@ export class AgentRuntime {
     });
   }
 
-  private close(status: TurnOutcome, error?: string, detail?: { readonly code?: AgentErrorCode; readonly stop?: string }): TurnOutcome {
+  /** Claims the turn's terminal; an error close always carries its `TurnStop`, rendered once here. */
+  private close(
+    ...[status, error, detail]: [status: 'ok' | 'cancelled'] | [status: 'error', error: TurnStop, detail?: { readonly code?: AgentErrorCode; readonly stop?: string }]
+  ): TurnOutcome {
     let claimed: boolean;
     let sinkFailure: { readonly cause: unknown } | undefined;
+    const message = error && describeTurnStop(error, this.model.identity.name);
     try {
-      claimed = status === 'error' && error
-        ? this.sink.fail(error)
-        : this.sink.result(status, error);
+      claimed = message ? this.sink.fail(message) : this.sink.result(status);
     } catch (cause) {
       claimed = true;
       sinkFailure = { cause };
     }
     if (!claimed) return this.sink.terminalStatus ?? status;
 
-    this.lastFailureDetail = status !== 'ok' && error ? { message: error, code: detail?.code, stop: detail?.stop } : undefined;
+    this.lastFailureDetail = error && message
+      ? { message, turnStop: error, code: detail?.code, stop: detail?.stop }
+      : undefined;
     if (status === 'cancelled' || status === 'error') {
       const sess = this.getSession();
       if (sess.phase.kind === 'exploring') {

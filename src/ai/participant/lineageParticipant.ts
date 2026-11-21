@@ -26,7 +26,7 @@ import {
 import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
 import { renderFullPlanMd, renderScopeCardMd, gateCardMd } from '../prompting/scopeSummaryRenderer';
-import { sanitizeDescriptionForChat, sanitizeProviderError } from '../support/text';
+import { formatProviderErrorDiagnostic, sanitizeDescriptionForChat } from '../support/text';
 import {
   createTurnTokenBudget,
   DEFAULT_DISCOVERY_NODE_CAP,
@@ -393,15 +393,17 @@ export class LineageParticipant {
         return { metadata };
       }
 
-      const message = sanitizeProviderError(result.failure?.message ?? '')
-        || 'Data Lineage could not complete this request.';
-      // Provider text can echo prompt content, so error level carries enumerated fields only.
+      const { message, turnStop, code, stop } = result.failure;
+      // Provider text can echo prompt content, so error level carries enumerated fields only; the
+      // chat text and the sanitized cause chain (names, codes, messages) go to debug.
       this.logger.error(
-        `[${session.id}] native turn terminal status=error stop=${result.failure?.stop ?? 'none'}`
+        `[${session.id}] native turn terminal status=error source=${turnStop.source}`
+        + ` phase=${turnStop.phase ?? 'none'} model=${request.model.id} stop=${stop ?? 'none'}`
         + ` modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
-        `code=${result.failure?.code ?? 'none'}`,
+        `code=${turnStop.code}${code ? ` errorCode=${code}` : ''}`,
       );
-      this.logger.debug(`[${session.id}] native turn failure message: ${message}`);
+      const chain = turnStop.diagnostic;
+      this.logger.debug(`[${session.id}] native turn failure message: ${message}${chain ? ` ${formatProviderErrorDiagnostic(chain)}` : ''}`);
       return { metadata, errorDetails: { message } };
     } finally {
       this.statusBarStop();

@@ -5,6 +5,9 @@
 import type { LogOutputChannel } from 'vscode';
 import { redactSecrets } from './redact';
 
+/** Name of the extension's output channel, as users see it in the Output view. */
+export const OUTPUT_CHANNEL_NAME = 'Data Lineage Viz';
+
 /** Categories that tag extension log entries. */
 export type LogCategory =
   | 'DB'

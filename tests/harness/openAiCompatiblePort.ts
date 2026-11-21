@@ -643,7 +643,7 @@ export class OpenAiCompatiblePort implements ModelPort {
       this.options.debugLog?.(
         `[AI] provider-error ${formatProviderErrorDiagnostic(diagnostic)}`,
       );
-      return errorToolTurnResult(diagnostic);
+      return errorToolTurnResult(error, diagnostic);
     }
   }
 

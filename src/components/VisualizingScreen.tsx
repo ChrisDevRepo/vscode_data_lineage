@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { Spinner } from './ui/Spinner';
@@ -22,6 +22,8 @@ interface VisualizingScreenProps {
   onCancel: () => void;
   /** Callback to return to the project selection screen. */
   onBack: () => void;
+  /** Re-runs the failed load; `null` when the source has nothing to retry. */
+  onRetry: (() => void) | null;
 }
 
 const PHASES: { key: LoadingPhase; label: string }[] = [
@@ -79,7 +81,14 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
   );
 }
 
-const AUTO_REDIRECT_MS = 8000;
+const COUNTDOWN_MS = 8000;
+/** Automatic retries per visit; a login that keeps failing is not repeated every countdown. */
+const AUTO_RETRY_MAX = 1;
+/** User-facing failure strings (Microsoft style: what happened, the next step, no blame). */
+const RETRY_LABEL = 'Retry';
+const CANCEL_LABEL = 'Cancel';
+const retryingIn = (seconds: number) => `Couldn't connect yet. Trying again in ${seconds} s.`;
+const returningIn = (seconds: number) => `Auto-returning in ${seconds}s`;
 
 /** Displays project-loading progress, elapsed time, cancellation, and failure recovery. */
 export const VisualizingScreen = memo(function VisualizingScreen({
@@ -90,51 +99,60 @@ export const VisualizingScreen = memo(function VisualizingScreen({
   error,
   onCancel,
   onBack,
+  onRetry,
 }: VisualizingScreenProps) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    if (phase !== 'load' || progressText || !!error) { setElapsed(0); return; }
+    if (phase !== 'load' || !!error) { setElapsed(0); return; }
     setElapsed(0);
     const interval = setInterval(() => setElapsed(s => s + 1), 1000);
     return () => clearInterval(interval);
-  }, [phase, progressText, error]);
+  }, [phase, error]);
 
   const [countdown, setCountdown] = useState<number | null>(null);
+  const autoRetries = useRef(0);
+  const willRetry = onRetry !== null && autoRetries.current < AUTO_RETRY_MAX;
 
   useEffect(() => {
     if (!error) { setCountdown(null); return; }
 
-    setCountdown(Math.ceil(AUTO_REDIRECT_MS / 1000));
+    setCountdown(Math.ceil(COUNTDOWN_MS / 1000));
     const start = Date.now();
 
     const tick = setInterval(() => {
-      const remaining = AUTO_REDIRECT_MS - (Date.now() - start);
+      const remaining = COUNTDOWN_MS - (Date.now() - start);
       if (remaining <= 0) {
         clearInterval(tick);
         setCountdown(0);
-        onBack();
+        if (onRetry && autoRetries.current < AUTO_RETRY_MAX) {
+          autoRetries.current += 1;
+          onRetry();
+        } else {
+          onBack();
+        }
       } else {
         setCountdown(Math.ceil(remaining / 1000));
       }
     }, 250);
 
     return () => clearInterval(tick);
-  }, [error, onBack]);
+  }, [error, onBack, onRetry]);
 
   const hasError = !!error;
   const showCancel = phase === 'load' && !hasError;
 
   const footer = hasError ? (
     <div className="flex items-center gap-4 w-full">
-      <Button variant="secondary" onClick={onBack}>← Back to Start</Button>
+      {onRetry && <Button variant="primary" onClick={onRetry}>{RETRY_LABEL}</Button>}
+      <Button variant="secondary" onClick={onCancel}>{CANCEL_LABEL}</Button>
       {countdown !== null && countdown > 0 && (
         <span className="text-xs" style={{ color: 'var(--ln-wizard-fg-muted)' }}>
-          Auto-returning in {countdown}s
+          {willRetry ? retryingIn(countdown) : returningIn(countdown)}
         </span>
       )}
     </div>
   ) : showCancel ? (
-    <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+    <Button variant="ghost" onClick={onCancel}>{CANCEL_LABEL}</Button>
   ) : (
     <span />
   );
@@ -200,6 +218,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
                       }}
                     >
                       {subText}
+                      {isActive && key === 'load' && progressText && elapsed > 2 ? ` (${elapsed}s)` : ''}
                     </div>
                   )}
                   {isActive && key === 'load' && !progressText && (

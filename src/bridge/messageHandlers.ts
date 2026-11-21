@@ -9,6 +9,7 @@ import {
   sanitizeForLog,
   safeStringifyForLog,
   LOG_TRUNC_JSON,
+  OUTPUT_CHANNEL_NAME,
   type LogCategory,
 } from '../utils/log';
 import { notifyError, notifyWarning } from '../utils/notifications';
@@ -694,7 +695,7 @@ export function createMessageHandlers(
           await saveProjectStore(context, updatedStore);
           postProjectsList(host, updatedStore);
         };
-        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, progressToken) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, progressToken), async (session) => {
+        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, progressToken, onConnecting) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, progressToken, onConnecting), async (session) => {
           lastConnectionInfo = session.connectionInfo;
           const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
@@ -760,13 +761,13 @@ export function createMessageHandlers(
     }),
     'db-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, progressToken) => {
+      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, progressToken, onConnecting) => {
         if (!lastConnectionInfo) {
           host.log('error', 'Bridge', 'Database visualize', 'No stored connection info');
           host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.' });
           return undefined;
         }
-        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, progressToken);
+        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, progressToken, onConnecting);
       }, async (conn, _progress, progressToken) => {
         const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
         let pendingProject: ReturnType<typeof createProject> | null = null;
@@ -831,7 +832,7 @@ export function createMessageHandlers(
     },
     'db-connect': loadHandler((host) => {
       host.log('debug', 'Bridge', 'Database connect requested');
-      return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token) => connectDatabase(dbEnv, undefined, token), (conn) => {
+      return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token, onConnecting) => connectDatabase(dbEnv, undefined, token, onConnecting), (conn) => {
         lastConnectionInfo = conn.connectionInfo;
         return runDbPhase1Host(host, conn, outputChannel, dmvQueries.reload);
       });
@@ -973,8 +974,8 @@ export function createMessageHandlers(
       });
 
       const userMessage = source === 'error-boundary'
-        ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
-        : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
+        ? `Data Lineage hit an error and is reloading the view — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`
+        : `Data Lineage encountered an unexpected error — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`;
 
       host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}`, err);
       host.log('debug', 'Bridge', `Webview ${sanitizeForLog(source)} error context=${contextLine}`);
@@ -1209,13 +1210,18 @@ async function withDbProgressHost(
   host: BridgeHost,
   env: DbConnectEnv,
   title: string,
-  connectFn: (patch: Partial<StoredConnectionInfo> | undefined, token: vscode.CancellationToken) => Promise<DbSession | undefined>,
+  connectFn: (
+    patch: Partial<StoredConnectionInfo> | undefined,
+    token: vscode.CancellationToken,
+    onConnecting: (label: string) => void,
+  ) => Promise<DbSession | undefined>,
   phaseFn: (session: DbSession, progress: vscode.Progress<{ message?: string; increment?: number }>, token: vscode.CancellationToken) => Promise<void>,
 ) {
+  const onConnecting = (label: string) => { void host.postMessage({ type: 'db-progress', label }); };
   await host.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
     let session: DbSession | undefined;
     try {
-      session = await connectFn(undefined, token);
+      session = await connectFn(undefined, token, onConnecting);
       if (session && !token.isCancellationRequested) {
         await phaseFn(session, progress, token);
       } else {
@@ -1229,7 +1235,7 @@ async function withDbProgressHost(
         // A retry reconnects the connection that failed, so a record stored by the retired mssql
         // extension is not asked to reconnect twice.
         const failed: Partial<StoredConnectionInfo> | undefined = target.connectionId ? { provider: 'builtIn', connectionId: target.connectionId } : undefined;
-        const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn({ ...failed, ...patch }, token), phaseFn);
+        const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token, onConnecting) => connectFn({ ...failed, ...patch }, token, onConnecting), phaseFn);
         const reported = reportConnectionError(
           failure.error,
           target,

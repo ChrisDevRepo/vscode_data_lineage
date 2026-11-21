@@ -13,10 +13,6 @@
  *   - `edgeApiType()` (src/ai/support/aiPresenter.ts) maps any unrecognized edge type,
  *     including a non-member `'SELECT'` literal, to `'read'` — the same fallback it
  *     gives `'body'`. Retagging edges 'body' is a no-op for every present hop.
- *   - `buildHopFocusNode` (src/ai/tools/tools.ts) only reads `neighborIndex` for
- *     non-bodied (table/external) focus nodes, and the bipartite agenda rule means a
- *     table/external node is never dispatched as a hop focus — so an empty
- *     `neighborIndex: {}` is never observed by the engine paths these tests drive.
  *   - `model.catalog` is not read anywhere in the NavigationEngine/ColumnTracer code
  *     paths these tests exercise.
  */

@@ -383,7 +383,12 @@ async function pickDatabase(connection: BuiltInConnection): Promise<string | und
  * @returns The open session, or `undefined` when the user cancelled.
  * @throws {@link DbConnectionError} when the connection cannot be opened.
  */
-export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo, token?: vscode.CancellationToken): Promise<DbSession | undefined> {
+export async function connectDatabase(
+  env: DbConnectEnv,
+  stored?: StoredConnectionInfo,
+  token?: vscode.CancellationToken,
+  onConnecting?: (label: string) => void,
+): Promise<DbSession | undefined> {
   const logger = Logger.create(env.outputChannel, 'DB');
   let connection: BuiltInConnection | undefined;
   if (stored && usesMssqlExtension(stored)) {
@@ -412,7 +417,7 @@ export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnecti
     return undefined;
   }
   try {
-    return await openBuiltInSession(connection, env, { database, token });
+    return await openBuiltInSession(connection, env, { database, token, onConnecting });
   } catch (err) {
     throw new DbConnectionError(builtInTarget(connection, database), err);
   }

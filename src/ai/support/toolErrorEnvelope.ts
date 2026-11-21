@@ -223,11 +223,6 @@ export const ISSUES = {
     label: 'not a declared column of that object',
     correction: 'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
   },
-  [REJECTION_CODES.continuationNotWriter]: {
-    category: 'reference',
-    label: 'not a neighbour on the carrier side of this bodyless focus',
-    correction: 'This focus node has no body of its own, so its column_flow declares continuation: name only the neighbours on this focus\'s carrier side, using the valid routes named in the rejection reason, carrying the tracked column unchanged; the column is attributed on that node\'s own hop, where its body is in view. Remove entries naming any other neighbour.',
-  },
   [REJECTION_CODES.columnSelfLoop]: {
     category: 'value',
     label: 'upstream entry identical to its output destination',

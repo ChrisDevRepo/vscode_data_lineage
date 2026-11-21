@@ -731,7 +731,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('detail-closed') }),
   z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
-  z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-progress'), step: z.number().optional(), total: z.number().optional(), label: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-cancelled'), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-error'), message: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('last-dacpac-gone'), loadId: z.string().optional() }),
