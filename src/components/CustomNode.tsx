@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Handle, Position, NodeToolbar, useStore } from '@xyflow/react';
+import { Handle, Position, NodeToolbar, useViewportStore } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, SHORT_TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { Tooltip } from './ui/Tooltip';
@@ -178,7 +178,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   const schemaColor = isExternal ? getExternalNodeColor() : (data.schemaColor ?? getSchemaColor(data.schema));
   const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, transform, zIndex } =
     resolveNodeHighlightStyle(data.highlighted, data.aiHighlight);
-  const isSimple = useStore((s) => isZoomBelowSimpleThreshold(s.transform[2]));
+  const isSimple = useViewportStore((s) => isZoomBelowSimpleThreshold(s.transform[2]));
 
   const tooltipLines: string[] = [];
   if (data.externalType === 'file' && data.externalUrl) tooltipLines.push(data.externalUrl);

@@ -267,8 +267,8 @@ function applyDecoration(node: FlowNode, d: NodeDecoration): FlowNode {
 
 /**
  * Applies selection, trace and AI decoration to each node, reusing the previous result whenever
- * that node's inputs are unchanged. A drag emits a position change for one node and
- * `applyNodeChanges` keeps every other reference; reusing the cached result keeps their `data`
+ * that node's inputs are unchanged. A drag emits a position change for one node and the
+ * changeset's `applyTo` keeps every other reference; reusing the cached result keeps their `data`
  * stable so `React.memo` skips them, instead of one drag frame re-rendering the whole canvas.
  * Entries for ids absent from `nodes` are dropped so the cache tracks the rendered set.
  *

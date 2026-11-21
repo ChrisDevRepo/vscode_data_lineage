@@ -912,7 +912,7 @@
     "@langchain/langgraph": "1.4.10",
     "@microsoft/vscode-azext-azureauth": "5.1.1",
     "@monaco-editor/react": "4.7.0",
-    "@xyflow/react": "12.11.6",
+    "@xyflow/react": "13.0.2",
     "comlink": "4.4.2",
     "dompurify": "3.4.18",
     "fast-xml-parser": "5.12.1",

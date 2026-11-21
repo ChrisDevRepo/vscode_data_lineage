@@ -7,8 +7,6 @@ import {
   MiniMap,
   useReactFlow,
   useNodesInitialized,
-  applyNodeChanges,
-  applyEdgeChanges,
   MarkerType,
   type Node as FlowNode,
   type Edge as FlowEdge,
@@ -22,9 +20,8 @@ import {
   Panel,
   getNodesBounds,
   getViewportForBounds,
-  useStore,
+  useViewportStore,
 } from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
 import { useVsCode } from '../contexts/VsCodeContext';
 
@@ -121,8 +118,8 @@ export function aiLayoutCacheKey(originId: string | undefined, viewName: string)
   return `${originId ?? 'preview'}::${viewName}`;
 }
 
-/** Padding factor applied when fitting the graph view. */
-const FIT_VIEW_PADDING = 0.15;
+/** Padding applied when fitting the graph view; a percentage keeps the v12 relative factor (v13 reads a unitless number as pixels). */
+const FIT_VIEW_PADDING = '15%';
 
 type FitViewPadding = NonNullable<FitViewOptions['padding']>;
 
@@ -1417,13 +1414,13 @@ export function GraphCanvas({
   }, [flowNodes]);
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds)),
+    (changes) => setLocalNodes((nds) => changes.applyTo(nds)),
     []
   );
 
   /**
    * Marks a drag live so the `localNodes` sync effect defers a rebuild landing mid-drag, rather
-   * than deriving drag state from `applyNodeChanges` position events (one frame late).
+   * than deriving drag state from position change events (one frame late).
    */
   const handleNodeDragStart: OnNodeDrag = useCallback((_event, node, nodes) => {
     fitGenerationRef.current++;
@@ -1463,7 +1460,7 @@ export function GraphCanvas({
   }, []);
 
   const onEdgesChange: OnEdgesChange = useCallback(
-    (changes) => setLocalEdges((eds) => applyEdgeChanges(changes, eds)),
+    (changes) => setLocalEdges((eds) => changes.applyTo(eds)),
     []
   );
 
@@ -1833,8 +1830,8 @@ export function GraphCanvas({
   const isTraceNavigatorOpen = showTraceNavigator && !isDetailSearchOpen && !analysisMode && !isTraceTreeCollapsed;
   const fitPadding = isTraceNavigatorOpen ? TRACE_NAVIGATOR_FIT_PADDING : FIT_VIEW_PADDING;
   fitPaddingRef.current = fitPadding;
-  const paneWidth = useStore((s) => s.width);
-  const paneHeight = useStore((s) => s.height);
+  const paneWidth = useViewportStore((s) => s.width);
+  const paneHeight = useViewportStore((s) => s.height);
   useCanvasResizeFit(paneWidth, paneHeight, fitGraph, !!pendingViewport);
   const minZoom = useMemo(
     () => canvasMinZoom(displayNodes, paneWidth, paneHeight, fitPadding),
@@ -2178,6 +2175,7 @@ export function GraphCanvas({
                 onViewportChange={handleViewportChange}
                 onMoveStart={handleMoveStart}
                 selectNodesOnDrag={false}
+                elevateEdgesOnSelect={false}
                 deleteKeyCode={null}
                 panOnDrag={true}
                 panOnScroll={false}
