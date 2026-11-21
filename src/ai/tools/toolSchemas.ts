@@ -555,7 +555,7 @@ const ColumnFlowEntrySchema = z.object({
   upstream_columns: z.array(ColumnRefSchema).describe(
     'At a bodied focus, only the real source columns whose value flows into out_col: operands of its expression, ' +
     'an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. ' +
-    'A column used only to join, filter, group, partition or order rows is not a source: omit it here and state it in sections. ' +
+    'A column used only to join, filter, group, partition or order rows is an indirect source: list it here with transforms combine or filter. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
     'At a bodyless focus, follow carrier-side neighbours (writers upstream, readers downstream) with the ' +
     'tracked column unchanged; a focus with an in-scope carrier-side neighbour is not an origin. ' +

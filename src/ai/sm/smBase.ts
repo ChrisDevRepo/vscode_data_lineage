@@ -2943,7 +2943,7 @@ export class NavigationEngine implements IHopStateMachine {
           kind: 'prune_column_conflict',
           id: target.resolved,
           path: target.path,
-          reason: `\`${target.resolved}\` is also named in column_flow; the same submission cannot map and prune it.`,
+          reason: `\`${target.resolved}\` is also named in column_flow; the same submission cannot map and prune it, and a neighbor used only indirectly is kept with its indirect columns.`,
         });
       }
 

@@ -978,22 +978,21 @@ export function requiredDetailSlotIds(
 
 /**
  * Column-chain node ids a present call must cover with a section link or a note: nodes of the
- * direct column edges the render keeps that have no detail slot and are not pruned. The synthesis envelope lists this set
+ * direct and indirect column edges the render keeps that have no detail slot and are not pruned. The synthesis envelope lists this set
  * and the present handler enforces it (one source for list and check).
  *
  * @param exemptNodeIds - Node ids with a detail slot or a prune state.
  * @param keyOf - Identifier key under the model's case sensitivity.
  */
 export function requiredCtChainNodeIds(
-  edges: ReadonlyArray<{ from_node: string; to_node: string; hop_node: string; transforms?: readonly ColumnTransformClass[] }>,
+  edges: ReadonlyArray<{ from_node: string; to_node: string; hop_node: string }>,
   renderedNodeIds: readonly string[],
   exemptNodeIds: readonly string[],
   keyOf: (id: string) => string,
 ): string[] {
-  const direct = edges.filter(edge => !isIndirectOnly(edge.transforms));
-  if (direct.length === 0) return [];
+  if (edges.length === 0) return [];
   const exempt = new Set(exemptNodeIds.map(keyOf));
-  const chain = new Set(direct.flatMap(edge => [keyOf(edge.from_node), keyOf(edge.to_node), keyOf(edge.hop_node)]));
+  const chain = new Set(edges.flatMap(edge => [keyOf(edge.from_node), keyOf(edge.to_node), keyOf(edge.hop_node)]));
   return renderedNodeIds.filter(id => chain.has(keyOf(id)) && !exempt.has(keyOf(id)));
 }
 
