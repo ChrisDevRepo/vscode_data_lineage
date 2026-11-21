@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.3.0] - Unreleased
+## [1.2.7] - Unreleased
 
 ### Changed
 - Column traces show join and filter columns as indirect sources.
