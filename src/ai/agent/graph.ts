@@ -883,6 +883,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   const smEntryNode = async (state: AgentStateType): Promise<AgentStateUpdate> => {
     deps.sink.status('scoping', 'Starting exploration...');
     const targetColumns = state.entry === 'column_trace' ? (state.targetColumns ?? undefined) : undefined;
+    const discoveryBudget = state.executionTrigger === 'discovery_budget';
+    const requiredTerminalTool = discoveryBudget ? 'lineage_start_exploration' : undefined;
     const priorAttempt = attemptStateFor(state, 'sm_entry');
     const messages = state.messages;
     const startedAt = Date.now();
@@ -893,16 +895,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]),
         facts: explorationFacts(targetColumns?.length ? 'ct' : 'bb', targetColumns, { memorySections: ['conversation_history'] }),
         messages,
-        system: buildSmEntrySystemPrompt(getCtx(state), targetColumns),
+        system: buildSmEntrySystemPrompt(getCtx(state), targetColumns, discoveryBudget),
         sink: deps.sink,
         signal: deps.signal,
         detectGate: detectGateFromToolResult,
         detectRefusal: detectRefusalFromToolResult,
         proseGate: 'buffer-until-tool',
+        // The budget reroute promises one approval card: a text-only reply is repaired toward it.
+        ...(requiredTerminalTool ? { requiredTerminalTool } : {}),
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, 'sm_entry', startedAt);
+    const nextAttempt = recordAttempt(priorAttempt, res, 'sm_entry', startedAt, requiredTerminalTool);
     if (res.stop === 'error') {
       return { ...fail(res.turnStop), toolAttempt: nextAttempt };
     }

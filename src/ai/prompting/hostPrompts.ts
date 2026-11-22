@@ -116,20 +116,31 @@ export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string 
  * Directive system prompt for the restricted **SM-entry** turn, paired with a 4-tool registry
  * (`lineage_get_screen_state`, `lineage_search_objects`, `lineage_get_object_detail`,
  * `lineage_start_exploration`) under automatic tool choice: `lineage_start_exploration` opens the
- * `confirm_sm_start` gate and a text-only reply ends the turn as its answer. For a column trace the
- * detected columns are surfaced so the model passes them as `targetColumns`.
+ * `confirm_sm_start` gate. When `discoveryBudget` is false, a text-only reply ends the turn as
+ * its answer; when `discoveryBudget` is true, `lineage_start_exploration` is required
+ * (`requiredTerminalTool`) and text-only replies are rejected and repaired. For a column trace
+ * the detected columns are surfaced so the model passes them as `targetColumns`.
  *
  * @param targetColumns - Columns to trace when the entry route is `column_trace`; omitted
  *   otherwise.
+ * @param discoveryBudget - True when entered via a `discovery_budget` reroute, where
+ *   `lineage_start_exploration` is required and the text-only ambiguity branch is omitted.
  */
-export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?: string[]): string {
+export function buildSmEntrySystemPrompt(
+  ctx: StagePromptContext,
+  targetColumns?: string[],
+  discoveryBudget = false,
+): string {
   const base = buildGeneralSystemPrompt(ctx);
   const ctLine = targetColumns?.length
     ? `Column trace: analysisMode "ct", targetColumns [${targetColumns.map((c) => `"${escapePromptText(c)}"`).join(', ')}].`
     : '';
+  const resolutionRule = discoveryBudget
+    ? "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; otherwise call it with the matching object id from the results."
+    : "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named.";
   const directive = [
     '## Task: open the exploration',
-    "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named. Set every other field from the user's own words, as its description says, including a `mission_brief` stating the goal and what counts as relevant.",
+    `${resolutionRule} Set every other field from the user's own words, as its description says, including a \`mission_brief\` stating the goal and what counts as relevant.`,
     ctLine,
   ].filter(Boolean).join('\n');
   return [base, directive].join('\n\n');
