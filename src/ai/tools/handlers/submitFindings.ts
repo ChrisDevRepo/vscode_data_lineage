@@ -8,7 +8,7 @@ import { sanitizeForLog } from '../../../utils/log';
 import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionFields } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
 import { combineToolRejections, makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
-import { buildRouteValidationRejection, routeDirectives } from '../../sm/smRouteValidation';
+import { routeDirectives } from '../../sm/smRouteValidation';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
@@ -53,8 +53,9 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const routes = engine.columnFlowFaults(input);
-        const rejection = routes.length > 0 ? combineToolRejections([schemaFault, buildRouteValidationRejection(routes)]) : schemaFault;
+        const routes = engine.submissionRouteFaults(input, schemaFault.issuePaths);
+        const rejection = routes.length > 0 ? combineToolRejections([schemaFault, engine.routeRejection(routes)]) : schemaFault;
+        if (rejection.issuePaths) rejection.issuePaths = [...new Set(rejection.issuePaths)];
         const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
         if (held) {
           rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes)].filter(Boolean).join(' ');
