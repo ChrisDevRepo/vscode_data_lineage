@@ -666,7 +666,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
 
   const objectEdges: ColumnTraceViewObjectEdge[] = [];
   const firstRow = (acc: NodeAccumulator) => {
-    const key = acc.rowKeys.find(k => acc.direct.has(k)) ?? acc.rowKeys[0];
+    const key = orderedRowKeys(acc)[0];
     return key === undefined ? undefined : acc.rowNames.get(key);
   };
   const objectEdge = (from: NodeAccumulator, to: NodeAccumulator, sourceRow: string | undefined): ColumnTraceViewObjectEdge => {
