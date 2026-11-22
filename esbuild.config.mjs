@@ -32,6 +32,32 @@ function resolveBuildTimestamp() {
   return `nonreproducible:${new Date().toISOString()}`;
 }
 
+/**
+ * LangSmith gateway exclusion. `@langchain/core` >=1.3.4 ships `dist/utils/gateway.js`, whose
+ * `DEFAULT_LANGSMITH_GATEWAY` points at a LangSmith host and is only used when the
+ * `LANGSMITH_GATEWAY` env var is set (consumed by provider packages this repo does not install);
+ * `load/import_map.js` pulls it into every bundle. The `stubs/langsmith` npm override cannot cover
+ * it (it is core's own module), so the module is replaced at bundle time, same containment:
+ * no LangSmith endpoint in the shipped bundle, and `LANGSMITH_GATEWAY` is ignored. The stub keeps
+ * the module's no-gateway behavior (`baseURL` passthrough, never a gateway URL or key).
+ * `tests/tools/assert-no-langsmith.mjs` stays the fail-closed gate if this stops matching.
+ */
+const excludeLangSmithGatewayPlugin = {
+  name: 'exclude-langsmith-gateway',
+  setup(build) {
+    build.onLoad({ filter: /[\\/]@langchain[\\/]core[\\/]dist[\\/]utils[\\/]gateway\.c?js$/ }, () => ({
+      contents: [
+        'function resolveLangSmithGatewayConfig({ baseURL }) {',
+        '  return baseURL === undefined ? {} : { baseURL };',
+        '}',
+        'const gateway_exports = { resolveLangSmithGatewayConfig };',
+        'export { gateway_exports, resolveLangSmithGatewayConfig };',
+      ].join('\n'),
+      loader: 'js',
+    }));
+  },
+};
+
 /** @type {import('esbuild').BuildOptions} */
 const sharedConfig = {
   bundle: true,
@@ -44,6 +70,7 @@ const sharedConfig = {
   sourcemap: true,
   minify: !watch,
   charset: 'utf8',
+  plugins: [excludeLangSmithGatewayPlugin],
   legalComments: 'external',
   define: {
     '__BUILD_TIMESTAMP__': JSON.stringify(resolveBuildTimestamp()),
@@ -64,7 +91,7 @@ const configs = [
     entryPoints: ['./src/extension.ts'],
     outfile: 'out/extension.js',
     external: ['vscode'],
-    plugins: [deferredRuntimePlugin],
+    plugins: [excludeLangSmithGatewayPlugin, deferredRuntimePlugin],
   },
   {
     ...sharedConfig,
