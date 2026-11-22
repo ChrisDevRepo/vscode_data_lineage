@@ -1,0 +1,44 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/utils/layout.worker.ts",
+    ".vscode-test*.mjs",
+    "tests/integration/**/*.test.ts",
+    "tests/scale/layout.test.ts",
+    "tests/scale/vitest.config.ts",
+    "scripts/generate-third-party-notices.mjs",
+    "tests/tools/load-test-env.test.mjs",
+    "src/index.css",
+    // gate.mjs runs these as child-process args (node <file>), which knip cannot trace.
+    "tests/tools/assert-layer-direction.mjs",
+    "tests/tools/assert-no-langsmith.mjs",
+    "tests/tools/assert-no-output-truncation.mjs",
+    "tests/tools/assert-no-tracked-scratch.mjs",
+    "tests/tools/assert-package-contents.mjs",
+    "tests/tools/assert-template-schema-version.mjs",
+    "tests/tools/assert-unit-projects-cover-all.mjs",
+    "tests/tools/gate-status.test.mjs",
+    // run-headless.mjs compiles tests/harness with tsc and requires the compiled cli/shim.
+    "tests/harness/cli.ts",
+    "tests/harness/vscodeHostShim.ts",
+    // The sibling test suite imports these across the repo boundary (@ext alias /
+    // createRequire), which knip cannot trace from this repo.
+    "tests/harness/scriptedModelPort.ts",
+    "tests/fixtures/lm-provider-extension/live-provider-adapter.js",
+    // extension.js loads it through a conditional require (DLV_CHAT_UI_REAL).
+    "tests/fixtures/lm-provider-extension/chat-ui-provider.js",
+    // Comment-batch proof tool invoked by the CI sessions, not the public gate.
+    "tests/tools/assert-comment-only.mjs",
+  ],
+  "project": [
+    "src/**/*.{ts,tsx,css}",
+    "tests/**/*.{ts,tsx,mjs,js}",
+    "scripts/*.mjs",
+    "*.{ts,mjs}",
+  ],
+  // Exports tagged @internal are test seams, not product API.
+  "tags": ["-internal"],
+  // VS Code supplies this module; @types/vscode provides the build-time API.
+  // @vscode/test-cli resolves @vscode/test-electron at runtime without declaring it.
+  "ignoreDependencies": ["@types/vscode", "@vscode/test-electron"],
+}
