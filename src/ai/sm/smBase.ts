@@ -266,7 +266,7 @@ type BorderPurpose = 'route' | 'contraction' | 'supplement' | 'seed_bfs';
 /**
  * First failing border axis for a candidate node, or `in_border` when it clears every
  * participating axis. A discriminated verdict (not a boolean bag) so a caller can route each
- * outcome distinctly — e.g. the route path rejects `excluded` but *defers* `out_of_direction`.
+ * outcome distinctly — e.g. the route path defers `excluded` and `out_of_direction` with different reasons.
  */
 type BorderVerdict =
   | { kind: 'in_border' }
@@ -3285,44 +3285,22 @@ export class NavigationEngine implements IHopStateMachine {
         const nid = req.nodeId;
         const nNode = this.nodeMap.get(nid);
         if (!nNode) continue;
-        const admission = this.admitsRoute(nid, nNode, focusId);
-        const routeBorder = admission.border;
-        if (routeBorder.kind === 'excluded') {
-          const isAllowlistBoundary = this.isGuiHiddenSchemaBorder(routeBorder, nNode);
-          const deferReason = isAllowlistBoundary ? 'schema' as const : 'excluded' as const;
-          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: deferReason });
+        const { admitted, border, depthBreach } = this.admitsRoute(nid, nNode, focusId);
+        if (!admitted) {
+          const schemaBorder = border.kind === 'excluded' && this.isGuiHiddenSchemaBorder(border, nNode);
+          const reason = border.kind === 'excluded' ? (schemaBorder ? 'schema' as const : 'excluded' as const)
+            : border.kind === 'out_of_direction' ? 'out_of_direction' as const
+            : 'depth' as const;
+          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason });
           deferredRoutes.push({
             nodeId: nNode.id,
             schema: nNode.schema,
             question: req.question,
-            reason: deferReason,
-            depth: isAllowlistBoundary ? admission.depthBreach ?? undefined : undefined,
+            reason: reason === 'out_of_direction' ? 'direction' : reason,
+            depth: reason === 'depth' || schemaBorder ? depthBreach ?? undefined : undefined,
           });
-          this.log('debug', `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=${deferReason}`);
-          continue;
-        }
-        if (routeBorder.kind === 'out_of_direction') {
-          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: 'out_of_direction' });
-          deferredRoutes.push({ nodeId: nNode.id, schema: nNode.schema, question: req.question, reason: 'direction', depth: undefined });
-          this.log('debug', `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=out_of_direction direction=${this._direction}`);
-          continue;
-        }
-
-        const { depthBreach } = admission;
-        if (depthBreach !== null) {
-          deferredRoutes.push({
-            nodeId: nNode.id,
-            schema: nNode.schema,
-            question: req.question,
-            reason: 'depth',
-            depth: depthBreach,
-          });
-          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: 'depth' });
-          this.log(
-            'debug',
-            `[Depth] border reached hop=${this.hopCount} id=${nNode.id} ← ${focusId} `
-            + `depth=${depthBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}`,
-          );
+          this.log('debug', `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=${reason}`
+            + (reason === 'depth' ? ` depth=${depthBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}` : ''));
           continue;
         }
 
