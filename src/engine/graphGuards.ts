@@ -185,9 +185,9 @@ export function directNeighborIds(
 }
 
 /**
- * Depth map (minimum hop distance, origin at depth 0) over a flat list of directed edges `[source,
- * target, type]`, used to sort nodes into tiers for reports and layout. Unreachable nodes are
- * excluded.
+ * Depth map (minimum hop distance, origin at depth 0) over a flat list of directed edges
+ * `[source, target, type]`, used to sort nodes into tiers for reports and layout. Unreachable nodes
+ * are excluded.
  */
 export function bfsDepthMap(
   edges: ReadonlyArray<readonly [string, string, string]>,

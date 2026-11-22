@@ -540,9 +540,9 @@ function encodeFocusNodeId(id: string): string {
 }
 
 /**
- * The ```sql fence opening at `openIndex`, tolerant of a one-line fence and of a closing marker
- * sharing a line with the last line of code. `undefined` when no marker opens there or it never
- * closes.
+ * The \`\`\`sql fence opening at `openIndex`, tolerant of a one-line fence and of a closing
+ * marker sharing a line with the last line of code. `undefined` when no marker opens there or it
+ * never closes.
  */
 function sqlFenceAt(text: string, openIndex: number): string | undefined {
   const rest = text.slice(openIndex);
@@ -564,8 +564,8 @@ export interface EvidenceBlock {
   readonly id: string;
   readonly nodeId: string;
   /**
-   * The captured ```sql fence closed on a line of its own: body de-indented out of its list or
-   * block-quote container, `sql S7` annotation excluded; rendered verbatim.
+   * The captured \`\`\`sql fence closed on a line of its own: body de-indented out of its list
+   * or block-quote container, `sql S7` annotation excluded; rendered verbatim.
    */
   readonly raw: string;
 }
@@ -596,13 +596,13 @@ const CONTAINER_PREFIX = /^(?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?/;
 /** Info string of an evidence reference: optional info words, then the id (group 1). */
 const EVIDENCE_ID_INFO = /^[ \t]*(?:[^\s`]+[ \t]+)*?(S\d+)[ \t]*$/;
 
-/** One ```sql fence located by the {@link sqlFenceAt} rule. */
+/** One \`\`\`sql fence located by the {@link sqlFenceAt} rule. */
 interface LocatedSqlFence {
-  /** Offset of the ```sql marker. */
+  /** Offset of the \`\`\`sql marker. */
   readonly start: number;
   /** Offset just past the closing marker. */
   readonly end: number;
-  /** Text after ```sql on the opening line; for a one-line fence, all between the markers. */
+  /** Text after \`\`\`sql on the opening line; for a one-line fence, all between the markers. */
   readonly info: string;
   /** Code lines, de-indented out of the opening line's container; empty for a one-line fence. */
   readonly lines: readonly string[];
@@ -611,7 +611,7 @@ interface LocatedSqlFence {
 }
 
 /**
- * Every ```sql fence in `text`, in order, by the {@link sqlFenceAt} rule: the marker may open
+ * Every \`\`\`sql fence in `text`, in order, by the {@link sqlFenceAt} rule: the marker may open
  * mid-line after prose or a formula, and the closing marker may share a line with code or with
  * prose after it. An unclosed marker yields nothing.
  */
@@ -640,13 +640,13 @@ function* locateSqlFences(text: string): Generator<LocatedSqlFence> {
 }
 
 /**
- * Assigns one deterministic citation id to every captured ```sql fence with a body, numbered by
- * detail-slot then block order, carried as an addition to the fence's info string (```` ```sql S7
- * ````), never an inline marker (a bracketed marker collides with T-SQL brackets and Markdown
- * links). Fences come from {@link locateSqlFences}, so a mid-line opener still carries its id. Pure
- * and dependent only on `detailSlots` content, so the envelope builder and the `present_result`
- * handler agree on every id without shared state. `EvidenceBlock.raw` is the unannotated block; the
- * id exists only in the copy the model reads.
+ * Assigns one deterministic citation id to every captured \`\`\`sql fence with a body, numbered
+ * by detail-slot then block order, carried as an addition to the fence's info string
+ * (\`\`\`sql S7), never an inline marker (a bracketed marker collides with T-SQL brackets
+ * and Markdown links). Fences come from {@link locateSqlFences}, so a mid-line opener still carries
+ * its id. Pure and dependent only on `detailSlots` content, so the envelope builder and the
+ * `present_result` handler agree on every id without shared state. `EvidenceBlock.raw` is the
+ * unannotated block; the id exists only in the copy the model reads.
  *
  * @returns `slots`: the slots with ids in the fence info strings (new array; input unchanged);
  *   `blocks`: the id to block lookup {@link expandEvidenceRefs} resolves.
@@ -728,8 +728,9 @@ function placeFenceBlock(
 }
 
 /**
- * Expands evidence references in one rendered text field: a ```sql fence whose info string ends in
- * a served id (closed with no body, or the one-line form) is replaced by the captured block.
+ * Expands evidence references in one rendered text field: a \`\`\`sql fence whose info string
+ * ends in a served id (closed with no body, or the one-line form) is replaced by the captured
+ * block.
  *
  * CommonMark opens a fenced block only at a line start, so the expanded block starts on its own
  * line with a line break after its closing fence, every line indented to the content column of the

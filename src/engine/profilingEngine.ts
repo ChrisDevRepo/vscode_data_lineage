@@ -1,5 +1,5 @@
 /**
- * @module ProfilingEngine
+ * ProfilingEngine
  * SQL generation and result parsing for table-level data profiling: type-aware, single-pass
  * aggregation queries (distinct counts, null percentages, min/max, mean, standard deviation,
  * zero/empty counts) for SQL Server 2022+, Azure SQL, Synapse and Fabric DWH, with automatic
@@ -35,7 +35,7 @@ const TYPE_CATEGORIES: Record<string, ColCategory> = {
 /** String types whose `= ''` also matches whitespace-only values, so emptiness uses byte length. */
 const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set(['varchar', 'nvarchar']);
 
-/** Lowercase base type name without length/precision ('varchar(max)' -> 'varchar'). @internal */
+/** Lowercase base type name without length/precision ('varchar(max)' -\> 'varchar'). @internal */
 export function extractBaseType(typeStr: string): string {
   return typeStr.replace(/\(.*$/, '').trim().toLowerCase();
 }

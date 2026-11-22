@@ -167,7 +167,7 @@ export class AiSession {
    */
   public renderState: unknown = null;
   public graphMode: 'full' | 'overview' = 'full';
-  /** >0 when the render limit was exceeded (from webview). */
+  /** \>0 when the render limit was exceeded (from webview). */
   public renderLimitHit = 0;
   public parseRulesLabel = 'built-in rules';
   /** Human-readable label for the data source origin (filename or server/db). */

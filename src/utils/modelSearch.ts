@@ -448,8 +448,9 @@ const IF_WHILE_LINE_RE = /^(IF|WHILE)\b(.*)$/i;
 
 /**
  * Block-opening `BEGIN`, block-closing `END` or `CASE` on a live-code line, see
- * {@link deriveEnclosingPredicates}. `BEGIN TRAN[SACTION]`, `BEGIN DISTRIBUTED TRANSACTION`, `BEGIN
- * DIALOG`/`CONVERSATION` and `END CONVERSATION` open or close no block, so they are excluded.
+ * {@link deriveEnclosingPredicates}. `BEGIN TRAN[SACTION]`, `BEGIN DISTRIBUTED TRANSACTION`,
+ * `BEGIN DIALOG`/`CONVERSATION` and `END CONVERSATION` open or close no block, so they are
+ * excluded.
  */
 const BLOCK_KEYWORD_RE = /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|CONVERSATION)\b)|END(?!\s+CONVERSATION\b)|CASE)\b/gi;
 

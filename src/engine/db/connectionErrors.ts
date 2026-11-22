@@ -1,5 +1,5 @@
 /**
- * @module ConnectionErrors
+ * ConnectionErrors
  * One place that turns a failed connect or query into the text and actions the user sees. The
  * driver's own message is shown verbatim behind the connection name, except when the server may
  * still be starting (one plain sentence, the driver text goes to the log); only the actions are
@@ -121,10 +121,11 @@ function grantStatement(grant: string, user: string | undefined): string {
 }
 
 /**
- * Describes a connection or query failure for the user. `message` is `<connection name>: <original
- * driver text>` with credential-shaped text removed, plus one hint when the server rejects a
- * Microsoft token; for a server that may still be starting (unavailable, or a timed-out or dropped
- * connect) it is "Couldn't connect to <database>. It might still be starting." Actions depend
+ * Describes a connection or query failure for the user. `message` is
+ * `<connection name>: <original driver text>` with credential-shaped text removed, plus one hint
+ * when the server rejects a Microsoft token; for a server that may still be starting (unavailable,
+ * or a timed-out or dropped connect) it is "Couldn't connect to <database>. It might still be
+ * starting." Actions depend
  * on the error class: those updating a saved connection require a
  * saved `builtIn` `connectionId`, and Retry is offered only when the caller supplies a retry
  * hook. Each action runs on the user's click and any retry is a single attempt, never a loop.

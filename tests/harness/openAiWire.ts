@@ -259,7 +259,7 @@ export function suspectsToolCallAsText(text: string): boolean {
   return readProseToolCandidate(text) !== null;
 }
 
-/** A fenced ```json (or bare ```) code block wrapping exactly one JSON value. */
+/** A fenced \`\`\`json (or bare \`\`\`) code block wrapping exactly one JSON value. */
 const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
 
 /** One `<parameter=name>` pair of the Hermes/XML tool-call envelope; the closing tag is the bare `</parameter>`. */

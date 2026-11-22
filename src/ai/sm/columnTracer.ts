@@ -13,8 +13,8 @@ import { bfsFromNode } from 'graphology-traversal';
 
 /**
  * Debug/info/warn/error sink shape shared by every optional logger this module accepts — a local
- * alias, not `engine/graphGuards`' `LogFn`, since `columnTracer.ts` isn't on the `src/ai ->
- * src/engine` coupling allowlist.
+ * alias, not `engine/graphGuards`' `LogFn`, since `columnTracer.ts` isn't on the
+ * `src/ai -> src/engine` coupling allowlist.
  */
 type TracerLogFn = (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void;
 

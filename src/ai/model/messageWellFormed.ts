@@ -1,12 +1,12 @@
 /**
  * Full-array structural validation of a model-bound message history. Providers reject a history in
  * which a tool result has no call on the nearest preceding assistant message, or a tool call has no
- * result before the next turn, but only with an opaque transport error (HTTP 400 `unexpected
- * tool_use_id` / `tool_use ids were found without tool_result`) deep in the provider stack. A
- * suffix cut of a paired transcript (the cut point chosen by `trimMessages`, not the runtime) can
- * produce the first shape; asserting both at the send chokepoint turns either into a diagnosable
- * internal error with a compact structural snapshot. Pure and vscode-free; the snapshot carries
- * roles and tail-truncated call ids only, never message content.
+ * result before the next turn, but only with an opaque transport error (HTTP 400
+ * `unexpected tool_use_id` / `tool_use ids were found without tool_result`) deep in the provider
+ * stack. A suffix cut of a paired transcript (the cut point chosen by `trimMessages`, not the
+ * runtime) can produce the first shape; asserting both at the send chokepoint turns either into a
+ * diagnosable internal error with a compact structural snapshot. Pure and vscode-free; the
+ * snapshot carries roles and tail-truncated call ids only, never message content.
  */
 import { AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 

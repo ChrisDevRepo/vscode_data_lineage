@@ -690,8 +690,8 @@ function nextLevel(node: JsonSchemaShape): string {
 /**
  * Narrowed view of a Zod v4 `invalid_union` issue. Its `errors` field holds one sub-issue array per
  * union branch — the raw material {@link describeInvalidUnion} expands into a per-branch required-
- * field breakdown. (Zod v4 renamed the v3 `unionErrors: ZodError[]` shape to `errors:
- * $ZodIssue[][]`.)
+ * field breakdown. (Zod v4 renamed the v3 `unionErrors: ZodError[]` shape to
+ * `errors: $ZodIssue[][]`.)
  */
 type InvalidUnionIssue = Extract<z.core.$ZodIssue, { code: 'invalid_union' }>;
 

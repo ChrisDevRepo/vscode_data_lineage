@@ -17,8 +17,9 @@ const CANONICAL_DEPTH_DIGITS = /^(?:0|[1-9]\d*)$/;
  * NOT `z.coerce.number()`, which also turns `true` and `null` into `1`/`0`. The wrapped bounds
  * still decide the value (a top-level `"0"` stays rejected by `.min(1)`).
  *
- * Callers wrap the full `levels`/`all` union with this, never one union member alone: Zod 4's `io:
- * 'input'` JSON Schema projection reads a union's required-ness from each member's raw `optin`, and
+ * Callers wrap the full `levels`/`all` union with this, never one union member alone: Zod 4's
+ * `io: 'input'` JSON Schema projection reads a union's required-ness from each member's raw
+ * `optin`, and
  * a preprocess member's `optin` is "optional" (a transform accepts any input), so one wrapped
  * member would mark the whole union optional in the served schema. Wrapping the union as a single
  * preprocess input keeps the field's `optin` resolved to the members (`false`), and is transparent

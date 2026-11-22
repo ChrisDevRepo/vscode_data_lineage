@@ -10,7 +10,7 @@ import { getSchemaColor, type SchemaColorMap } from '../utils/schemaColors';
 export interface LegendNode {
   /** React Flow node type — `'schemaNode'` for overview clusters, object type otherwise. */
   type?: string;
-  /** Node payload, narrowed by {@link LegendNode.type}. */
+  /** Node payload, narrowed by {@link LegendNode."type"}. */
   data: unknown;
 }
 

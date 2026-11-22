@@ -151,9 +151,9 @@ export type ModelPortErrorCode =
  * Bounded provider-neutral error safe to retain in graph state. `cause` retains the original
  * provider exception; `sanitizeProviderErrorDiagnostic` walks it to recover the connection-level
  * `code` (`ECONNRESET`/`ETIMEDOUT`/...) transport classification keys off. Declared here, not via
- * the ES2022 `Error(message, { cause })` overload, because the project compiles against `lib:
- * ES2020`. Every sink sanitizes before emitting, so the raw exception never reaches a log or the
- * UI.
+ * the ES2022 `Error(message, { cause })` overload, because the project compiles against
+ * `lib: ES2020`. Every sink sanitizes before emitting, so the raw exception never reaches a log or
+ * the UI.
  */
 export class ModelPortError extends Error {
   public constructor(

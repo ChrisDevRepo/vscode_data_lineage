@@ -1,5 +1,5 @@
 /**
- * @module MssqlRetiring
+ * MssqlRetiring
  * Wording and detection for a project saved with the SQL Server (mssql) extension connection, which
  * Microsoft deprecated and this extension no longer opens.
  */

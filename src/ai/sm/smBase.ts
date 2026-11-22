@@ -121,7 +121,7 @@ export interface HopNeighborDisclosure extends HopNeighbor {
 interface NavigationWorkingMemory extends WorkingMemory {
   /** The current topological state of the exploration. */
   topological_map: {
-    /** A human-readable path string showing the traversal (e.g., "Origin -> ... -> Focus"). */
+    /** A human-readable path string showing the traversal (e.g., "Origin -\> ... -\> Focus"). */
     navigation_path: string;
     /** The node ID currently under investigation. */
     current_focus: string;
@@ -1142,9 +1142,9 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Records a deferred route; the sole entry point for mutating the bucket. Dedupes on `(nodeId,
-   * fromFocusNodeId)` (a later deferral replaces the earlier) and records a rejection in memory so
-   * `recent_rejections` matches.
+   * Records a deferred route; the sole entry point for mutating the bucket. Dedupes on
+   * `(nodeId, fromFocusNodeId)` (a later deferral replaces the earlier) and records a rejection in
+   * memory so `recent_rejections` matches.
    */
   protected deferQuestion(entry: DeferredQuestion, legs: ReadonlyArray<ContinuationLeg> = []): void {
     this.recordPendingLead(entry, legs);

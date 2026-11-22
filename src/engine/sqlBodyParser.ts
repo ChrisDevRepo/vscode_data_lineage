@@ -258,11 +258,11 @@ function applyEdits(sql: string, edits: TextEdit[]): string {
 }
 
 /**
- * Preprocessing pass that rewrites the `FROM` of `IS [NOT] DISTINCT FROM` and of `TRIM([LEADING |
- * TRAILING | BOTH] characters FROM string)` to a comma: there `FROM` separates two operands and
- * opens no FROM clause, so no later pass or rule may read the operand after it as a table source.
- * One scan tracks open parentheses, so `FROM` belongs to `TRIM` only when the innermost open
- * parenthesis is the one `TRIM` opened.
+ * Preprocessing pass that rewrites the `FROM` of `IS [NOT] DISTINCT FROM` and of
+ * `TRIM([LEADING | TRAILING | BOTH] characters FROM string)` to a comma: there `FROM` separates
+ * two operands and opens no FROM clause, so no later pass or rule may read the operand after it
+ * as a table source. One scan tracks open parentheses, so `FROM` belongs to `TRIM` only when the
+ * innermost open parenthesis is the one `TRIM` opened.
  *
  * @param sql - Cleaned SQL text.
  */
@@ -552,14 +552,15 @@ const ALIAS_START_RE = /^[\p{L}_@#[]/u;
 type ListState = 'source' | 'name' | 'as' | 'alias';
 
 /**
- * Normalizes ANSI comma-join FROM clauses to JOIN syntax (`FROM t1, t2 WHERE` to `FROM t1 JOIN t2
- * WHERE`), whatever each member is (aliased or hinted table, function call, derived table). One
- * left-to-right pass keeps a list state per parenthesis depth. A member is a name, an optional `AS
- * alias` or bare alias, and parenthesised tails (arguments, `WITH (` hint, column list; `PIVOT
- * (`/`UNPIVOT (` too). The list ends at the first token continuing no member: a reserved word other
- * than `AS` or `WITH (`, a word after the alias, any operator, `;` or the closing parenthesis. The
- * member-position word is a name, so `output.T` and `window` stay tables, and a non-reserved clause
- * word after the alias (`OUTPUT`, `WINDOW`) ends the list. A comma after a `JOIN ... ON` condition
+ * Normalizes ANSI comma-join FROM clauses to JOIN syntax (`FROM t1, t2 WHERE` to
+ * `FROM t1 JOIN t2 WHERE`), whatever each member is (aliased or hinted table, function call,
+ * derived table). One left-to-right pass keeps a list state per parenthesis depth. A member is a
+ * name, an optional `AS alias` or bare alias, and parenthesised tails (arguments, `WITH (` hint,
+ * column list; `PIVOT (`/`UNPIVOT (` too). The list ends at the first token continuing no member:
+ * a reserved word other than `AS` or `WITH (`, a word after the alias, any operator, `;` or the
+ * closing parenthesis. The member-position word is a name, so `output.T` and `window` stay tables,
+ * and a non-reserved clause word after the alias (`OUTPUT`, `WINDOW`) ends the list. A comma after
+ * a `JOIN ... ON` condition
  * or an `APPLY` is not rewritten.
  *
  * @param sql - Cleaned SQL text.

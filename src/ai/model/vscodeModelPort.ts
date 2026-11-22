@@ -105,7 +105,7 @@ export class VscodeModelPort implements ModelPort {
   }
 
   /**
-   * {@inheritDoc SingleGenerationModelPort.getNumTokens}; delegates to the selected model's
+   * {@link SingleGenerationModelPort.getNumTokens}; delegates to the selected model's
    * `countTokens`. Carries no cancellation token: the caller is `trimMessages`' counter, run
    * outside any generation's request-scoped `CancellationTokenSource`. A rejecting `countTokens` (a
    * BYOK provider whose counter throws) falls back to the shared chars-per-token estimate rather

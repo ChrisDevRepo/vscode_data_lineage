@@ -309,9 +309,10 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
 
 /**
  * Decodes JSON-string values where the tool's JSON Schema declares an array or object (or `null`
- * beside one). Some model servers return such an argument as a JSON string (`"targetColumns":
- * "[\"A\"]"`); the product cannot know which server it talks to, so the decode (`JSON.parse`) runs
- * once at the model boundary for every tool and model, driven by the declared schema alone. Text
+ * beside one). Some model servers return such an argument as a JSON string
+ * (`"targetColumns": "[\"A\"]"`); the product cannot know which server it talks to, so the decode
+ * (`JSON.parse`) runs once at the model boundary for every tool and model, driven by the declared
+ * schema alone. Text
  * that is not valid JSON (cut off, or with raw line breaks inside a string) is never completed or
  * repaired: it stays a string and fails schema validation at its field. The caller logs
  * {@link StringifiedArgumentsResult.paths}.

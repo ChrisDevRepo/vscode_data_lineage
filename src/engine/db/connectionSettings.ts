@@ -1,5 +1,5 @@
 /**
- * @module ConnectionSettings
+ * ConnectionSettings
  * Schema, tolerant read and write helpers for the built-in connections stored in
  * `dataLineageViz.database.connections`. Passwords never live there; they use the secret store.
  */

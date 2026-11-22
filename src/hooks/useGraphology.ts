@@ -44,7 +44,7 @@ interface UseGraphologyReturn {
   graph: Graph | null;
   /** High-level metrics derived from the current graph (degree, depth, etc.). */
   metrics: ReturnType<typeof getGraphMetrics> | null;
-  /** When > 0, indicates the render limit was exceeded; contains the actual node count. */
+  /** When \> 0, indicates the render limit was exceeded; contains the actual node count. */
   renderLimitHit: number;
   /** Total number of nodes remaining after all filters are applied. */
   filteredCount: number;

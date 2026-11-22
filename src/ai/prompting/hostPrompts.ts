@@ -1,7 +1,7 @@
 /**
  * Per-phase system-prompt composition for the **host** agent runtime: the single place the
  * grounded, phase-aware prompt is assembled, composing the shared pure builders in
- * {@link ./prompts} ({@link buildGeneralSystemPrompt} + {@link buildPhasePrompt}) so grounding
+ * `./prompts` ({@link buildGeneralSystemPrompt} + {@link buildPhasePrompt}) so grounding
  * rules, routing and phase protocol stay single-sourced and no chat surface builds its own prompt.
  * Omits the YAML stage template and SM-protocol blocks needed for `active`/`synthesis` formatting;
  * `agent/stagePrompts.ts` layers those in. VS Code-free.

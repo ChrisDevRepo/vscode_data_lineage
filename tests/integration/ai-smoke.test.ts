@@ -1,4 +1,4 @@
-/** Exercises one real provider-backed @lineage turn through VS Code's public model API. */
+/** Exercises one real provider-backed \@lineage turn through VS Code's public model API. */
 import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 

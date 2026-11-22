@@ -1,5 +1,5 @@
 /**
- * @module ConnectionCommands
+ * ConnectionCommands
  * The `Add / Edit / Remove Database Connection` and `Update Database Password` commands, and the
  * multi-step add-connection wizard behind them.
  */
@@ -390,8 +390,8 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: Connectio
 }
 
 /**
- * Registers the four connection commands. `dataLineageViz.addDatabaseConnection` accepts `{
- * connection, password? }`; with an argument it validates, saves to user settings and the secret
+ * Registers the four connection commands. `dataLineageViz.addDatabaseConnection` accepts
+ * `{ connection, password? }`; with an argument it validates, saves to user settings and the secret
  * store, and returns the id without prompting. Replacing an existing id that changes
  * server, port, user or authentication type drops its saved password unless a new one is supplied.
  * `removeDatabaseConnection` removes the picked connection and its saved password and shows an

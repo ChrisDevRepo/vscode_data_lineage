@@ -254,7 +254,7 @@ export class AgendaManager {
   /**
    * Removes and returns the next entry in worklist order: the dynamic topological schedule,
    * recomputed from `view` on every call so scope growth, contraction admits and prunes take effect
-   * immediately. Among the {@link analyzeWorklist ready} entries the smallest {@link worklistRank}
+   * immediately. Among the {@link analyzeWorklist} ready entries the smallest {@link worklistRank}
    * wins, shared by both modes; column work changes rank only after structural readiness.
    *
    * @returns The next entry, or `undefined` when the agenda is empty.

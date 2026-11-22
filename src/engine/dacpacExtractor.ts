@@ -1,5 +1,5 @@
 /**
- * @module DacpacExtractor
+ * DacpacExtractor
  * Extracts database metadata and lineage from SQL Server DACPAC archives. Phase one builds the
  * schema preview and object catalog; phase two extracts columns, DDL, constraints, dependencies and
  * platform metadata for the selected schemas.

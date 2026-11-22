@@ -61,8 +61,8 @@ interface WebviewPostTarget {
  *
  * Validates `msg` against `schema` and **drops** a malformed frame (returns `false`): a send-side
  * bug that leaves the webview waiting for data that never arrives, so the drop is notified as well
- * as logged. A caller that already tells the user about its `false` result passes `notifyDrop =
- * false`, so one cause raises one notice.
+ * as logged. A caller that already tells the user about its `false` result passes
+ * `notifyDrop = false`, so one cause raises one notice.
  *
  * Also stamps {@link BRIDGE_PROTOCOL_VERSION}, on the *parsed* payload: Zod strips unknown keys, so
  * stamping first would drop it, and adding it to the unions would be schema churn for every

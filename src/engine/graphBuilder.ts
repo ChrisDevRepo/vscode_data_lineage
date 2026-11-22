@@ -1,5 +1,5 @@
 /**
- * @module GraphBuilder
+ * GraphBuilder
  * Turns the DatabaseModel into renderable React Flow graphs: the `graphology` graph, Dagre/grid
  * layout, upstream/downstream tracing and pathfinding, bidirectional edge consolidation with
  * canonical direction, and schema-level overview graphs.

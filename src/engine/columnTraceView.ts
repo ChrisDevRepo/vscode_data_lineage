@@ -1,5 +1,5 @@
 /**
- * @module columnTraceView
+ * columnTraceView
  * Derives the column-level rendering of an AI column trace from the wire payload: a second
  * rendering of a scope the object view already shows, with each traced column a row inside its
  * object and each recorded relation an edge between two row handles. Everything derives from

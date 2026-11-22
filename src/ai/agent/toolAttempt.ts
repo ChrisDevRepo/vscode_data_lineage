@@ -1100,10 +1100,10 @@ interface ToolCallDispatchLoopInput {
   /** One provider generation's ordered tool calls, dispatched in this same order. */
   readonly toolCalls: readonly GeneratedToolCall[];
   /**
-   * Earlier entries win on a duplicate key, mirroring the `[...priorObservations,
-   * ...observations].find(...)` scan order: earlier-attempt observations seed first, then this
-   * batch's own accepted reads fold in as they are recorded, and a key already present is never
-   * overwritten.
+   * Earlier entries win on a duplicate key, mirroring the
+   * `[...priorObservations, ...observations].find(...)` scan order: earlier-attempt observations
+   * seed first, then this batch's own accepted reads fold in as they are recorded, and a key
+   * already present is never overwritten.
    */
   readonly reusableObservations: Map<string, ToolAttemptObservation>;
   /**

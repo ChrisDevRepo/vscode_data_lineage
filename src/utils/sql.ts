@@ -97,8 +97,8 @@ const SCHEMA_PLACEHOLDER = '{{SCHEMAS}}';
 
 /**
  * Expands a `{{SCHEMAS}}` placeholder in a SQL template into a comma-separated list of Unicode
- * `N'…'` schema-name literals, so a name outside the server code page keeps its characters: `IN
- * ({{SCHEMAS}})` becomes `IN (N'dbo', N'Sales')`.
+ * `N'…'` schema-name literals, so a name outside the server code page keeps its characters:
+ * `IN ({{SCHEMAS}})` becomes `IN (N'dbo', N'Sales')`.
  *
  * Safe for string-literal contexts only (`IN (…)`, `= '…'`); embedded `'` is escaped to `''`. Not
  * safe as a SQL identifier: never interpolate into `[schema]`/`"schema"`; an identifier context

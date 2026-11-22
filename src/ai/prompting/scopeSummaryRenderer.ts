@@ -33,10 +33,10 @@ function typeLabel(type: string, count: number): string {
 }
 
 /**
- * Renders the depth line for one side of the ask. Placement already says who bound the value (`From
- * the question` vs `Plan`); an `'approximate'` side is marked `≈`, an `'exact'` one is plain, each
- * on its own exactness. No parenthetical about engine behaviour: that copy is not hop context and
- * is not served after approval.
+ * Renders the depth line for one side of the ask. Placement already says who bound the value
+ * (`From the question` vs `Plan`); an `'approximate'` side is marked `≈`, an `'exact'` one is
+ * plain, each on its own exactness. No parenthetical about engine behaviour: that copy is not hop
+ * context and is not served after approval.
  */
 function depthLine(levels: number | 'all', side: string, exact: boolean): string {
   return `- Depth: ${depthValue(levels, exact)} ${side}`;
@@ -104,8 +104,8 @@ function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary[
 }
 
 /**
- * States the schema selection from its shorter side: `All` when nothing is excluded, `All except x,
- * y` when fewer are excluded than selected, otherwise the selected list
+ * States the schema selection from its shorter side: `All` when nothing is excluded,
+ * `All except x, y` when fewer are excluded than selected, otherwise the selected list
  * ({@link ScopeSummary.selectedSchemas}, `activeFilters.schemas`).
  *
  * @param nameCap - Names listed before the line states `N of M selected` instead.

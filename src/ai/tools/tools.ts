@@ -61,7 +61,7 @@ function buildNodeTypeById(model: DatabaseModel): Map<string, string> {
  * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge
  *   type.
  */
-export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
+function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const nodeTypeById = buildNodeTypeById(model);
   const m = new Map<string, string>();
   for (const e of model.edges) {

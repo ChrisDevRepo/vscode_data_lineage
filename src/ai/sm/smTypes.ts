@@ -86,7 +86,7 @@ export interface ColumnAspect {
 
 /** Structured attribution of data flow for a specific output column. */
 export interface ColumnFlowEntry {
-  /** Column name on the focus node, or procedure parameter prefixed with @. */
+  /** Column name on the focus node, or procedure parameter prefixed with \@. */
   out_col: string;
   /**
    * Explicit destination column written by this focus. A named destination stages

@@ -82,7 +82,7 @@ interface NodeContextMenuProps {
   onShowDetails: (nodeId: string) => void;
   /**
    * What "remove from what is on screen" does for this node, from
-   * {@link import('../engine/modeCapabilities').resolveRemoveAction}. The Remove item is always
+   * {@link ../engine/modeCapabilities#resolveRemoveAction}. The Remove item is always
    * shown, disabled with its reason when refused, never omitted.
    */
   removeAction: RemoveAction;

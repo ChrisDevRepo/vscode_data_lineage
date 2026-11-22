@@ -325,9 +325,9 @@ export function createColumnNodeCache(): ColumnNodeCache {
  * changed, so rebuilding the array each render would re-measure the canvas on every hover and drag
  * frame.
  *
- * Width and height are declared from the view box, not measured: a column node's height is `header
- * + rows`, known before layout (the number dagre used), so the minimap can draw it on first render.
- * Entries for ids absent from `views` are dropped.
+ * Width and height are declared from the view box, not measured: a column node's height is
+ * `header + rows`, known before layout (the number dagre used), so the minimap can draw it on first
+ * render. Entries for ids absent from `views` are dropped.
  *
  * @param dataById - Per-node render data by node id; must cover every id in `views`.
  * @param positions - Hand-placed positions by node id, overriding the laid-out position.

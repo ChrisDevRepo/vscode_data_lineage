@@ -1,5 +1,5 @@
 /**
- * @module ConnectionManager
+ * ConnectionManager
  * Database connectivity entry point and DMV query management: loading and validating DMV queries
  * from built-in or custom sources, opening a {@link DbSession} through the built-in connection, and
  * executing queries with timeout handling and placeholder expansion.
@@ -44,7 +44,7 @@ export interface DmvQuery {
   sql: string;
   /**
    * Execution phase: `1` preliminary (unfiltered), `2` main extraction (typically schema-filtered).
-   * @default 2
+   * @defaultValue 2
    */
   phase?: number;
 }

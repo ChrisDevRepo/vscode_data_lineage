@@ -157,7 +157,7 @@ export function deleteProject(store: ProjectStore, id: string): ProjectStore {
   return { ...store, projects, lastOpenedId };
 }
 
-/** Default project name "{sourceName or displayName} YYYY-MM-DD HH:mm". */
+/** Default project name "\{sourceName or displayName\} YYYY-MM-DD HH:mm". */
 export function generateProjectName(connection: DacpacConnection | DatabaseConnection): string {
   const now = new Date();
   const ts = [

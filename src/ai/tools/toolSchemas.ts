@@ -825,7 +825,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
 }
 
 /** The `column_flow` field a hop serves, for checking that field on its own. */
-export function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
+function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
   return hop ? columnFlowSchemaForHop(hop) : ColumnFlowSchema;
 }
 
@@ -1501,11 +1501,11 @@ const PresentResultRetainingModelSchema = withRetainableSections(PresentResultMo
 const PresentResultRetainingSynthesisModelSchema = withRetainableSections(PresentResultSynthesisModelSchema);
 
 /**
- * Model-facing `lineage_submit_findings` input (the permissive BB∪CT superset): verdict `analyze |
- * passthrough`, `prune_neighbors`, `questions`, `column_flow`. Instruction-plan compilation
- * advertises the strict locked schema (`submitFindingsSchemaForMode`) just before dispatch and the
- * handler validates against that same contract. Source of `TOOL_DEFS`; the tool is dispatched
- * internally and not registered with VS Code.
+ * Model-facing `lineage_submit_findings` input (the permissive BB∪CT superset): verdict
+ * `analyze | passthrough`, `prune_neighbors`, `questions`, `column_flow`. Instruction-plan
+ * compilation advertises the strict locked schema (`submitFindingsSchemaForMode`) just before
+ * dispatch and the handler validates against that same contract. Source of `TOOL_DEFS`; the tool
+ * is dispatched internally and not registered with VS Code.
  */
 export const SubmitFindingsModelSchema = z.object({
   focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),

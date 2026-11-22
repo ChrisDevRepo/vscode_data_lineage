@@ -1,5 +1,5 @@
 /**
- * @module DbSession
+ * DbSession
  * Database session contract of the built-in connection.
  */
 

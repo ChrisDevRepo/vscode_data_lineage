@@ -1,7 +1,7 @@
 import tsdoc from 'eslint-plugin-tsdoc';
 import tseslint from 'typescript-eslint';
 
-// Report-only: tsdoc findings are warnings and `lint` is not a gate step yet.
+// Gate-enforced: tsdoc findings are errors; the gate's `lint` and `knip` steps fail on any finding.
 export default tseslint.config(
   {
     ignores: [
@@ -17,6 +17,6 @@ export default tseslint.config(
     languageOptions: { parser: tseslint.parser },
     // Loaded without rules so existing `eslint-disable @typescript-eslint/...` comments resolve.
     plugins: { tsdoc, '@typescript-eslint': tseslint.plugin },
-    rules: { 'tsdoc/syntax': 'warn' },
+    rules: { 'tsdoc/syntax': 'error' },
   },
 );

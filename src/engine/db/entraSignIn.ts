@@ -1,5 +1,5 @@
 /**
- * @module EntraSignIn
+ * EntraSignIn
  * Microsoft Entra sign-in for built-in connections through VS Code's Microsoft account, with
  * `@microsoft/vscode-azext-azureauth`, as the SQL Server (mssql) extension signs in.
  */

@@ -1,5 +1,5 @@
 /**
- * @module ModelFilters
+ * ModelFilters
  * Utility functions for filtering the `DatabaseModel` to refine the visual graph: exclusion
  * patterns (regex) hiding objects or schemas, removal of isolated nodes, and node allowlists
  * (typically for focused tracing or selection).

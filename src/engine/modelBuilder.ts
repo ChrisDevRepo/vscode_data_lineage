@@ -1,5 +1,5 @@
 /**
- * @module ModelBuilder
+ * ModelBuilder
  * The pipeline both dacpac and DMV extractors use to build a `DatabaseModel`: normalizes schema and
  * object names (case-insensitivity, bracketed identifiers), resolves dependencies into edges,
  * infers read vs. write direction for procedures and views, resolves cross-schema and
@@ -34,10 +34,10 @@ const PARSE_TRACE_BUDGET = 5;
 
 /**
  * Builds a per-rule trace callback for the next sampled body and decrements
- * `ctx.parseTrace.budget`; `undefined` when the sampling budget is spent. Emits a header `Trace
- * [schema.name] sql=<preview>` once per traced body, then a line per rule that contributed a new
- * ref, routed to the `[Parse]` category so DBAs can verify YAML rule firing without instrumenting
- * code.
+ * `ctx.parseTrace.budget`; `undefined` when the sampling budget is spent. Emits a header
+ * `Trace [schema.name] sql=<preview>` once per traced body, then a line per rule that contributed a
+ * new ref, routed to the `[Parse]` category so DBAs can verify YAML rule firing without
+ * instrumenting code.
  */
 function makeParseTraceCallback(
   node: LineageNode,

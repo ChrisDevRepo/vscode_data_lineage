@@ -197,7 +197,7 @@ function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): strin
 }
 
 /** Where the error that ended a chat turn came from; decides its chat label and log `source=`. */
-export type StopSource = 'provider' | 'network' | 'model_replies' | 'internal';
+type StopSource = 'provider' | 'network' | 'model_replies' | 'internal';
 
 /**
  * One turn-ending failure in content-free fields, plus the sanitized error chain behind it.

@@ -13,7 +13,7 @@ export interface AnalysisTypeInfo {
 /**
  * Registry of configuration for all graph analysis modes: the UI properties (title, icon,
  * description) the Analysis Sidebar and Detail View use. Islands: connected components,
- * |components| > 1. Hubs: nodes with high degree centrality (blast radius). Orphans: degree 0.
+ * |components| \> 1. Hubs: nodes with high degree centrality (blast radius). Orphans: degree 0.
  * Longest Path: diameter or critical path of the DAG. Cycles: Strongly Connected Components (SCC),
  * to find recursion.
  */

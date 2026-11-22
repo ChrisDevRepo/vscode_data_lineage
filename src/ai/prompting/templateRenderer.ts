@@ -63,9 +63,9 @@ const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
 
 /**
  * Per-FOCUS capture keys: which fires depends on the hop's focus node (bodied script vs non-bodied
- * table), so they are volatile per hop. They render into the per-hop worker message (`render:
- * 'per_focus'`), NEVER the active system prompt (`render: 'stable'`): swapping templates per focus
- * type would break the byte-stable prefix the provider-side prompt cache keys on.
+ * table), so they are volatile per hop. They render into the per-hop worker message
+ * (`render: 'per_focus'`), NEVER the active system prompt (`render: 'stable'`): swapping templates
+ * per focus type would break the byte-stable prefix the provider-side prompt cache keys on.
  */
 const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'business_capture',
@@ -149,9 +149,9 @@ export interface StagePromptResult {
 }
 
 /**
- * Assembles the stage-scoped template block for the AI system prompt: one bullet per active key, `-
- * <key>: <instruction>` (walking `STAGE_BY_KEY`). A capture key is labelled with its section field
- * instead (`CAPTURE_FIELD`); a per-focus recipe key with no angle of its own (e.g.
+ * Assembles the stage-scoped template block for the AI system prompt: one bullet per active key,
+ * `- <key>: <instruction>` (walking `STAGE_BY_KEY`). A capture key is labelled with its section
+ * field instead (`CAPTURE_FIELD`); a per-focus recipe key with no angle of its own (e.g.
  * `structural_callouts`) folds into whichever angle fired, per {@link captureRecipeHeader}, never
  * its own line; `shared_capture` precedes the recipes once, unlabelled. One heading
  * hierarchy, no per-key `####` wrappers. The non-bodied per-focus render is the exception:

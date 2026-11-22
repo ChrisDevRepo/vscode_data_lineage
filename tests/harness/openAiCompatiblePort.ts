@@ -487,7 +487,7 @@ export class OpenAiCompatiblePort implements ModelPort {
   }
 
   /**
-   * {@inheritDoc SingleGenerationModelPort.getNumTokens} — no live model to ask off the VS Code
+   * {@link SingleGenerationModelPort.getNumTokens} — no live model to ask off the VS Code
    * host, so this lane keeps LangChain's own chars/4 approximation ({@link estimateTokens}) rather
    * than a second counter implementation.
    */
