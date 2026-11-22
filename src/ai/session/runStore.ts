@@ -11,7 +11,13 @@ import { NavigationSnapshotSchema } from '../sm/navigationSnapshotSchema';
 import type { SmState } from '../sm/smTypes';
 import { sanitizeForLog, trunc, type Logger } from '../../utils/log';
 import type { FilterProfile } from '../../engine/shared/bridgeContract';
-import type { PresentationArtifact } from './types';
+import type { PresentationArtifact, ResultGraph } from './types';
+
+/** Committed report section header persisted with an AI run: label and linked node ids, no body. */
+export interface StoredAiRunSection {
+  readonly label: string;
+  readonly node_ids: readonly string[];
+}
 
 /** Persisted checkpoint of one presented AI run, written on bookmark save and read back. */
 export interface StoredAiRun {
@@ -27,6 +33,8 @@ export interface StoredAiRun {
   readonly ddlHashes: Readonly<Record<string, string>>;
   /** Engine checkpoint the run ended on. */
   readonly snapshot: SmState;
+  /** Committed report section labels and linked node ids (no bodies), absent on older records. */
+  readonly sections?: readonly StoredAiRunSection[];
 }
 
 /** Resolves the stored run for one saved bookmark id, or `undefined` when none was persisted. */
@@ -60,6 +68,11 @@ type RunStoreReader = {
  * by the navigation snapshot schema, so a damaged record answers "no run memory" instead of
  * reaching the presenter half-shaped.
  */
+const StoredAiRunSectionSchema = z.object({
+  label: z.string(),
+  node_ids: z.array(z.string()),
+}).strict();
+
 const StoredAiRunSchema = z.object({
   schemaVersion: z.literal(1),
   runId: z.string().min(1),
@@ -67,6 +80,7 @@ const StoredAiRunSchema = z.object({
   origin: z.string().nullable().catch(null),
   ddlHashes: z.record(z.string(), z.string()).catch(() => ({})),
   snapshot: NavigationSnapshotSchema,
+  sections: z.array(StoredAiRunSectionSchema).optional().catch(undefined),
 }).passthrough();
 
 /**
@@ -98,6 +112,14 @@ export function hashDdl(ddl: string | undefined): string {
     : UNKNOWN_DDL_HASH;
 }
 
+function toStoredSections(
+  sections: ReadonlyArray<{ readonly label: string; readonly node_ids?: readonly string[] }> | undefined,
+): StoredAiRunSection[] | undefined {
+  return sections
+    ? sections.map(sec => ({ label: sec.label, node_ids: [...(sec.node_ids ?? [])] }))
+    : undefined;
+}
+
 /**
  * Builds the run record for a bookmark saved from an AI-authored view.
  *
@@ -117,6 +139,7 @@ export function buildStoredRun(
   if (!checkpoint) return null;
   const scopeNodeIds = checkpoint.scopeNodeIds ?? profile.filter.allowlistNodeIds ?? [];
   const ddlHashes: Record<string, string> = Object.fromEntries(scopeNodeIds.map(id => [id, hashDdl(getDdl(id))]));
+  const sections = toStoredSections(artifact.sections);
   return {
     schemaVersion: 1,
     runId,
@@ -124,6 +147,7 @@ export function buildStoredRun(
     origin: checkpoint.engineInternals?.initSnapshot?.origin ?? null,
     ddlHashes,
     snapshot: checkpoint,
+    ...(sections ? { sections } : {}),
   };
 }
 
@@ -133,9 +157,13 @@ export function buildStoredRun(
  * so no hashes are recorded and no object reads as stale. `undefined` when the presentation carries
  * no run or checkpoint.
  */
-export function buildLiveRun(artifact: PresentationArtifact | null): StoredAiRun | undefined {
+export function buildLiveRun(
+  artifact: PresentationArtifact | null,
+  fallbackSections?: ResultGraph['sections'] | null,
+): StoredAiRun | undefined {
   const checkpoint = artifact?.checkpoint;
   if (!artifact?.runId || !checkpoint) return undefined;
+  const sections = toStoredSections(artifact.sections ?? fallbackSections ?? undefined);
   return {
     schemaVersion: 1,
     runId: artifact.runId,
@@ -143,6 +171,7 @@ export function buildLiveRun(artifact: PresentationArtifact | null): StoredAiRun
     origin: checkpoint.engineInternals?.initSnapshot?.origin ?? null,
     ddlHashes: {},
     snapshot: checkpoint,
+    ...(sections ? { sections } : {}),
   };
 }
 

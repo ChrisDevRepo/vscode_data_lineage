@@ -25,6 +25,11 @@ export interface PresentationArtifact {
   readonly nodeIds: readonly string[];
   /** Validated AI view metadata; `summary` and `description` are always present. */
   readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
+  /**
+   * Committed report section labels and linked node ids (no bodies), retained for follow-up and
+   * bookmark recall.
+   */
+  readonly sections?: ReadonlyArray<{ readonly label: string; readonly node_ids: readonly string[] }>;
   readonly runId?: string;
   /** Serialized engine state captured at present time; absent when no engine was live. */
   readonly checkpoint?: SmState;

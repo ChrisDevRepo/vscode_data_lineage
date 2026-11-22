@@ -580,10 +580,14 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         } : {}),
       };
       const checkpoint = captureCheckpoint(sess, s.logger);
+      const committedSections = Array.isArray(renderInput.sections)
+        ? renderInput.sections.map(sec => ({ label: sec.label, node_ids: [...(sec.node_ids ?? [])] }))
+        : undefined;
       const artifact: PresentationArtifact = {
         name: validation.name,
         nodeIds: [...validation.node_ids],
         aiMetadata,
+        ...(committedSections ? { sections: committedSections } : {}),
         ...(checkpoint ? { runId, checkpoint } : {}),
       };
 
