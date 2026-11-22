@@ -1508,7 +1508,7 @@ export function GraphCanvas({
     return neighbors;
   }, [highlightedNodeId, graph]);
 
-  const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
+  const isBookmarkMode = filter.allowlistNodeIds !== undefined;
 
   const aiHighlightMap = useMemo((): Map<string, { color: string; glow: string; shadow: string }> => {
     const m = new Map<string, { color: string; glow: string; shadow: string }>();

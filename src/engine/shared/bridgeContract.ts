@@ -393,6 +393,11 @@ const ExpandedSchemaViewSchema = z.object({
  */
 const FilterProfileSchema = z.object({
   id: z.string(),
+  /**
+   * Absent on legacy views; current encoding preserves literal identifier delimiters and URL
+   * identity.
+   */
+  nodeIdEncodingVersion: z.literal(2).optional(),
   name: z.string(),
   createdAt: z.string(),
   filter: SerializedFilterStateSchema,

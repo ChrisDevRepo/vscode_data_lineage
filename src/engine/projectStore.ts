@@ -208,7 +208,7 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
     showExternalRefs: filter.showExternalRefs,
     externalRefTypes: Array.from(filter.externalRefTypes),
     exclusionPatterns: filter.exclusionPatterns,
-    ...(filter.allowlistNodeIds && filter.allowlistNodeIds.size > 0
+    ...(filter.allowlistNodeIds !== undefined
       ? { allowlistNodeIds: Array.from(filter.allowlistNodeIds) }
       : {}),
   };
@@ -225,7 +225,7 @@ export function deserializeFilter(s: SerializedFilterState): FilterState {
     showExternalRefs: s.showExternalRefs,
     externalRefTypes: new Set(s.externalRefTypes) as FilterState['externalRefTypes'],
     exclusionPatterns: s.exclusionPatterns ?? [],
-    ...(s.allowlistNodeIds && s.allowlistNodeIds.length > 0
+    ...(s.allowlistNodeIds !== undefined
       ? { allowlistNodeIds: new Set(s.allowlistNodeIds) }
       : {}),
   };

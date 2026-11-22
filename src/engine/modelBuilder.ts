@@ -84,35 +84,18 @@ export function buildModel(
   const schemas = computeSchemas(nodes, identifierCaseSensitive);
   const catalog = buildCatalog(allObjects ?? objects, schemaCanonical, identifierCaseSensitive);
 
-  const uniqueNodes: LineageNode[] = [];
-  const seenIds = new Set<string>();
   for (const node of nodes) {
-    if (!seenIds.has(node.id)) {
-      seenIds.add(node.id);
-      uniqueNodes.push(node);
-    }
-  }
-
-  for (const node of uniqueNodes) {
     if (node.type === 'external' || node.externalType === 'file' || node.externalType === 'db') {
-      catalog[node.id] = { schema: '', name: node.name, type: 'external', externalType: node.externalType };
+      catalog[node.id] = externalCatalogEntry(node.name, node.externalType);
     }
   }
 
   const neighborIndex = buildNeighborIndex(edges, neighborPairs);
 
-  const warnings: string[] = [];
-  if (objects.length === 0) {
-    warnings.push('No objects found in data source.');
-  } else if (uniqueNodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found.');
-  }
-
   return {
-    nodes: uniqueNodes, edges, schemas, catalog, neighborIndex,
+    nodes, edges, schemas, catalog, neighborIndex,
     ...(identifierCaseSensitive && { identifierCaseSensitive }),
     parseStats: stats,
-    warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
 
@@ -139,13 +122,28 @@ function buildCatalog(
   const catalog: Record<string, CatalogEntry> = {};
   for (const obj of allObjects) {
     const { schema, objectName } = parseName(obj.fullName);
+    const id = normalizeName(obj.fullName, identifierCaseSensitive);
+    if (obj.type === 'external') {
+      // A catalog external table is listed like a rendered external node (see buildModel), in or
+      // out of the schema filter.
+      catalog[id] = externalCatalogEntry(objectName, obj.externalType ?? 'et');
+      continue;
+    }
     const displaySchema = schemaCanonical.get(schemaKey(schema, identifierCaseSensitive)) ?? schema;
-    catalog[normalizeName(obj.fullName, identifierCaseSensitive)] = {
+    catalog[id] = {
       schema: displaySchema, name: objectName, type: obj.type,
       ...(obj.externalType && { externalType: obj.externalType }),
     };
   }
   return catalog;
+}
+
+/** Catalog entry of an external object: listed without a schema, under the UI's External group. */
+function externalCatalogEntry(
+  name: string,
+  externalType: CatalogEntry['externalType'],
+): CatalogEntry {
+  return { schema: '', name, type: 'external', externalType };
 }
 
 /** Builds an O(1) neighbor index for graph traversal and UI interaction. */
@@ -399,9 +397,42 @@ interface ParseTraceCtx {
 }
 
 /**
+ * One module's unresolved references, one entry per canonical id. A reference named by both the
+ * catalog dependency rows and the SQL body is listed once: the catalog spelling is kept, and a
+ * call from the body marks the entry ` (exec)`. Each entry is also one dropped reference.
+ */
+class UnresolvedRefs {
+  private readonly entries = new Map<
+    string,
+    { display: string; exec: boolean; fromCatalog: boolean }
+  >();
+
+  add(id: string, display: string, exec: boolean, fromCatalog: boolean): void {
+    const entry = this.entries.get(id);
+    if (!entry) {
+      this.entries.set(id, { display, exec, fromCatalog });
+      return;
+    }
+    if (exec) entry.exec = true;
+    if (fromCatalog && !entry.fromCatalog) {
+      entry.display = display;
+      entry.fromCatalog = true;
+    }
+  }
+
+  /** Lists the entries in first-seen order and records each as a dropped reference. */
+  flush(label: string, stats: ParseStats): string[] {
+    const list = [...this.entries.values()].map(entry =>
+      entry.exec ? `${entry.display} (exec)` : entry.display,
+    );
+    for (const ref of list) stats.droppedRefs.push(`${label} → ${ref}`);
+    return list;
+  }
+}
+
+/**
  * Resolves regex-parsed references into graph edges or neighbor index pairs.
  *
- * @param spLabel - Human-readable name for logging.
  * @param outRefs - Collection for successful resolutions.
  * @param unrelated - Collection for unresolvable drops.
  * @returns The number of successfully resolved edges.
@@ -409,12 +440,11 @@ interface ParseTraceCtx {
 function processRegexRefs(
   refs: string[],
   sourceId: string,
-  spLabel: string,
   direction: 'in' | 'out',
   edgeType: 'body' | 'exec',
   ctx: EdgeContext,
   outRefs: string[],
-  unrelated: string[],
+  unrelated: UnresolvedRefs,
 ): number {
   let count = 0;
   for (const dep of refs) {
@@ -441,9 +471,7 @@ function processRegexRefs(
           ctx.neighborPairs.push({ source: sourceId, target: depId });
         }
       } else {
-        const suffix = edgeType === 'exec' ? dep + ' (exec)' : dep;
-        unrelated.push(suffix);
-        ctx.stats.droppedRefs.push(`${spLabel} → ${suffix}`);
+        unrelated.add(depId, dep, edgeType === 'exec', false);
       }
     }
   }
@@ -472,7 +500,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
     const parsed = parseNode(node, ctx);
     const spLabel = `${node.schema}.${node.name}`;
     const spInRefs: string[] = [];
-    const spUnrelated: string[] = [];
+    const unrelated = new UnresolvedRefs();
 
     for (const r of parsed.crossDbSources) {
       spInRefs.push(r);
@@ -506,15 +534,14 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
         const parts = splitSqlName(dep);
         const objPart = stripBrackets(parts[parts.length - 1]).toLowerCase();
         if (XML_METHODS.has(objPart)) continue;
-        spUnrelated.push(dep);
-        ctx.stats.droppedRefs.push(`${spLabel} → ${dep}`);
+        unrelated.add(depId, dep, false, false);
       }
     }
 
     for (const rawName of ctx.grouped.unresolvableDepsForNode.get(sourceId) ?? []) {
-      spUnrelated.push(rawName);
-      ctx.stats.droppedRefs.push(`${spLabel} → ${rawName}`);
+      unrelated.add(normalizeName(rawName, ctx.identifierCaseSensitive), rawName, false, true);
     }
+    const spUnrelated = unrelated.flush(spLabel, ctx.stats);
 
     if (spInRefs.length > 0 || spUnrelated.length > 0) {
       ctx.stats.spDetails.push({
@@ -534,7 +561,7 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
   const spLabel = `${node.schema}.${node.name}`;
   const spInRefs: string[] = [];
   const spOutRefs: string[] = [];
-  const spUnrelated: string[] = [];
+  const unrelated = new UnresolvedRefs();
 
   if (parsed.crossDbSources.length > 0 || parsed.crossDbTargets.length > 0) {
     ctx.crossDbRegexRefs.set(sourceId, { sources: parsed.crossDbSources, targets: parsed.crossDbTargets });
@@ -583,18 +610,18 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
   }
 
   for (const rawName of ctx.grouped.unresolvableDepsForNode.get(sourceId) ?? []) {
-    spUnrelated.push(rawName);
-    ctx.stats.droppedRefs.push(`${spLabel} → ${rawName}`);
+    unrelated.add(normalizeName(rawName, ctx.identifierCaseSensitive), rawName, false, true);
   }
 
-  const spIn = processRegexRefs(parsed.sources, sourceId, spLabel, 'in', 'body', ctx, spInRefs, spUnrelated) + parsed.crossDbSources.length;
+  const spIn = processRegexRefs(parsed.sources, sourceId, 'in', 'body', ctx, spInRefs, unrelated) + parsed.crossDbSources.length;
   const spOut =
-    processRegexRefs(parsed.targets, sourceId, spLabel, 'out', 'body', ctx, spOutRefs, spUnrelated) +
-    processRegexRefs(parsed.execCalls, sourceId, spLabel, 'out', 'exec', ctx, spOutRefs, spUnrelated) +
+    processRegexRefs(parsed.targets, sourceId, 'out', 'body', ctx, spOutRefs, unrelated) +
+    processRegexRefs(parsed.execCalls, sourceId, 'out', 'exec', ctx, spOutRefs, unrelated) +
     parsed.crossDbTargets.length;
 
   for (const r of parsed.crossDbSources) spInRefs.push(r);
   for (const r of parsed.crossDbTargets) spOutRefs.push(r);
+  const spUnrelated = unrelated.flush(spLabel, ctx.stats);
 
   ctx.stats.spDetails.push({
     name: spLabel, inCount: spIn, outCount: spOut,

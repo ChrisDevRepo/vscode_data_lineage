@@ -32,7 +32,7 @@ import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { scopeModelForVisualize } from '../engine/modelFilters';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
-import { reconcileAiView, annotatedNodeIdsFromAiMetadata } from './aiViewReconcile';
+import { reconcileAiView, reconcileSavedView, annotatedNodeIdsFromAiMetadata } from './aiViewReconcile';
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, parseRejectionLogs, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
 import { notifyUser } from '../utils/notify';
@@ -1145,7 +1145,17 @@ export function App() {
   }, false, { allowEmptyTextEntry: true });
 
   const handleApplyView = useCallback((profile: FilterProfile) => {
-    const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
+    if (model) {
+      const reconciled = reconcileSavedView(profile, model);
+      profile = reconciled.profile;
+      if (reconciled.unresolved.length) {
+        vscodeApi.postMessage({
+          type: 'show-warning',
+          text: `Saved view has ${reconciled.unresolved.length} unresolved object or schema reference(s). Those references were not restored.`,
+        });
+      }
+    }
+    const isAdvanced = profile.filter.allowlistNodeIds !== undefined;
     const restored = deserializeFilter(profile.filter);
     if (!isAdvanced && model && !guardSchemaSelection(model, restored.schemas)) return;
     setActiveViewId(profile.id);
@@ -1178,7 +1188,7 @@ export function App() {
       setFilter(restored);
       if (model) rebuild(model, restored, config, false, targetMode);
     }
-  }, [model, config, filter, rebuild, graphMode, schemaViewSoftDisabled, guardSchemaSelection, captureViewSnapshot]);
+  }, [model, config, filter, rebuild, graphMode, schemaViewSoftDisabled, guardSchemaSelection, captureViewSnapshot, vscodeApi]);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -1346,8 +1356,11 @@ export function App() {
     if (!activeViewId) return false;
     const profile = filterProfiles.find(p => p.id === activeViewId);
     if (!profile) return false;
-    return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(profile.filter);
-  }, [activeViewId, filterProfiles, filter]);
+    // Compare against the view as applied: Apply restores the reconciled filter, not the persisted
+    // spelling.
+    const saved = model ? reconcileSavedView(profile, model).profile.filter : profile.filter;
+    return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(saved);
+  }, [activeViewId, filterProfiles, filter, model]);
 
   const isFilterDirty = useMemo(() => {
     if (!model) return false;
@@ -1368,6 +1381,7 @@ export function App() {
 
     const stamped: FilterProfile = {
       ...profile,
+      nodeIdEncodingVersion: 2,
       graphMode,
       showExpandedSchemaClusters,
       expandedSchemaView: expandedSchemaView
@@ -1387,7 +1401,7 @@ export function App() {
 
     if (options?.clearAiPreview) setAiPreview(null);
     if (options?.activateProfile) {
-      if ((stamped.filter.allowlistNodeIds?.length ?? 0) > 0) {
+      if (stamped.filter.allowlistNodeIds !== undefined) {
         setActiveAdvancedProfile(stamped);
       }
       setActiveViewId(stamped.id);
@@ -1412,13 +1426,20 @@ export function App() {
     if (!activeProjectId) return;
     const existing = filterProfiles.find(p => p.id === profileId);
     if (!existing) return;
-
-    const updated: FilterProfile = {
-      ...existing,
-      filter: serializeFilter(filter),
-    };
-    persistFilterProfile(updated);
-  }, [activeProjectId, filter, filterProfiles, persistFilterProfile]);
+    // Reconcile stored references before replacing the filter with current canonical IDs.
+    let updated = existing;
+    if (model) {
+      const reconciled = reconcileSavedView(updated, model);
+      updated = reconciled.profile;
+      if (reconciled.unresolved.length) {
+        vscodeApi.postMessage({
+          type: 'show-warning',
+          text: `Saved view has ${reconciled.unresolved.length} unresolved object or schema reference(s). Those references were not restored.`,
+        });
+      }
+    }
+    persistFilterProfile({ ...updated, filter: serializeFilter(filter) });
+  }, [activeProjectId, filter, filterProfiles, persistFilterProfile, model, vscodeApi]);
 
   /** Saves a node allowlist (trace, path or analysis result) as a permanent bookmark. */
   const saveAllowlistBookmark = useCallback((name: string, nodeIds: string[], source: 'trace' | 'analysis') => {
