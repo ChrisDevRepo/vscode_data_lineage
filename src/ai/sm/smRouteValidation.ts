@@ -23,6 +23,7 @@ export function isAbsentKind(kind: InvalidRouteKind): boolean {
  * in so the model never guesses the nearest match; used for the content-error hint. A kind with its
  * own registry code states that code's table correction. The offending value is stated in the
  * rejection reason; column inventories stay machine-only until the final rejection.
+ * @internal
  */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   absent_contributor:

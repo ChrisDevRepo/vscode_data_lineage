@@ -1,5 +1,5 @@
 import { EngineAspectMode, InvalidRoute, type InvalidRouteKind, type DepthIntent, type HeldSubmissionParts } from './smTypes';
-import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
+import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
 import { heldSubmissionFields, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
@@ -1143,12 +1143,11 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Records a deferred route; the sole entry point for mutating the bucket. Dedupes on
-   * `(nodeId, fromFocusNodeId)` (a later deferral replaces the earlier) and records a rejection in
-   * memory so `recent_rejections` matches.
+   * `(nodeId, fromFocusNodeId)` (a later deferral replaces the earlier). A deferral is an accepted
+   * offer, not a rejection, so it stays out of `recent_rejections`.
    */
   protected deferQuestion(entry: DeferredQuestion, legs: ReadonlyArray<ContinuationLeg> = []): void {
     this.recordPendingLead(entry, legs);
-    this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
   }
 
   /** Records the task and lead of an accepted scope-boundary deferral. */
@@ -3386,7 +3385,7 @@ export class NavigationEngine implements IHopStateMachine {
 
       const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
       for (const notice of notices) {
-        this.memory.recordRejection(notice.id, `\`${notice.id}\`: ${ROUTE_REJECTION_DIRECTIVE[notice.kind]}`, this.hopCount);
+        this.memory.recordRejection(notice.id, notice.reason, this.hopCount);
         this.log('debug', `[Notice] hop=${this.hopCount} id=${notice.id} kind=${notice.kind} code=${ROUTE_REJECTION_CODE[notice.kind]}`);
       }
 
