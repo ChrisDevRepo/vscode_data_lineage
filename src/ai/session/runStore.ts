@@ -14,7 +14,7 @@ import type { FilterProfile } from '../../engine/shared/bridgeContract';
 import type { PresentationArtifact, ResultGraph } from './types';
 
 /** Committed report section header persisted with an AI run: label and linked node ids, no body. */
-export interface StoredAiRunSection {
+interface StoredAiRunSection {
   readonly label: string;
   readonly node_ids: readonly string[];
 }
