@@ -274,7 +274,9 @@ class ToolHandler implements ToolServices {
       const sess = this.getSession();
       const model = this.requireModel();
       const getDdl = (id: string) => sess.columnStore.getDdl(id);
-      const liveRun = sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined;
+      const liveRun = sess.phase.kind === 'completed'
+        ? buildLiveRun(sess.presentationArtifact, sess.retainableReportSections())
+        : undefined;
       const { ids, filter, cursor } = parsed.data;
       if (ids || filter) {
         const nodeMap = getModelNodeMap(model);

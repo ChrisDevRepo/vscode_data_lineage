@@ -162,6 +162,16 @@ function staleIds(run: StoredAiRun, getDdl: ((id: string) => string | undefined)
   });
 }
 
+function presentRunSections(run: StoredAiRun): Array<{ label: string; node_ids: string[] }> {
+  const raw = (run as unknown as Record<string, unknown>).sections;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap(entry => {
+    const sec = asRecord(entry);
+    const label = asString(sec?.label);
+    return label === null ? [] : [{ label, node_ids: asStringList(sec?.node_ids) }];
+  });
+}
+
 function presentAiRun(
   page: ListPage,
   run: StoredAiRun | undefined,
@@ -181,6 +191,7 @@ function presentAiRun(
     depth: presentDepth(init, internals),
     scope: asStringList(snapshot.scopeNodeIds).length,
     ...presentAnalyzedSet(run, page),
+    sections: pageOf(page, presentRunSections(run)),
     pruned: countAction('prune'),
     stale_objects: staleIds(run, getDdl).length,
     open_questions: recallOpenLeads(run).length,

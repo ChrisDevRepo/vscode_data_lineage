@@ -36,10 +36,11 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
 /** Canonical answer-lens values and primary-intent instruction shared by the tool schemas. @internal */
 export const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
   .describe(
-    'Choose the answer lens from the primary user intent: "business" for meaning, purpose, impact or business rules, '
-    + 'and for unspecified or ambiguous intent. Incidental SQL, table or schema mentions, or a small technical subquestion, '
-    + 'do not change a primary business lens; answer those details with supported evidence. "technical" only for clear overall technical intent '
-    + '(performance, indexes, execution plan, query shape, load pattern); "both" only when the user explicitly asks for both perspectives. Required for a fresh proposal.',
+    'Answer lens (required for a fresh proposal): default to "business" for business meaning, purpose, impact, rules, '
+    + 'or unspecified or ambiguous intent (a bare /trace or source/consumer lineage request without technical metrics is "business"). '
+    + 'Use "technical" when the request asks for performance, indexes, execution plan, query shape, or load pattern — '
+    + 'including on a trace request (a trace plus technical review is "technical", not "both"). '
+    + 'Use "both" only when the user explicitly asks for both perspectives (business meaning/rules and technical review).',
   );
 
 const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(MAX_ID_LIST_LENGTH).describe(
