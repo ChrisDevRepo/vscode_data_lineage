@@ -322,7 +322,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (nextAttempt.rejections.length <= priorAttempt.rejections.length) return;
     const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel as InstructionPhase] ?? subject}…`;
     const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
-    deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.noProgressCalls} — ${rejectionCauseLabel(nextAttempt)})`);
+    deps.sink.status(statusPhase, `${base} (Retry ${rejectionLevel(priorAttempt)} — ${rejectionCauseLabel(nextAttempt)})`);
   };
 
   /**
