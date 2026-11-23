@@ -62,10 +62,11 @@ const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
 ]);
 
 /**
- * Per-FOCUS capture keys: which fires depends on the hop's focus node (bodied script vs non-bodied
- * table), so they are volatile per hop. They render into the per-hop worker message
- * (`render: 'per_focus'`), NEVER the active system prompt (`render: 'stable'`): swapping templates
- * per focus type would break the byte-stable prefix the provider-side prompt cache keys on.
+ * Per-FOCUS capture keys: they depend on the hop's focus, so they are volatile per hop. They render
+ * into the per-hop worker message (`render: 'per_focus'`), NEVER the active system prompt
+ * (`render: 'stable'`): swapping templates per hop would break the byte-stable prefix the
+ * provider-side prompt cache keys on. `structural_summary` is in the set only to keep it out of the
+ * stable prompt: kept for overlay schema v3; not served at a hop focus.
  */
 const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'business_capture',
@@ -109,16 +110,6 @@ function captureRecipeHeader(classification: ClassificationValue | undefined): s
 }
 
 /**
- * The one line the non-bodied per-focus render keeps from {@link captureRecipeHeader} (its
- * SQL-evidence rules do not apply to a schema-only node). Without it the model free-labels the
- * entry from the summary's own bullet names (`Purpose`, `Upstream sources`, ...), which
- * `lineage_submit_findings` rejects.
- */
-function bareSummaryAngleClause(classification: ClassificationValue | undefined): string {
-  return `Submit this under ${servedSectionFields(classification)} — never a descriptive label.`;
-}
-
-/**
  * The ordered bold section labels the active angle(s) write, as one list for the synthesis
  * `general` instruction. Reads the `sections` each capture recipe declares for the angles
  * {@link CLASSIFICATION_KEPT_ANGLES} keeps: one angle gives its list, `both` the ordered union
@@ -136,7 +127,7 @@ function activeSectionLabels(sections: AiOutputSections, classification: Classif
 /** Render scope for {@link resolveStagePrompt}: hop-invariant system block vs per-focus block. */
 export type StageRenderScope =
   | { readonly scope: 'stable' }
-  | { readonly scope: 'per_focus'; readonly focusKind: 'bodied' | 'non_bodied' };
+  | { readonly scope: 'per_focus' };
 
 /** Result of {@link resolveStagePrompt}: the prompt block plus a gating trail for diagnostics. */
 export interface StagePromptResult {
@@ -154,9 +145,7 @@ export interface StagePromptResult {
  * field instead (`CAPTURE_FIELD`); a per-focus recipe key with no angle of its own (e.g.
  * `structural_callouts`) folds into whichever angle fired, per {@link captureRecipeHeader}, never
  * its own line; `shared_capture` precedes the recipes once, unlabelled. One heading
- * hierarchy, no per-key `####` wrappers. The non-bodied per-focus render is the exception:
- * `structural_summary` ships bare with no `### ` header, keeping only
- * {@link bareSummaryAngleClause} ahead of it. At synthesis a known `classification` adds a
+ * hierarchy, no per-key `####` wrappers. At synthesis a known `classification` adds a
  * code-resolved `**Mission type:** <value>` line before the list.
  *
  * @param classification - Optional mission-type signal; gates active-phase capture firing.
@@ -176,9 +165,8 @@ export function resolveStagePrompt(
   isCtMode: boolean | undefined,
   /**
    * Which slice of the active stage to render. Default `{ scope: 'stable' }`: every hop-invariant
-   * key, per-focus capture keys excluded. `{ scope: 'per_focus', focusKind }` renders ONLY the
-   * recipe matching the focus (bodied `*_capture`, non-bodied `structural_summary`) for the per-hop
-   * worker message. A no-op for non-active stages.
+   * key, per-focus capture keys excluded. `{ scope: 'per_focus' }` renders ONLY the
+   * capture recipe (`*_capture`) for the per-hop worker message. A no-op for non-active stages.
    */
   render: StageRenderScope = { scope: 'stable' },
   sections: AiOutputSections,
@@ -215,15 +203,9 @@ export function resolveStagePrompt(
       gatedOut.push({ key, reason: 'slot_count' });
       continue;
     }
-    if (render.scope === 'per_focus') {
-      if (key === 'structural_summary' && render.focusKind !== 'non_bodied') {
-        gatedOut.push({ key, reason: 'focus_scope' });
-        continue;
-      }
-      if ((key === 'business_capture' || key === 'technical_capture' || key === 'structural_callouts' || key === 'shared_capture') && render.focusKind === 'non_bodied') {
-        gatedOut.push({ key, reason: 'focus_scope' });
-        continue;
-      }
+    if (render.scope === 'per_focus' && key === 'structural_summary') {
+      gatedOut.push({ key, reason: 'focus_scope' });
+      continue;
     }
     if (!(templates[key] ?? '').trim()) {
       gatedOut.push({ key, reason: 'empty_template' });
@@ -232,9 +214,7 @@ export function resolveStagePrompt(
     passing.push(key);
   }
 
-  const bareSummary = render.scope === 'per_focus' && render.focusKind === 'non_bodied';
   const blocks = passing.map(key => {
-    if (bareSummary) return templates[key].trim();
     if (key === 'general') {
       const instruction = templates[key].trim().split(SECTIONS_PLACEHOLDER).join(activeSectionLabels(sections, classification));
       return `- ${key}: ${instruction}`;
@@ -263,11 +243,7 @@ export function resolveStagePrompt(
 
   const parts: string[] = [];
   if (missionLine) parts.push(missionLine);
-  if (bareSummary) {
-    parts.push(bareSummaryAngleClause(classification));
-  } else {
-    parts.push(headerByPhase[phase]);
-  }
+  parts.push(headerByPhase[phase]);
   parts.push(...blocks);
   return { prompt: parts.join('\n\n'), shippedKeys: passing, gatedOut };
 }
