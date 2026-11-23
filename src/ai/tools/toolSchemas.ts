@@ -110,7 +110,6 @@ const StartPassNodeIdsSchema = z.array(z.string()).optional().describe('Resolved
  */
 export const StartExplorationInputSchema = z.object({
   origin: z.string().min(1).optional().describe('Canonical object ID that anchors a fresh exploration.'),
-  question: z.string().optional().describe('The user question this exploration must answer.'),
   proposalRevision: z.number().int().positive().optional().describe('Required when refining a pending approval proposal; copy the revision shown by the gate.'),
   analysisMode: z.enum(['bb', 'ct']).optional().describe(
     ANALYSIS_MODE_DESCRIPTION,
@@ -215,13 +214,11 @@ export const StartExplorationInputSchema = z.object({
 });
 
 const StartOriginSchema = z.string().min(1).describe('Canonical object ID that anchors a fresh exploration.');
-const StartQuestionSchema = z.string().optional().describe('The user question this exploration must answer.');
 const StartScopeNotesSchema = ScopeNotesValueSchema.optional();
 const StartMissionBriefSchema = MissionBriefValueSchema.optional();
 const NamedCtTargetColumnsSchema = z.array(ColumnIdentifierSchema).min(1).describe('CT requires one or more user-named columns.');
 const StartPatchFields = {
   origin: StartOriginSchema.optional(),
-  question: StartQuestionSchema,
   depth: StartDepthSchema,
   excludeTypes: StartExcludeTypesSchema,
   excludeSchemas: StartExcludeSchemasSchema,
