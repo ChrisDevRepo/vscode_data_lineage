@@ -114,25 +114,25 @@ describe("tool-error-envelope", () => {
 
     it('an entry inside an optional array names the allowed value and both repairs', () => {
       const rejection = rejectionFor({ verdict: 'pass', flow: [{ out: 'Qty', src: 'x' }, { out: 'Other', src: 'y' }, { out: 'More', src: 'z' }] });
-      expect(rejection.hint).toContain('Set "flow[].out" to one of "Qty", or remove the entry from "flow".');
-      expect(rejection.hint, 'the generic resend rule still closes the hint').toContain('Resend the full tool call');
+      expect(rejection.hint).toContain('Set /flow/1/out, /flow/2/out to one of "Qty", or remove those entries from /flow.');
+      expect(rejection.hint, 'the resend rule is the feedback\'s, never the hint').not.toMatch(/resend/i);
     });
 
     it('a top-level required enum field names the allowed values and only the set repair', () => {
       const rejection = rejectionFor({ verdict: 'maybe' });
-      expect(rejection.hint).toContain('Set "verdict" to one of "pass", "fail".');
+      expect(rejection.hint).toContain('Set /verdict to one of "pass", "fail".');
       expect(rejection.hint).not.toContain('remove the entry');
     });
 
     it('an entry the array minimum forbids dropping is offered the set repair only', () => {
       const rejection = rejectionFor({ verdict: 'pass', pair: [{ out: 'a' }, { out: 'z' }] });
-      expect(rejection.hint).toContain('Set "pair[].out" to one of "a", "b".');
+      expect(rejection.hint).toContain('Set /pair/1/out to one of "a", "b".');
       expect(rejection.hint).not.toContain('remove the entry');
     });
 
     it('flagged entries that cannot all be dropped within the array minimum are offered the set repair only', () => {
       const rejection = rejectionFor({ verdict: 'pass', pair: [{ out: 'a' }, { out: 'y' }, { out: 'z' }] });
-      expect(rejection.hint).toContain('Set "pair[].out" to one of "a", "b".');
+      expect(rejection.hint).toContain('Set /pair/1/out, /pair/2/out to one of "a", "b".');
       expect(rejection.hint).not.toContain('remove the entry');
     });
 
@@ -142,7 +142,7 @@ describe("tool-error-envelope", () => {
       const result = schema.safeParse(payload);
       if (result.success) throw new Error('the payload violates an enum');
       const rejection = rejectionFromZodError(result.error, { code: 'invalid_input', input: payload, schema });
-      expect(rejection.hint).toContain('Set "pair[].out" to one of "a", "b".');
+      expect(rejection.hint).toContain('Set /pair/1/out to one of "a", "b".');
       expect(rejection.hint).not.toContain('remove the entry');
     });
 
@@ -171,9 +171,10 @@ describe("tool-error-envelope", () => {
       expect(rejection.reason).toContain('"fail"');
     });
 
-    it('an absent enum field keeps the addition hint, not the value hint', () => {
+    it('an absent enum field gets its addition on the reason line, not the value hint', () => {
       const rejection = rejectionFor({});
-      expect(rejection.hint).not.toContain('Set "verdict"');
+      expect(rejection.reason).toContain('Required field, expected one of "pass", "fail"');
+      expect(rejection.hint ?? '').not.toContain('Set /verdict');
     });
   });
 
@@ -198,20 +199,20 @@ describe("tool-error-envelope", () => {
     });
   });
 
-  describe('renderFaults: a mistyped list', () => {
+  describe('one fault line per path: a mistyped list', () => {
     const schema = z.object({ flow: z.array(z.object({ out: z.string() })), title: z.string() });
     const render = (input: unknown) => {
       const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema });
-      return renderFaults(rejection, () => schema);
+      return { reason: rejection.reason, lines: renderFaults(rejection, () => schema) };
     };
 
-    it('a list sent as an object or text is told to be sent as the array', () => {
-      expect(render({ flow: { out: 'a' }, title: 't' })).toEqual(['/flow: wrong JSON type. Send the array directly.']);
-      expect(render({ flow: '[{"out":"a"}]', title: 't' })).toEqual(['/flow: wrong JSON type. Send the array directly.']);
+    it('a list sent as an object or text is told on its reason line to be sent as the array', () => {
+      expect(render({ flow: { out: 'a' }, title: 't' })).toEqual({ reason: '✖ Invalid input: expected array, received object. Send the array directly.\n  → at /flow', lines: [] });
+      expect(render({ flow: '[{"out":"a"}]', title: 't' })).toEqual({ reason: '✖ received text where an array is needed. Send the array directly.\n  → at /flow', lines: [] });
     });
 
     it('a mistyped scalar keeps the reason alone', () => {
-      expect(render({ flow: [], title: 5 })).toEqual([]);
+      expect(render({ flow: [], title: 5 })).toEqual({ reason: '✖ Invalid input: expected string, received number\n  → at /title', lines: [] });
     });
   });
 

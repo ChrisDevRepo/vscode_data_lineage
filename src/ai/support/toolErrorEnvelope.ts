@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { toModelJsonSchema } from '../tools/jsonSchema';
 import { locateJsonTextFault, parseJson } from './inputNormalization';
 import { REJECTION_CODES } from './rejectionCodes';
+import { sectionField } from '../session/classification';
 
 const ISSUE_CATEGORIES = ['shape', 'required', 'reference', 'value', 'protocol', 'stage'] as const;
 type IssueCategory = (typeof ISSUE_CATEGORIES)[number];
@@ -33,14 +34,6 @@ const BACKEND_FAULT = {
   label: 'extension fault',
   correction: 'The run ends; the extension reports the fault to the user.',
 } as const;
-
-/**
- * The generic resend rule of a schema-invalid tool call whose tool holds no draft: the complete
- * call is resent with a minimal edit. It is the only resend directive a rejection carries; a tool
- * that holds a draft states its own held rule in its place.
- */
-export const INVALID_TOOL_INPUT_REPAIR_HINT
-  = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
 
 /**
  * Standing repair instruction for a provider call naming a tool outside this phase's catalog. The
@@ -146,7 +139,7 @@ export const ISSUES = {
   [REJECTION_CODES.supplementRequiresCompleteEngine]: {
     category: 'stage',
     label: 'no completed exploration to supplement',
-    correction: "Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
+    correction: 'Start a fresh exploration instead (omit /supplement, provide /origin).',
   },
   [REJECTION_CODES.supplementEmpty]: {
     category: 'value',
@@ -185,8 +178,8 @@ export const ISSUES = {
   },
   [REJECTION_CODES.ctFieldForbiddenInBb]: {
     category: 'value',
-    label: 'targetColumns sent with analysisMode "bb"',
-    correction: 'Omit targetColumns and resubmit the BB specification.',
+    label: '/targetColumns sent with /analysisMode "bb"',
+    correction: 'Omit /targetColumns and resubmit the BB specification.',
   },
   [REJECTION_CODES.noActiveSession]: {
     category: 'stage',
@@ -617,9 +610,10 @@ function faultCorrection(error: ToolError, schema: z.ZodType | undefined): strin
 }
 
 /**
- * The model-facing lines of a rejection's faults: one `<pointer>: label. correction` line per path that
- * has a correction the rejection does not already state ({@link ToolError}`.stated`), with every
- * label of that path; paths with the same text share one line.
+ * The model-facing lines of a rejection's faults: one `<pointer>: label. correction` line per path
+ * that has a correction the rejection does not already state ({@link ToolError}`.stated`), with
+ * every label of that path; paths with the same text share one line. A Zod fault's correction
+ * rides its reason line instead (`stated`).
  *
  * @param schema - The tool's input schema as served when the rejection renders; names the shape of a
  *   mistyped object and the null exit of a nullable field.
@@ -640,13 +634,24 @@ export function renderFaults(rejection: ToolRejection, schema?: () => z.ZodType 
 }
 
 /**
- * The help the last feedback adds to a rejection's faults: the fallback of a column reference fault
- * whose correction gives no sections exit of its own (a rejection without faults is its code at each
- * issue path) and the next schema level of each top-level field of the wrong type or missing.
+ * The help the last feedback adds to a rejection's faults, from the served schema alone (never a
+ * sent value): the fallback of a column reference fault whose correction gives no sections exit of
+ * its own (a rejection without faults is its code at each issue path); for an unknown key, the
+ * nearest enclosing object that defines it, the home of prose (the served section fields) and the
+ * shape of the object it was sent in, or for a root key no field defines at any level, that it has
+ * no place in the call; and the shape of every other faulted object or list. Where none of these
+ * applies: the full served meaning and the unstated constraints of the one field a schema keyword
+ * failed, or for a fault with no path the tool that ends the step and its required fields.
  *
  * @param schema - The tool's input schema as served when the rejection renders.
+ * @param context - The tool the rejected call named and the tool that ends the step with its served
+ *   schema.
  */
-export function renderLastFeedbackHelp(rejection: ToolRejection, schema?: () => z.ZodType | undefined): string[] {
+export function renderLastFeedbackHelp(
+  rejection: ToolRejection,
+  schema: (() => z.ZodType | undefined) | undefined,
+  context: FeedbackContext,
+): string[] {
   const errors = rejection.errors ?? [];
   const lines: string[] = [];
   const faults = errors.length > 0 ? errors : (rejection.issuePaths ?? []).map(path => ({ path, code: rejection.code }));
@@ -655,36 +660,138 @@ export function renderLastFeedbackHelp(rejection: ToolRejection, schema?: () => 
     && !table[code]!.correction?.endsWith(SECTIONS_EXIT))) {
     lines.push(REFERENCE_FALLBACK);
   }
-  for (const error of errors) {
-    if ((error.code !== 'type' && error.code !== 'missing') || !error.types?.length || !/^[^.]+$/.test(error.path)) continue;
-    const node = jsonSchemaNodeAt(schema?.(), [error.path]);
-    lines.push(`${error.path} takes ${node ? nextLevel(node) : error.types.join(' or ')}.`);
-  }
-  return lines;
-}
-
-/** The JSON type names a schema node accepts: its own, its branches', or its enum/const values'. */
-function typeNames(node: JsonSchemaShape): string {
-  const own = [node.type ?? []].flat();
-  const values = [...(node.enum ?? []), ...('const' in node ? [node.const] : [])];
-  const names = own.length > 0
-    ? own
-    : node.anyOf || node.oneOf
-      ? [...(node.anyOf ?? []), ...(node.oneOf ?? [])].map(typeNames)
-      : values.map(value => (value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value));
-  return [...new Set(names)].join(' or ');
-}
-
-/** The keys of a node's object (an array's items) with their type names; else its type names. */
-function nextLevel(node: JsonSchemaShape): string {
-  for (const branch of [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])]) {
-    const list = branch.type === 'array';
-    const keys = Object.entries((list ? branch.items : branch)?.properties ?? {});
-    if (keys.length > 0) {
-      return `${list ? 'a list of objects' : 'an object'} with ${keys.map(([key, field]) => `${key} (${typeNames(field)})`).join(', ')}`;
+  if (faults.length === 0 && context.terminal) return [...lines, ...stepTerminal(context.terminal)];
+  const served = schema?.();
+  const root = jsonSchemaNodeAt(served, []);
+  if (!root) return lines;
+  const homes = new Set<string>();
+  const shapes = new Map<string, string>();
+  const placeless = new Set<string>();
+  let unknownKeys = false;
+  for (const { path, code } of faults) {
+    const segments = schemaPath(path);
+    const node = jsonSchemaNodeAt(served, segments);
+    if (code !== 'unknown_key') {
+      if (segments.length > 0 && node && (objectBranch(node) || listBranch(node))) shapes.set(jsonPointer(segments), shapeOf(node));
+      continue;
+    }
+    // A key too long to echo is reported at its object's path, so the key itself is unknown here.
+    const key = path !== '' && !node ? String(segments.at(-1)) : undefined;
+    const at = key === undefined ? segments : segments.slice(0, -1);
+    const object = jsonSchemaNodeAt(served, at);
+    if (!object || !objectBranch(object)) continue;
+    unknownKeys = true;
+    if (key !== undefined) {
+      const home = ancestorHome(served, at, key);
+      if (home) homes.add(home);
+    }
+    if (at.length > 0) {
+      shapes.set(jsonPointer(at), shapeOf(object));
+    } else if (key !== undefined && !definesKey(root, key)) {
+      placeless.add(`No field of ${context.toolName} at any level is named ${quoteKey(key)}; it has no place in this call.`);
+    } else if (key !== undefined) {
+      shapes.set('', shapeOf(root, 1));
     }
   }
-  return typeNames(node);
+  const sections = (['business', 'technical'] as const).map(sectionField).filter(field => hasField(propertiesOf(root), field));
+  const prose = unknownKeys && sections.length > 0 ? `Prose goes in ${sections.map(field => jsonPointer([field])).join(' or ')}.` : undefined;
+  const facts = [
+    ...homes,
+    ...(prose ? [prose] : []),
+    ...[...shapes].map(([at, shape]) => `${at ? `${at} is` : 'The call is'} shaped ${shape}.`),
+    ...placeless,
+  ];
+  const paths = [...new Set(faults.map(({ path }) => path))];
+  const field = facts.length === 0 && paths.length === 1 && paths[0] !== '' ? jsonSchemaNodeAt(served, schemaPath(paths[0]!)) : undefined;
+  const keywordFault = field !== undefined && faults.some(({ code }) => MEANING_CODES.has(code)
+    || (code === 'invalid' && variantsOf(field).some(variant => variant.pattern !== undefined)));
+  return [...lines, ...facts, ...(keywordFault ? fieldMeaning(field, jsonPointer(schemaPath(paths[0]!)), errors) : [])];
+}
+
+/** What {@link renderLastFeedbackHelp} reads beyond the rejection and its tool's schema. */
+export interface FeedbackContext {
+  /** The tool the rejected call named. */
+  readonly toolName: string;
+  /** The tool that ends the step and its schema as served. */
+  readonly terminal?: { readonly tool: string; readonly schema: () => z.ZodType | undefined };
+}
+
+/**
+ * Fault codes of a schema keyword on one field (`enum`, `type`, a length or item bound), whose
+ * meaning the last feedback adds; a `pattern` fault arrives as `invalid` on a field with a pattern.
+ */
+const MEANING_CODES: ReadonlySet<string> = new Set(['enum', 'type', 'size']);
+
+/** The tool that ends the step and its required fields by pointer; empty if it requires none. */
+function stepTerminal(terminal: NonNullable<FeedbackContext['terminal']>): string[] {
+  const required = jsonSchemaNodeAt(terminal.schema(), [])?.required ?? [];
+  return required.length > 0 ? [`This step ends with ${terminal.tool}; it requires ${required.map(field => jsonPointer([field])).join(', ')}.`] : [];
+}
+
+/**
+ * The full served description of one field and each constraint of its schema (type, enum values,
+ * pattern, length or item bounds) its faults did not state: a fault with `values` states the enum,
+ * a `type` fault or one with `types` the type, a `size` fault its bound, a format fault
+ * (`invalid`) the pattern.
+ */
+function fieldMeaning(node: JsonSchemaShape, pointer: string, faults: readonly Pick<ToolError, 'code' | 'values' | 'types' | 'bound'>[]): string[] {
+  const description = variantsOf(node).map(variant => variant.description).find(Boolean)?.trim();
+  const branch = variantsOf(node).find(variant => variant.type !== 'null' && (variant.type || variant.enum)) ?? node;
+  const stated = (keyword: string) => faults.some(fault => (keyword === 'enum' ? fault.values !== undefined
+    : keyword === 'type' ? fault.code === 'type' || fault.types !== undefined
+      : keyword === 'pattern' ? fault.code === 'invalid' : fault.bound?.keyword === keyword));
+  const constraints = [
+    ...(branch.enum ? [['enum', branch.enum.map(value => JSON.stringify(value)).join(', ')]] : branch.type ? [['type', [branch.type].flat().join(' or ')]] : []),
+    ...(branch.pattern ? [['pattern', branch.pattern]] : []),
+    ...(['minLength', 'maxLength', 'minItems', 'maxItems'] as const).flatMap(keyword => (branch[keyword] === undefined ? [] : [[keyword, String(branch[keyword])]])),
+  ].filter(([keyword]) => !stated(keyword!)).map(([keyword, value]) => `${keyword} ${value}`);
+  const schemaText = constraints.length > 0 ? ` ${description ? 'Its schema' : 'schema'}: ${constraints.join(', ')}.` : '';
+  if (description) return [`${pointer} means: ${description}${schemaText}`];
+  return schemaText ? [`${pointer}${schemaText}`] : [];
+}
+
+/** Whether the served schema's field `field` is a list. */
+export function isServedList(schema: () => z.ZodType | undefined, field: string): boolean {
+  const node = jsonSchemaNodeAt(schema(), [field]);
+  return node !== undefined && listBranch(node) !== undefined;
+}
+
+/**
+ * The shape of a schema node: every property in schema order, an object as `{…}`, a list as
+ * `[…]` around its item's shape and any other value as `…`; never an enum member or another
+ * value.
+ *
+ * @param depth - Object levels whose properties are spelled out; deeper objects stay `{…}`.
+ */
+function shapeOf(node: JsonSchemaShape, depth = Infinity): string {
+  const object = objectBranch(node);
+  if (object) {
+    return depth < 1 ? '{…}' : `{${Object.entries(object.properties!).map(([key, field]) => `${JSON.stringify(key)}: ${shapeOf(field, depth - 1)}`).join(', ')}}`;
+  }
+  const list = listBranch(node);
+  return list ? `[${shapeOf(list.items!, depth)}]` : '…';
+}
+
+/**
+ * The nearest object strictly enclosing `at` that defines `key`, as
+ * `"key" is a field of …: <pointer>.`
+ */
+function ancestorHome(served: z.ZodType | undefined, at: readonly PropertyKey[], key: string): string | undefined {
+  for (let end = at.length - 1; end >= 0; end--) {
+    const ancestor = at.slice(0, end);
+    if (hasField(propertiesOf(jsonSchemaNodeAt(served, ancestor)), key)) {
+      return `${quoteKey(key)} is a field of ${jsonPointer(ancestor) || 'the call'}: ${jsonPointer([...ancestor, key])}.`;
+    }
+  }
+  return undefined;
+}
+
+/** Whether any object of the node, at any depth, defines `key`. */
+function definesKey(node: JsonSchemaShape, key: string): boolean {
+  const object = objectBranch(node);
+  const list = listBranch(node);
+  return (object !== undefined && (hasField(object.properties!, key) || Object.values(object.properties!).some(field => definesKey(field, key))))
+    || (list !== undefined && definesKey(list.items!, key));
 }
 
 /**
@@ -861,11 +968,11 @@ interface JsonSchemaShape {
   enum?: unknown[];
   const?: unknown;
   minItems?: number;
-}
-
-/** A Zod issue path as a repair hint names its list: `sections[2].blocks`. */
-function dottedPath(path: readonly PropertyKey[]): string {
-  return path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[${key}]` : acc ? `${acc}.${String(key)}` : String(key)), '');
+  maxItems?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  description?: string;
 }
 
 /** The RFC 6901 JSON Pointer a served reason or fault line names: `/sections/2/blocks`; `''` is the call. */
@@ -885,7 +992,6 @@ export function unsentRequiredFields(schema: () => z.ZodType | undefined, input:
 /** The JSON Schema node `path` addresses in `schema`; `undefined` if the path leaves the schema. */
 function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): JsonSchemaShape | undefined {
   if (!schema) return undefined;
-  const variantsOf = (node: JsonSchemaShape): JsonSchemaShape[] => [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])];
   let node = toModelJsonSchema(schema) as JsonSchemaShape;
   for (const key of path) {
     const next: JsonSchemaShape | undefined = variantsOf(node)
@@ -897,9 +1003,24 @@ function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly Property
   return node;
 }
 
+/** Whether an object's own properties include `key` (a sent key may be any string). */
+const hasField = (properties: object, key: string): boolean => Object.prototype.hasOwnProperty.call(properties, key);
+
+/** A node and its union branches. */
+const variantsOf = (node: JsonSchemaShape): JsonSchemaShape[] => [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])];
+
+/** The branch of a node that is an object with properties; `undefined` for any other node. */
+const objectBranch = (node: JsonSchemaShape): JsonSchemaShape | undefined => variantsOf(node).find(variant => variant.properties);
+
+/** The branch of a node that is a list; `undefined` for any other node. */
+const listBranch = (node: JsonSchemaShape): JsonSchemaShape | undefined => variantsOf(node).find(variant => variant.items);
+
+/** The properties of a node's object branch; empty for a missing node or any other node. */
+const propertiesOf = (node: JsonSchemaShape | undefined): Record<string, JsonSchemaShape> => (node && objectBranch(node)?.properties) ?? {};
+
 /** Whether a node accepts `null`: its own type or one of its branches. */
 function acceptsNull(node: JsonSchemaShape): boolean {
-  return [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])].some(variant => [variant.type ?? []].flat().includes('null'));
+  return variantsOf(node).some(variant => [variant.type ?? []].flat().includes('null'));
 }
 
 /**
@@ -927,11 +1048,10 @@ function unwrapNullable(node: JsonSchemaShape): JsonSchemaShape {
 }
 
 /**
- * Hint for `unrecognized_keys` issues: the key is no field, it is removed where it was sent (each
- * concrete path), and the fields of the object it sits in are named so a misspelt key is renamed
- * (the call itself is the object for a root issue). A key that an entry of a list in that object
- * defines is moved from where it was sent into an entry of that list instead of removed, so a
- * flattened entry key keeps its value.
+ * Hint for `unrecognized_keys` issues, one sentence per object by JSON Pointer (the call for a root
+ * issue): the key is no field of that object, it is removed, and the object's fields are named so a
+ * misspelt key is renamed. A key that an entry of a list in that object defines is moved into an
+ * entry of that list instead, so a flattened entry key keeps its value.
  *
  * @returns The object-directed hint; `undefined` when the schema is absent or does not resolve the
  *   object, so the caller keeps the key-only wording.
@@ -939,48 +1059,37 @@ function unwrapNullable(node: JsonSchemaShape): JsonSchemaShape {
 function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined): string | undefined {
   const issues = error.issues.filter((issue) => issue.code === 'unrecognized_keys');
   if (issues.length === 0) return undefined;
-  const clauses = new Map<string, { at: Map<string, Set<string>>; homes: Map<string, Set<string>>; allowed: string[] }>();
+  const objects = new Map<string, { homes: Map<string, Set<string>>; allowed: string[] }>();
   for (const issue of issues) {
-    const node = jsonSchemaNodeAt(schema, issue.path);
-    const properties = (node ? unwrapNullable(node) : undefined)?.properties ?? {};
+    const properties = propertiesOf(jsonSchemaNodeAt(schema, issue.path));
     const allowed = Object.keys(properties);
     if (allowed.length === 0) return undefined;
-    const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '') || 'the call';
-    const sentAt = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[${key}]` : acc ? `${acc}.${String(key)}` : String(key)), '');
-    const clause = clauses.get(where) ?? { at: new Map<string, Set<string>>(), homes: new Map<string, Set<string>>(), allowed };
-    for (const [list, listNode] of Object.entries(properties)) {
-      const entry = unwrapNullable(listNode).items;
-      const entryKeys = new Set([entry, ...(entry?.anyOf ?? []), ...(entry?.oneOf ?? [])].flatMap(variant => Object.keys(variant?.properties ?? {})));
-      const home = issue.path.length === 0 ? list : `${where}.${list}`;
-      for (const key of issue.keys) {
-        if (entryKeys.has(key)) clause.homes.set(key, (clause.homes.get(key) ?? new Set<string>()).add(`${home}[]`));
+    const at = jsonPointer(issue.path);
+    const object = objects.get(at) ?? { homes: new Map<string, Set<string>>(), allowed };
+    for (const key of issue.keys) {
+      const homes = object.homes.get(key) ?? new Set<string>();
+      for (const [list, listNode] of Object.entries(properties)) {
+        const entry = listBranch(listNode)?.items;
+        if (entry && hasField(propertiesOf(entry), key)) homes.add(jsonPointer([...issue.path, list]));
       }
+      object.homes.set(key, homes);
     }
-    for (const key of issue.keys) clause.at.set(key, (clause.at.get(key) ?? new Set<string>()).add(sentAt));
-    clauses.set(where, clause);
+    objects.set(at, object);
   }
-  const parts = [...clauses].map(([where, { at, homes, allowed }]) => {
-    // Keys sent at the same paths and defined by the same lists share one action.
-    const actions = new Map<string, { from: string; into: string; keys: string[] }>();
-    for (const [key, paths] of at) {
-      const from = [...paths].join(', ');
-      const into = [...(homes.get(key) ?? [])].join(' or ');
-      const action = actions.get(`${from}\n${into}`) ?? { from, into, keys: [] };
-      action.keys.push(key);
-      actions.set(`${from}\n${into}`, action);
+  return [...objects].map(([at, { homes, allowed }]) => {
+    // Keys defined by the same lists share one action.
+    const actions = new Map<string, string[]>();
+    for (const [key, lists] of homes) {
+      const into = [...lists].join(' or ');
+      actions.set(into, [...(actions.get(into) ?? []), key]);
     }
-    const verb = ({ into }: { into: string }) => (into ? 'move' : 'remove');
-    const target = ({ from, into }: { from: string; into: string }) => `${from ? ` from ${from}` : ''}${into ? ` into a ${into} entry` : ''}`;
-    const list = [...actions.values()];
-    const action = list.length === 1
-      ? `${verb(list[0]!)} ${at.size > 1 ? 'them' : 'it'}${target(list[0]!)}`
-      : list.every(a => !a.into)
-        ? `remove ${list.map(a => `${a.keys.map(quoteKey).join(', ')}${target(a)}`).join(' and ')}`
-        : list.map(a => `${verb(a)} ${a.keys.map(quoteKey).join(', ')}${target(a)}`).join(' and ');
-    return `${[...at.keys()].map(quoteKey).join(', ')} ${at.size > 1 ? 'are not fields' : 'is not a field'} of ${where}: ${action}; its fields are ${allowed.join(', ')}`;
-  });
-  const sentence = parts.join('; ');
-  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
+    const act = (into: string, keys: string) => (into ? `move ${keys} into an entry of ${into}` : `remove ${keys}`);
+    const action = actions.size === 1
+      ? act([...actions.keys()][0]!, homes.size > 1 ? 'them' : 'it')
+      : [...actions].map(([into, keys]) => act(into, keys.map(quoteKey).join(', '))).join(' and ');
+    const sentence = `${[...homes.keys()].map(quoteKey).join(', ')} ${homes.size > 1 ? 'are not fields' : 'is not a field'} of ${at || 'the call'}: ${action}; its fields are ${allowed.join(', ')}.`;
+    return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`;
+  }).join(' ');
 }
 
 /**
@@ -989,8 +1098,7 @@ function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
  *
  * @param schema - The failed schema; when given, a key nested in an object or array element is
  *   answered with the keys that element accepts.
- * @returns The removal-directed hint, or `undefined` so the caller falls back to
- *   {@link INVALID_TOOL_INPUT_REPAIR_HINT}.
+ * @returns The removal-directed hint, or `undefined` when no issue is an unrecognized key.
  */
 function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): string | undefined {
   const offendingKeys = zodUnrecognizedKeys(error);
@@ -1033,56 +1141,43 @@ function isPresentInvalidValue(issue: z.core.$ZodIssue, input: unknown): boolean
 const INVALID_VALUE_REASON = 'Invalid value';
 
 /**
- * Repair hint for a present value outside the values its field accepts (enum or literal): names the
- * accepted values and the allowed repairs, setting the field to one of them or, for a field inside
- * an array element, dropping that entry when the array stays within its served minimum. Issues
- * sharing a field shape and accepted values are one clause. An absent field is a `missing` fault.
+ * Repair hint for a present value outside the values its field accepts (enum or literal), by JSON
+ * Pointer: names the accepted values and the allowed repairs, setting the field to one of them or,
+ * for a field inside an array element, dropping that entry when the array stays within its served
+ * minimum. Fields of one list with the same accepted values share one clause. An absent field is a
+ * `missing` fault.
  */
 function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   const issues = error.issues.filter((issue): issue is Extract<z.core.$ZodIssue, { code: 'invalid_value' }> =>
     isPresentInvalidValue(issue, input));
   const entryDepth = (path: readonly PropertyKey[]): number => path.map((key) => typeof key === 'number').lastIndexOf(true);
+  const clauses = new Map<string, { fields: string[]; values: string; arrayPath?: readonly PropertyKey[] }>();
   const flaggedEntries = new Map<string, Set<PropertyKey>>();
   for (const issue of issues) {
     const index = entryDepth(issue.path);
-    if (index < 0) continue;
-    const array = dottedPath(issue.path.slice(0, index));
-    flaggedEntries.set(array, (flaggedEntries.get(array) ?? new Set()).add(issue.path[index]!));
+    const arrayPath = index < 0 ? undefined : issue.path.slice(0, index);
+    if (arrayPath) flaggedEntries.set(jsonPointer(arrayPath), (flaggedEntries.get(jsonPointer(arrayPath)) ?? new Set()).add(issue.path[index]!));
+    const values = issue.values.map((value) => JSON.stringify(value)).join(', ');
+    const key = `${arrayPath ? jsonPointer(arrayPath) : ''}|${values}`;
+    const clause = clauses.get(key) ?? { fields: [], values, arrayPath };
+    clause.fields.push(jsonPointer(issue.path));
+    clauses.set(key, clause);
   }
-  const clauses = new Set<string>();
-  for (const issue of issues) {
-    const field = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '');
-    const set = `Set "${field}" to one of ${issue.values.map((value) => JSON.stringify(value)).join(', ')}`;
-    const index = entryDepth(issue.path);
-    if (index < 0) {
-      clauses.add(`${set}.`);
-      continue;
-    }
-    const arrayPath = issue.path.slice(0, index);
+  const hints = [...clauses.values()].map(({ fields, values, arrayPath }) => {
+    const set = `Set ${fields.join(', ')} to one of ${values}`;
+    if (!arrayPath) return `${set}.`;
     const entries = input === undefined ? undefined : (resolveAtPath(input, arrayPath) as unknown[] | undefined)?.length;
     const arrayNode = jsonSchemaNodeAt(schema, arrayPath);
     const minItems = (arrayNode ? unwrapNullable(arrayNode) : undefined)?.minItems ?? 0;
-    const removable = entries === undefined || entries - flaggedEntries.get(dottedPath(arrayPath))!.size >= minItems;
-    clauses.add(removable ? `${set}, or remove the entry from "${dottedPath(arrayPath)}".` : `${set}.`);
-  }
-  return clauses.size > 0 ? [...clauses].join(' ') : undefined;
+    const removable = entries === undefined || entries - flaggedEntries.get(jsonPointer(arrayPath))!.size >= minItems;
+    return removable ? `${set}, or remove ${fields.length > 1 ? 'those entries' : 'the entry'} from ${jsonPointer(arrayPath)}.` : `${set}.`;
+  });
+  return hints.length > 0 ? hints.join(' ') : undefined;
 }
 
 /** Whether a schema refinement states the repair of its custom issue on `params.hint`. */
 function issueStatesRepair(issue: z.core.$ZodIssue): boolean {
   return issue.code === 'custom' && typeof (issue.params as { hint?: unknown } | undefined)?.hint === 'string';
-}
-
-/** Registry codes whose table row repairs by omitting a field, which the generic resend rule contradicts. */
-const FIELD_OMITTING_CODES: ReadonlySet<unknown> = new Set([REJECTION_CODES.ctFieldForbiddenInBb]);
-
-/**
- * Whether a schema refinement owns the repair of its custom issue: on `params.hint`, or by a table
- * row that omits a field ({@link FIELD_OMITTING_CODES}).
- */
-function issueOwnsRepair(issue: z.core.$ZodIssue): boolean {
-  return issueStatesRepair(issue)
-    || (issue.code === 'custom' && FIELD_OMITTING_CODES.has((issue.params as { code?: unknown } | undefined)?.code));
 }
 
 /**
@@ -1215,10 +1310,13 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
 /**
  * Sole producer of auto-generated {@link ToolRejection} reasons from a Zod validation error.
  *
- * @remarks The reason is one `✖` line per issue with its `→ at` JSON Pointer, each carrying its enriched message: an
- *   `invalid_union` expands via {@link describeInvalidUnion} into a per-branch required-field
- *   breakdown, and when `input` is supplied a size issue names the measured size — Zod v4 issues
- *   carry no input, so the enrichment happens here; a sent value is never echoed. Issues identical
+ * @remarks The reason is one `✖` line per issue with its `→ at` JSON Pointer, each carrying its
+ *   enriched message and the correction of its faults ({@link faultCorrection}; those faults are
+ *   `stated`, so no fault line repeats them); an absent field reads as required with the type or
+ *   values it expects; an `invalid_union` expands via {@link describeInvalidUnion} into a
+ *   per-branch required-field breakdown, and when `input` is supplied a size issue names the
+ *   measured size — Zod v4 issues carry no input, so the enrichment happens here; a sent value is
+ *   never echoed. Issues identical
  *   apart from their array index (same code, message and path shape) collapse into the first, which
  *   names the other indices, so one defect repeated across N entries is one line. A size issue at a
  *   path that also fails its type is dropped: the bound belongs to the declared type. Only
@@ -1227,10 +1325,10 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
  *   ({@link invalidValueRepairHint}) and not again in the reason; a caller-supplied `hint` leaves
  *   the reason carrying them.
  * @param error - The Zod validation failure.
- * @param opts - `code` to stamp on the rejection; optional `hint` (default: {@link zodFieldRepairHint},
- *   followed by the generic resend rule {@link INVALID_TOOL_INPUT_REPAIR_HINT} unless a refinement
- *   owns its repair, on its hint or a table row that omits a field); optional `input` (the value that failed parsing) enabling measured-size
- *   enrichment, absent-field faults and the value hint; optional `schema` (the schema it failed)
+ * @param opts - `code` to stamp on the rejection; optional `hint` (default:
+ *   {@link zodFieldRepairHint}; the resend rule is the rendered feedback's); optional `input` (the
+ *   value that failed parsing) enabling measured-size enrichment, absent-field faults and the value
+ *   hint; optional `schema` (the schema it failed)
  *   enabling the hints that name what the schema accepts.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
  */
@@ -1240,11 +1338,14 @@ export function rejectionFromZodError(
 ): ToolRejection {
   const issuePaths: string[] = [];
   const errors: ToolError[] = [];
-  const shown = new Map<string, { issue: z.core.$ZodIssue; message: string; others: string[] }>();
-  const mistyped = new Set(error.issues.filter(issue => issue.code === 'invalid_type').map(issue => dottedPath(issue.path)));
+  const shown = new Map<string, { issue: z.core.$ZodIssue; message: string; corrections: string[]; others: string[] }>();
+  const mistyped = new Set(error.issues.filter(issue => issue.code === 'invalid_type').map(issue => jsonPointer(issue.path)));
   for (const issue of error.issues) {
-    if ((issue.code === 'too_big' || issue.code === 'too_small') && mistyped.has(dottedPath(issue.path))) continue;
-    errors.push(...issueErrors(issue, opts.input));
+    if ((issue.code === 'too_big' || issue.code === 'too_small') && mistyped.has(jsonPointer(issue.path))) continue;
+    // The fix of each fault rides its own reason line, so the fault is served once.
+    const faults = issueErrors(issue, opts.input);
+    const corrections = [...new Set(faults.filter(fault => !fault.stated).flatMap(fault => faultCorrection(fault, opts.schema)))];
+    errors.push(...faults.map(fault => (corrections.length > 0 ? { ...fault, stated: true as const } : fault)));
     let message: string;
     if (issue.code === 'invalid_union') {
       const { line, paths } = describeInvalidUnion(issue, opts.input);
@@ -1254,27 +1355,28 @@ export function rejectionFromZodError(
       const path = issue.path.join('.');
       if (issue.code === 'unrecognized_keys') issuePaths.push(...unrecognizedKeyPaths(issue));
       else if (path) issuePaths.push(path);
-      message = opts.hint === undefined && isPresentInvalidValue(issue, opts.input)
-        ? INVALID_VALUE_REASON
-        : opts.input !== undefined
-          ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
-          : baseIssueMessage(issue);
+      message = faults.some(fault => fault.code === 'missing') && (issue.code === 'invalid_type' || issue.code === 'invalid_value')
+        ? `Required field, expected ${issue.code === 'invalid_value' ? `one of ${issue.values.map(value => JSON.stringify(value)).join(', ')}` : issue.expected}`
+        : opts.hint === undefined && isPresentInvalidValue(issue, opts.input)
+          ? INVALID_VALUE_REASON
+          : opts.input !== undefined
+            ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
+            : baseIssueMessage(issue);
     }
     const shape = `${issue.code}|${message}|${issue.path.map(key => (typeof key === 'number' ? '*' : String(key))).join('.')}`;
     const first = shown.get(shape);
     if (first) first.others.push(jsonPointer(issue.path));
-    else shown.set(shape, { issue, message, others: [] });
+    else shown.set(shape, { issue, message, corrections, others: [] });
   }
-  const lines = [...shown.values()].sort((a, b) => a.issue.path.length - b.issue.path.length).map(({ issue, message, others }) =>
-    `✖ ${message}${others.length > 0 ? ` (same at ${others.join(', ')})` : ''}${issue.path.length > 0 ? `\n  → at ${jsonPointer(issue.path)}` : ''}`);
+  const lines = [...shown.values()].sort((a, b) => a.issue.path.length - b.issue.path.length).map(({ issue, message, corrections, others }) => {
+    const fault = `${message}${others.length > 0 ? ` (same at ${others.join(', ')})` : ''}`;
+    const fixed = corrections.length > 0 ? `${fault}${/[.!?]$/.test(fault) ? '' : '.'} ${corrections.join(' ')}` : fault;
+    return `✖ ${fixed}${issue.path.length > 0 ? `\n  → at ${jsonPointer(issue.path)}` : ''}`;
+  });
   return makeRejection({
     code: opts.code,
     reason: lines.join('\n'),
-    hint: opts.hint ?? [
-      zodFieldRepairHint(error, opts.input, opts.schema),
-      // A refinement that owns its repair may contradict the generic resend rule.
-      error.issues.some(issueOwnsRepair) ? undefined : INVALID_TOOL_INPUT_REPAIR_HINT,
-    ].filter(Boolean).join(' '),
+    hint: opts.hint ?? zodFieldRepairHint(error, opts.input, opts.schema),
     issuePaths,
     errors,
   });

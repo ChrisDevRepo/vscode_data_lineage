@@ -5,7 +5,6 @@ import {
   type BaseMessage,
   type MessageContent,
 } from '@langchain/core/messages';
-import type { ToolCall } from '@langchain/core/messages/tool';
 import type { ZodType } from 'zod';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { causeCodes, isTransportProviderError, type ProviderErrorDiagnostic, type TurnStop } from '../support/text';
@@ -40,32 +39,20 @@ export function messageProviderParts(message: BaseMessage): readonly unknown[] {
 }
 
 /**
- * The assistant turn to append for one generation: its message plus each call it lacks (a call
- * whose input was no JSON object) with empty arguments, so every call keeps the tool result that
- * answers it.
- *
- * @param projectArgs - Replaces the arguments of a call it returns arguments for, so the transcript
- *   shows that call reduced; `null` keeps the call as sent. The message keeps its content, call ids
- *   and provider parts.
+ * The assistant turn to append for one generation: its message unchanged, plus each call it lacks
+ * (a call whose input was no JSON object) with empty arguments, so every call keeps the tool result
+ * that answers it.
  */
-export function transcriptTurn(
-  message: AIMessage,
-  calls: readonly GeneratedToolCall[],
-  projectArgs?: (call: ToolCall) => Record<string, unknown> | null,
-): AIMessage {
+export function transcriptTurn(message: AIMessage, calls: readonly GeneratedToolCall[]): AIMessage {
   const kept = message.tool_calls ?? [];
   const keptIds = new Set(kept.map((call) => call.id));
   const missing = calls.filter((call) => !keptIds.has(call.callId));
-  const projected = kept.map((call) => {
-    const args = projectArgs?.(call);
-    return args ? { ...call, args } : call;
-  });
-  if (missing.length === 0 && projected.every((call, index) => call === kept[index])) return message;
+  if (missing.length === 0) return message;
   return new AIMessage({
     content: message.content,
     additional_kwargs: message.additional_kwargs,
     tool_calls: [
-      ...projected,
+      ...kept,
       ...missing.map((call) => ({ id: call.callId, name: call.toolName, args: {}, type: 'tool_call' as const })),
     ].sort((a, b) => calls.findIndex((call) => call.callId === a.id) - calls.findIndex((call) => call.callId === b.id)),
   });

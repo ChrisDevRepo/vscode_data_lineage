@@ -969,7 +969,10 @@ export interface InvalidRoute {
     available_columns?: string[];
     /** Complete catalog column names of this object, never tracked subsets or input unions. */
     actual_columns?: string[];
-    /** Neighbours the focus may still question (`question_closed`). */
+    /**
+     * The ids the question check accepts at `path`: the neighbours the focus may still question
+     * (`question_not_neighbor`, `question_closed`).
+     */
     available_routes?: string[];
 }
 

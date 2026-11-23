@@ -9,7 +9,7 @@ import {
 } from './toolSchemas';
 import { quoteIds } from '../support/text';
 import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
-import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX, isIndirectOnly, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
@@ -1218,7 +1218,7 @@ export function validatePresentResult(
     const hint = [
       repairInstructed || !fieldFault ? undefined : `Fix ${[...failedFields].join(', ')}.`,
       nodeIdHintNeeded ? presentNodeIdHint(stage) : undefined,
-      repairInstructed ? presentResultRepairInstruction(resendList, stage) : fieldFault ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined,
+      repairInstructed ? presentResultRepairInstruction(resendList, stage) : undefined,
     ].filter(Boolean).join(' ') || undefined;
     const unlinkable = [...pathUnlinkableIds].map(([path, ids], index) => ({
       path,

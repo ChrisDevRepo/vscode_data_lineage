@@ -118,27 +118,13 @@ const REMOVAL_REFUSAL: Record<NonNullable<RemovalAnalysis['rejection']>, string>
 };
 /** Kept-verdict fields a held draft restores when a retry omits them; `reason` is never held. */
 const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions', 'column_flow'] as const;
-/** Carried fields history shows until the draft already holds that same value. */
-const REPLAY_UNLESS_HELD = ['column_flow', 'prune_neighbors', 'questions'] as const;
 
 type HeldDraftAuthorization = {
   readonly failed: readonly string[];
   readonly focusId: string;
   readonly hop: number;
   readonly mode: 'bb' | 'ct';
-  /** Carried values the previous hold stored, so a replay can omit an unchanged one. */
-  readonly priorCarried: Partial<Pick<HopFindingKept, (typeof REPLAY_UNLESS_HELD)[number]>>;
 };
-
-/** Structural equality that ignores object key order; array order stays significant. */
-function sameJson(left: unknown, right: unknown): boolean {
-  const order = (_key: string, value: unknown): unknown => {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
-    const record = value as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(record).sort(([a], [b]) => (a < b ? -1 : 1)));
-  };
-  return JSON.stringify(left, order) === JSON.stringify(right, order);
-}
 
 /** Defines the core interface for the state machine handling exploration modes. */
 export interface IHopStateMachine {
@@ -744,13 +730,15 @@ export class NavigationEngine implements IHopStateMachine {
         kind: 'prune_column_conflict',
         id: target.resolved,
         path: target.path,
-        reason: `\`${target.resolved}\` is also named in column_flow; the same submission cannot map and prune it, and a neighbor used only indirectly is kept with its indirect columns.`,
+        reason: 'also named in /column_flow; the same submission cannot map and prune it, and a neighbor used only indirectly is kept with its indirect columns.',
       });
     }
 
     const routeRequests: ValidatedHop['routeRequests'] = [];
     const requested = new Set<string>();
     const focusNeighborIds = this.graph.hasNode(focusId) ? new Set(this.graph.neighbors(focusId)) : new Set<string>();
+    // The ids the question check accepts: the focus's neighbors still open to a question.
+    const availableRoutes = questions.length > 0 ? [...focusNeighborIds].filter(id => this.neighborCapabilities(focusId, id).can_question) : [];
     for (const q of questions) {
       const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.model.identifierCaseSensitive) ?? q.nodeId;
       if (!focusNeighborIds.has(nid)) {
@@ -758,7 +746,8 @@ export class NavigationEngine implements IHopStateMachine {
           kind: 'question_not_neighbor',
           id: nid,
           path: `questions.${q.index}.nodeId`,
-          reason: `\`${nid}\` is not a neighbor of the focus \`${focusId}\`.`,
+          reason: `not a neighbor of the focus \`${focusId}\`.`,
+          available_routes: availableRoutes,
         });
         continue;
       }
@@ -767,8 +756,8 @@ export class NavigationEngine implements IHopStateMachine {
           kind: 'question_closed',
           id: nid,
           path: `questions.${q.index}.nodeId`,
-          reason: `\`${nid}\` is already ${this.removedSet.has(nid) ? 'pruned' : 'visited'} and cannot receive another investigation in this run.`,
-          available_routes: [...focusNeighborIds].filter(id => this.neighborCapabilities(focusId, id).can_question),
+          reason: `already ${this.removedSet.has(nid) ? 'pruned' : 'visited'}; it cannot receive another investigation in this run.`,
+          available_routes: availableRoutes,
         });
         continue;
       }
@@ -777,7 +766,7 @@ export class NavigationEngine implements IHopStateMachine {
           kind: 'prune_question_conflict',
           id: nid,
           path: `questions.${q.index}.nodeId`,
-          reason: `\`${nid}\` is also named in prune_neighbors; the same submission cannot prune and investigate it.`,
+          reason: 'also named in /prune_neighbors; the same submission cannot prune and investigate it.',
         });
         continue;
       }
@@ -967,34 +956,6 @@ export class NavigationEngine implements IHopStateMachine {
       failed: this.heldFindingDraft.getAuthorization()?.failed ?? [] };
   }
 
-  /**
-   * What the transcript replays of a rejected `lineage_submit_findings` call: `focus_node_id`,
-   * `verdict` and the fields the held draft failed, plus `column_flow`, `prune_neighbors` and
-   * `questions` unless the draft already held that same value. The rejection that first holds a
-   * prune still shows it beside the questions sent with it: a prune of a question target is
-   * refused. A value already held is not shown again.
-   *
-   * @returns The reduced arguments, or `null` when no draft is held for the call's focus: the call
-   *   is then replayed as sent.
-   */
-  public projectRejectedSubmission(input: unknown): Record<string, unknown> | null {
-    const held = this.heldFindingDraft.get();
-    const failed = this.heldFailed;
-    if (!held || failed === null || typeof input !== 'object' || input === null || Array.isArray(input)) return null;
-    const raw = input as Record<string, unknown>;
-    if (typeof raw.focus_node_id === 'string'
-      && (resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id)) !== this.heldFindingFocus) return null;
-    const prior = this.heldFindingDraft.getAuthorization()?.priorCarried ?? {};
-    const shown = ['focus_node_id', 'verdict', ...REPLAY_UNLESS_HELD, ...failed];
-    return Object.fromEntries(Object.entries(raw).flatMap(([key, value]): Array<[string, unknown]> => {
-      if (!this.heldSchemaFields.includes(key) || !shown.includes(key)) return [];
-      const carriedKey = (REPLAY_UNLESS_HELD as readonly string[]).includes(key);
-      const unchangedHeld = carriedKey && !failed.includes(key) && key in prior
-        && sameJson(prior[key as keyof typeof prior], value);
-      return unchangedHeld ? [] : [[key, value]];
-    }));
-  }
-
   /** The fields the current hop's served `submit_findings` schema defines, `reason` aside. */
   private get heldSchemaFields(): readonly string[] {
     const angles = this.classification ? CLASSIFICATION_KEPT_ANGLES[this.classification] : CLASSIFICATION_KEPT_ANGLES.both;
@@ -1008,23 +969,11 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private holdFinding(finding: HopFindingKept, failed: readonly string[]): void {
     if (!this.currentFocusNodeId) return;
-    const previous = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
-    const priorCarried: HeldDraftAuthorization['priorCarried'] = {};
-    if (previous?.column_flow !== undefined) {
-      priorCarried.column_flow = structuredClone(previous.column_flow);
-    }
-    if (previous?.prune_neighbors !== undefined) {
-      priorCarried.prune_neighbors = structuredClone(previous.prune_neighbors);
-    }
-    if (previous?.questions !== undefined) {
-      priorCarried.questions = structuredClone(previous.questions);
-    }
     this.heldFindingDraft.hold(structuredClone(finding), {
       failed: this.heldSchemaFields.filter(field => failed.includes(field)),
       focusId: this.currentFocusNodeId,
       hop: this.hopCount,
       mode: this.currentAnalysisMode,
-      priorCarried,
     });
   }
 

@@ -8,7 +8,7 @@ import {
   numericStringDepth,
 } from '../../engine/shared/explorationDepthContract';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
+import { jsonPointer, rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, sectionField, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
@@ -771,7 +771,7 @@ function columnSourceNodeSchema(sources: readonly string[], offered: readonly st
   const resolvable = new Map(sources.map(id => [id, id] as const));
   const node = z.string().refine(
     value => resolveModelNodeId(value, resolvable) !== null,
-    { message: 'upstream_columns[].node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
+    { message: 'This node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
   );
   return offered.length ? node.meta({ enum: [...offered] }) : node;
 }
@@ -940,15 +940,13 @@ export function validateHopSubmissionShape(
     : { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
 }
 
-/** The resend rule for a finding rejection whose other fields remain held. */
-export function heldSubmissionRepairHint(): string {
-  return 'Send only the failed fields; every other field is held.';
-}
-
-/** The fields a held finding restores on the retry, by name; a failed field is the retry's to send. */
+/**
+ * The fields a held finding restores on the retry, by JSON Pointer (`/summary`), so a held field
+ * never reads like a nested key of the same name; a failed field is the retry's to send.
+ */
 export function heldSubmissionFields(held: HeldSubmissionParts): string[] {
   return ['focus_node_id', 'verdict', ...held.fields, ...(held.summary ? ['summary'] : []), ...held.sections.map(sectionField)]
-    .filter(field => !held.failed.includes(field));
+    .filter(field => !held.failed.includes(field)).map(field => jsonPointer([field]));
 }
 
 /**
@@ -1045,7 +1043,7 @@ export function normalizePresentSectionLabel(label: string): string {
 function overLength(limit: number) {
   return {
     error: (issue: z.core.$ZodRawIssue) =>
-      `${(issue.path ?? []).join('.')} is over its length limit: ${String(issue.input).length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`,
+      `${jsonPointer(issue.path ?? [])} is over its length limit: ${String(issue.input).length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`,
   };
 }
 

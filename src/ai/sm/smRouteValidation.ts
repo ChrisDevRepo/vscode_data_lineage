@@ -52,13 +52,13 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors.',
   question_not_neighbor:
-    'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
+    'An entry of /questions can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from /questions.',
   prune_question_conflict:
-    'Choose one action for this neighbor: remove it from prune_neighbors to investigate it, or remove its questions entry to prune it.',
+    'Choose one action for this neighbor: remove it from /prune_neighbors to investigate it, or remove its /questions entry to prune it.',
   prune_column_conflict:
-    'Choose one action for this neighbor: remove it from prune_neighbors to keep its column_flow mapping, or remove its column_flow entries to prune it.',
+    'Choose one action for this neighbor: remove it from /prune_neighbors to keep its /column_flow mapping, or remove its /column_flow entries to prune it.',
   question_closed:
-    'Remove questions[] entries for visited or pruned nodes. Attach new checks only to eligible unvisited neighbors; queued unvisited work can receive a question.',
+    'Remove the /questions entries for visited or pruned nodes. Attach new checks only to eligible unvisited neighbors; queued unvisited work can receive a question.',
 };
 
 /**
@@ -103,12 +103,12 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   question_closed: REJECTION_CODES.routeValidationFailed,
 };
 
-/** One model-facing reason line per validation failure: the offending path and what was wrong. */
+/**
+ * One model-facing reason line per validation failure: the offending path and what was wrong. The
+ * ids a check accepts ride `detail` for the last feedback.
+ */
 function routeErrorLine(error: InvalidRoute): string {
-  return [
-    error.path ? `${jsonPointer(error.path.split('.'))}: ${error.reason}` : error.reason,
-    ...(error.available_routes ? [`available routes: ${error.available_routes.join(', ') || '(none)'}`] : []),
-  ].join('; ');
+  return error.path ? `${jsonPointer(error.path.split('.'))}: ${error.reason}` : error.reason;
 }
 
 /** The verb-led corrective order of each distinct failure kind. */
