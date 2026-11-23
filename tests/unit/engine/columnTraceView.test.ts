@@ -291,6 +291,25 @@ describe('columnTraceView', () => {
     expect(view.objectEdges.filter(e => e.source === 'dbo.r')).toMatchObject([{ target: 'dbo.p', columns: ['Flag'], transforms: ['filter'], note: 'WHERE Flag = 1' }]);
   });
 
+  it.each([
+    [['pass_through', 'combine'], ['combine']],
+    [['compute', 'filter'], ['filter']],
+  ] as const)('keeps the direct edge and stores the indirect class of a mixed %j relation apart', (transforms, indirect) => {
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'CustId', toNode: 'dbo.t', toCol: 'CustId', transforms: [...transforms], note: 'CustId * 1' },
+    ];
+
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    expect(view.edges.filter(e => e.source === 'dbo.s' && e.target === 'dbo.p')).toMatchObject([{ transforms: [...transforms] }]);
+    expect(view.objectEdges.filter(e => e.source === 'dbo.s')).toMatchObject([{ target: 'dbo.p', columns: ['CustId'], transforms: [...indirect] }]);
+    expect(view.objectEdges.find(e => e.source === 'dbo.s')?.note).toBeUndefined();
+    const row = findRow(view, 'dbo.s', 'CustId');
+    expect(row.indirect).toEqual([...indirect]);
+    expect(row.indirectOnly).toBeUndefined();
+    expect(row.clause).toBeUndefined();
+  });
+
   it('sizes a transform super node as a compact circle box, not a port card', () => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'));
     const relations: ColumnTraceRelation[] = [

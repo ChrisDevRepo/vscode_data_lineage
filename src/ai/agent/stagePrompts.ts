@@ -23,7 +23,6 @@ import {
 import { buildSmProtocol } from '../prompting/smPrompts';
 import { resolveStagePrompt, type StagePromptResult, type StageRenderScope } from '../prompting/templateRenderer';
 import { escapeDelimitedJson } from '../support/text';
-import { SCRIPT_TYPES } from '../support/graphUtils';
 
 /**
  * Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single
@@ -53,14 +52,6 @@ function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string 
   ].join('\n');
 }
 
-
-/** Whether the focus is a non-bodied node (table/external); gates `structural_summary`. */
-function focusIsNonBodied(sess: AiSession, engine: NavigationEngine): boolean {
-  const focusId = engine.currentFocus;
-  if (!focusId) return false;
-  const node = sess.model?.nodes.find(n => n.id === focusId);
-  return node ? !SCRIPT_TYPES.has(node.type) : false;
-}
 
 type AgentStage = 'discover' | 'active' | 'synthesis';
 
@@ -208,10 +199,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     isCtMode ? engine.columnAspect?.active_columns : undefined,
     engine.pendingLineageQuestions,
   );
-  const captureRecipe = resolveStage(sess, 'active', isCtMode, {
-    scope: 'per_focus',
-    focusKind: focusIsNonBodied(sess, engine) ? 'non_bodied' : 'bodied',
-  });
+  const captureRecipe = resolveStage(sess, 'active', isCtMode, { scope: 'per_focus' });
   const hop = engine.peekHopContext();
   const focus = buildWorkerHopMessage(hop, focusId);
   const recentRejections = sess.memory.getRecentRejections().filter(rejection => rejection.atHop < engine.currentHop);

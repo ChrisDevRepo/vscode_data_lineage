@@ -481,10 +481,12 @@ export const PruneNeighborSchema = z.object({
   reason: z.string().min(1).describe('What in this node\'s SQL shows the neighbor is off the answer.'),
 }).strict();
 
-/** Single source of the `questions` describe text, shared by per-mode schemas and the union. */
-const QUESTIONS_DESCRIPTION =
-  'A question is optional. Ask an open neighbor (neither `already_visited` nor `already_removed`) only what its SQL must answer beyond the column continuation. '
+/** Single source of the `questions` describe text; CT adds the column-continuation clause, BB has none. */
+const questionsDescription = (clause: string): string =>
+  `A question is optional. Ask an open neighbor (neither \`already_visited\` nor \`already_removed\`) only what its SQL must answer${clause}. `
   + 'An out-of-scope neighbor you ask is a follow-up after the answer. No question to a pruned neighbor.';
+const QUESTIONS_DESCRIPTION = questionsDescription('');
+const CT_QUESTIONS_DESCRIPTION = questionsDescription(' beyond the column continuation');
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
@@ -542,13 +544,11 @@ const ColumnFlowEntrySchema = z.object({
   writes_to: ColumnFlowWritesToObject.nullish().describe('Actual destination object and column for this procedure\'s output, as declared by its SQL; null when it writes no table or only a table outside the approved scope.'),
   returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
-    'At a bodied focus, only the real source columns whose value flows into out_col: operands of its expression, ' +
-    'an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. ' +
-    'A column used only to join, filter, group, partition or order rows is an indirect source: list it here with transforms combine or filter. ' +
+    'List each source column that determines out_col, of two kinds. ' +
+    'Direct: its value flows into out_col (operands of its expression, an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs). ' +
+    'Indirect: it only joins, filters, groups, partitions or orders rows; list it with transforms combine or filter. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
-    'At a bodyless focus, follow carrier-side neighbours (writers upstream, readers downstream) with the ' +
-    'tracked column unchanged; a focus with an in-scope carrier-side neighbour is not an origin. ' +
-    '[] only when out_col has no in-scope source: no column computes it, it has no carrier-side neighbour, or its source lies outside the approved scope.',
+    '[] only when out_col has no in-scope source: no column computes it, or its source lies outside the approved scope.',
   ),
 }).strict();
 
@@ -610,7 +610,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
     summary,
     badge_label,
     prune_neighbors,
-    questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
+    questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(CT_QUESTIONS_DESCRIPTION),
     reason,
     ...SECTION_FIELDS,
   })
@@ -876,7 +876,7 @@ export function submitFindingsSchemaForMode(
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
   if (hopKey && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
-    narrowed = narrowed.extend({ questions: z.array(hopQuestionSchema(mode, hop)).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
+    narrowed = narrowed.extend({ questions: z.array(hopQuestionSchema(mode, hop)).max(MAX_ID_LIST_LENGTH).optional().describe(CT_QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }
   if (classification) {
     const dropped = CLASSIFICATION_KEPT_ANGLES.both.filter(angle => !CLASSIFICATION_KEPT_ANGLES[classification].includes(angle));
@@ -1519,7 +1519,7 @@ export const SubmitFindingsModelSchema = z.object({
   verdict: HopVerdictSchema,
   summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
-  questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
+  questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(CT_QUESTIONS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),
   badge_label: z.string().max(SUBMIT_FINDINGS_BADGE_LABEL_MAX).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')

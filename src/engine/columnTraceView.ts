@@ -8,7 +8,7 @@
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName, schemaKey } from '../utils/sql';
-import { COLUMN_TRANSFORM_CLASSES, isIndirectOnly, type ColumnAspectEdge, type ColumnTransformClass, type NodeVerdict } from './shared/bridgeContract';
+import { COLUMN_TRANSFORM_CLASSES, COLUMN_TRANSFORM_DIRECTION, isIndirectOnly, type ColumnAspectEdge, type ColumnTransformClass, type NodeVerdict } from './shared/bridgeContract';
 import type { ExtensionConfig } from './types';
 
 /**
@@ -76,10 +76,22 @@ export interface ColumnTraceViewNode extends ColumnTraceViewObject {
   rows: ColumnTraceRow[];
   /** Node width in canvas units. */
   width: number;
-  /** Node height in canvas units, derived from the row count. */
+  /** Node height in canvas units, derived from the row count, plus the fact line when drawn. */
   height: number;
   /** Layout position assigned by this module. */
   position: { x: number; y: number };
+  /**
+   * Indirect facts of this step with no row of their own to sit on: those of a transform hub and
+   * those naming an object that is not drawn. Summarised on one line beneath the card.
+   */
+  localFacts?: ColumnTraceStepFact[];
+}
+
+/** An indirect fact of a step, named by its neighbour's id and column, with the classes it plays. */
+export interface ColumnTraceStepFact {
+  node: string;
+  column: string;
+  classes: ColumnTransformClass[];
 }
 
 /** A per-column edge in the column-trace view, addressing row handles rather than nodes. */
@@ -238,6 +250,9 @@ export const COLUMN_NODE_HEADER_HEIGHT = 28;
 
 /** Height of one column row. */
 export const COLUMN_ROW_HEIGHT = 22;
+
+/** Height of the one-line summary of a step's local facts, beneath its rows or hub name. */
+export const COLUMN_FACT_LINE_HEIGHT = 14;
 
 /**
  * Card border width of a column-trace node. Part of the node height because the card is
@@ -399,6 +414,8 @@ interface NodeAccumulator {
   direct: Set<string>;
   /** Row key to the indirect classes and notes of the facts naming it. */
   indirect: Map<string, { classes: Set<ColumnTransformClass>; notes: string[] }>;
+  /** Indirect facts of this step with no row to sit on, keyed by neighbour and column. */
+  localFacts: Map<string, ColumnTraceStepFact>;
 }
 
 /** Adds the column's row on first sight; `direct` false for a column only an indirect fact names. */
@@ -477,7 +494,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const key = schemaKey(object.id, input.identifierCaseSensitive);
     let acc = nodeAccs.get(key);
     if (!acc) {
-      acc = { object, rowKeys: [], rowNames: new Map(), direct: new Set(), indirect: new Map() };
+      acc = { object, rowKeys: [], rowNames: new Map(), direct: new Set(), indirect: new Map(), localFacts: new Map() };
       nodeAccs.set(key, acc);
     }
     return acc;
@@ -514,23 +531,33 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   const indirectUses = new Map<string, IndirectUse>();
 
   /**
-   * Records an indirect-only relation: a join key or filter column of the neighbour `fromNode` that
-   * the step uses. It becomes a row of the neighbour and one line to the step; no column edge, no
+   * Records the indirect part of a relation (all of it, or the combine/filter classes of a mixed
+   * one): a join key or filter column of the neighbour `fromNode` that the step uses. It becomes a row of the neighbour and one line to the step; no column edge, no
    * port bridge, no row for the traced column, so it never continues a thread. The step is the hop
    * node, or the target when the hop is not on the canvas. A transform hub has no column rows, so
-   * its key only reaches the line.
+   * its key only reaches the line. A fact with no row to sit on, a hub's or one naming an object
+   * that is not drawn, is kept on the step for its summary line.
    */
   function recordIndirect(relation: ColumnTraceRelation, sourceObj: ColumnTraceViewObject | undefined, stepObj: ColumnTraceViewObject | undefined): void {
-    if (!sourceObj || !stepObj) return;
-    const sourceAcc = getAcc(sourceObj);
+    if (!stepObj) return;
+    const sourceAcc = sourceObj && getAcc(sourceObj);
     const stepAcc = getAcc(stepObj);
-    const classes = COLUMN_TRANSFORM_CLASSES.filter(c => relation.transforms?.includes(c));
+    const classes = COLUMN_TRANSFORM_CLASSES.filter(c => relation.transforms?.includes(c) && COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
+    // A mixed relation's note describes its direct expression.
+    const note = isIndirectOnly(relation.transforms) ? relation.note : undefined;
+    if (!sourceObj || isColumnTraceTransformNode(sourceObj) || isColumnTraceTransformNode(stepObj)) {
+      const key = JSON.stringify([schemaKey(relation.fromNode, input.identifierCaseSensitive), normalizeColName(relation.fromCol, input.identifierCaseSensitive)]);
+      const fact = stepAcc.localFacts.get(key) ?? { node: relation.fromNode, column: relation.fromCol, classes: [] };
+      stepAcc.localFacts.set(key, fact);
+      fact.classes = COLUMN_TRANSFORM_CLASSES.filter(c => fact.classes.includes(c) || classes.includes(c));
+    }
+    if (!sourceAcc) return;
     const addIndirectFact = (use: { classes: Set<ColumnTransformClass>; notes: string[] }): void => {
       for (const c of classes) use.classes.add(c);
-      if (relation.note && !use.notes.includes(relation.note)) use.notes.push(relation.note);
+      if (note && !use.notes.includes(note)) use.notes.push(note);
     };
     let column = relation.fromCol;
-    if (!isColumnTraceTransformNode(sourceObj)) {
+    if (!isColumnTraceTransformNode(sourceAcc.object)) {
       const rowKey = touchRow(sourceAcc, relation.fromCol, input.identifierCaseSensitive, false);
       column = sourceAcc.rowNames.get(rowKey)!;
       const use = sourceAcc.indirect.get(rowKey) ?? { classes: new Set<ColumnTransformClass>(), notes: [] };
@@ -538,7 +565,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       addIndirectFact(use);
     }
     if (sourceAcc === stepAcc) return;
-    const pair = JSON.stringify([schemaKey(sourceObj.id, input.identifierCaseSensitive), schemaKey(stepObj.id, input.identifierCaseSensitive)]);
+    const pair = JSON.stringify([schemaKey(sourceAcc.object.id, input.identifierCaseSensitive), schemaKey(stepObj.id, input.identifierCaseSensitive)]);
     const use = indirectUses.get(pair) ?? { source: sourceAcc, step: stepAcc, columns: new Map<string, string>(), classes: new Set<ColumnTransformClass>(), notes: [] };
     indirectUses.set(pair, use);
     use.columns.set(normalizeColName(column, input.identifierCaseSensitive), column);
@@ -548,9 +575,9 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   input.relations.forEach((relation, index) => {
     const sourceObj = input.objects.get(schemaKey(relation.fromNode, input.identifierCaseSensitive));
     const targetObj = input.objects.get(schemaKey(relation.toNode, input.identifierCaseSensitive));
-    if (isIndirectOnly(relation.transforms)) {
+    if (relation.transforms?.some(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT')) {
       recordIndirect(relation, sourceObj, input.objects.get(schemaKey(relation.hopNode, input.identifierCaseSensitive)) ?? targetObj);
-      return;
+      if (isIndirectOnly(relation.transforms)) return;
     }
     if (!sourceObj || !targetObj) return;
 
@@ -601,6 +628,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map((acc) => {
     const rows = buildRows(acc);
     const isTransform = isColumnTraceTransformNode(acc.object);
+    const localFacts = [...acc.localFacts.values()];
     return {
       id: acc.object.id,
       label: acc.object.label,
@@ -609,10 +637,12 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       isTransformNode: isTransform,
       rows,
       width: isTransform ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH,
-      height: isTransform
+      height: (isTransform
         ? COLUMN_TRANSFORM_NODE_HEIGHT
-        : COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH,
+        : COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH)
+        + (localFacts.length ? COLUMN_FACT_LINE_HEIGHT : 0),
       position: { x: 0, y: 0 },
+      ...(localFacts.length ? { localFacts } : {}),
     };
   });
 
