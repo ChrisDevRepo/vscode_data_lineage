@@ -767,7 +767,8 @@ function placeFenceBlock(
  * when the section already shows that SQL.
  * An id naming no captured block is returned in `unknownIds` and the fence is left as written for
  * the caller to reject. Unclosed blocks go to `malformedRefs`; their text is never consumed as
- * another block. Only a rendering copy is expanded: the held repair draft keeps short references.
+ * another block, and an unclosed opener citing an unknown id is also in `unknownIds`, so one
+ * rejection names both faults. Only a rendering copy is expanded: the held repair draft keeps short references.
  *
  * The caller runs this over every field {@link orderAndAssemble} renders verbatim (`title`,
  * `intro`, `closing`, section text), so an id cited outside a section expands or rejects like one
@@ -783,14 +784,19 @@ export function expandEvidenceRefs(
   const fences = [...locateSqlFences(text)];
   const byStart = new Map(fences.map(fence => [fence.start, fence]));
   const malformedRefs: string[] = [];
+  const unknownIds: string[] = [];
   let coveredUntil = 0;
   for (const marker of text.matchAll(/```sql([^\n`]*)/gi)) {
     if (marker.index < coveredUntil) continue;
     const valid = byStart.get(marker.index);
-    if (valid) coveredUntil = valid.end;
-    else malformedRefs.push(EVIDENCE_ID_INFO.exec(marker[1])?.[1] ?? 'unlabelled SQL');
+    if (valid) {
+      coveredUntil = valid.end;
+      continue;
+    }
+    const id = EVIDENCE_ID_INFO.exec(marker[1])?.[1];
+    malformedRefs.push(id ?? 'unlabelled SQL');
+    if (id && !blocks.has(id)) unknownIds.push(id);
   }
-  const unknownIds: string[] = [];
   let out = '';
   let cursor = 0;
   for (const fence of fences) {
