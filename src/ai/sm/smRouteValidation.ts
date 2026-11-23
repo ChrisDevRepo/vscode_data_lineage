@@ -10,24 +10,38 @@ import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { ISSUES, jsonPointer, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
+/** The nonfatal drop/refuse-with-notice kinds: logged by the engine, never sent to the model. */
+type NoticeKind = 'absent_contributor' | 'prune_absent' | 'prune_noop_removed' | 'prune_noop_visited'
+  | 'prune_noop_analyzed' | 'prune_noop_queued' | 'prune_noop_out_of_scope';
+
+/** A route kind that rejects the submission. */
+type FatalRouteKind = Exclude<InvalidRouteKind, NoticeKind>;
+
+/** An invalid route of a fatal kind: the only kind a rejection envelope states. */
+export type FatalRoute = InvalidRoute & { kind: FatalRouteKind };
+
 /** True for nonfatal drop/refuse-with-notice kinds. */
-export function isAbsentKind(kind: InvalidRouteKind): boolean {
+export function isAbsentKind(kind: InvalidRouteKind): kind is NoticeKind {
   return kind === 'absent_contributor'
     || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
     || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued' || kind === 'prune_noop_out_of_scope';
 }
 
+/** True for an invalid route that rejects the submission. */
+export function isFatalRoute(route: InvalidRoute): route is FatalRoute {
+  return !isAbsentKind(route.kind);
+}
+
 /**
- * Per-kind corrective order, keyed by {@link InvalidRouteKind} so a new kind is a compile error.
+ * Per-kind corrective order of each fatal kind, so a new fatal kind is a compile error; a notice kind
+ * never reaches a rejection and has none.
  * Each is a self-contained **verb-led imperative**, positive, with the legitimate alternative built
  * in so the model never guesses the nearest match; used for the content-error hint. A kind with its
  * own registry code states that code's table correction. The offending value is stated in the
  * rejection reason; column inventories stay machine-only until the final rejection.
  * @internal
  */
-export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
-  absent_contributor:
-    'Record it as an unresolved upstream source in your analysis and keep the upstream columns that resolve — it is not in the loaded model.',
+export const ROUTE_REJECTION_DIRECTIVE: Record<FatalRouteKind, string> = {
   bad_out_col: ISSUES[REJECTION_CODES.outColNotOnNode].correction,
   untracked_out_col: ISSUES[REJECTION_CODES.outColNotTracked].correction,
   bad_contributor_col: ISSUES[REJECTION_CODES.contributorColNotOnSource].correction,
@@ -39,18 +53,6 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_writes_to_target: ISSUES[REJECTION_CODES.writesToNamesReader].correction,
   pruned_contributor: ISSUES[REJECTION_CODES.prunedContributor].correction,
   column_out_of_scope: ISSUES[REJECTION_CODES.columnOutOfScope].correction,
-  prune_absent:
-    'This id is not in the loaded model — there is nothing to prune. Remove it from prune_neighbors.',
-  prune_noop_removed:
-    'This node was already pruned on an earlier hop. Remove it from prune_neighbors.',
-  prune_noop_visited:
-    'This node was already visited on an earlier hop — analyzed, or passed through as the carrier that led to this focus — and is retained; a prune cannot remove it. Remove it from prune_neighbors.',
-  prune_noop_analyzed:
-    'This node is already recorded as an analyzed (noted) node and is retained. Remove it from prune_neighbors.',
-  prune_noop_queued:
-    'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
-  prune_noop_out_of_scope:
-    'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors.',
   question_not_neighbor:
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
   prune_question_conflict:
@@ -112,7 +114,7 @@ function routeErrorLine(error: InvalidRoute): string {
 }
 
 /** The verb-led corrective order of each distinct failure kind. */
-export function routeDirectives(errors: readonly InvalidRoute[]): string[] {
+export function routeDirectives(errors: readonly FatalRoute[]): string[] {
   const kinds = [...new Set(errors.map(e => e.kind))];
   return [
     ...kinds.filter(kind => kind !== 'untracked_out_col'
@@ -132,7 +134,7 @@ export function routeDirectives(errors: readonly InvalidRoute[]): string[] {
  *
  * @param errors - Field-resolved validation failures accumulated before commit; at least one.
  */
-export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejection {
+export function buildRouteValidationRejection(errors: FatalRoute[]): ToolRejection {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
   const hint = routeDirectives(errors).join(' ');
