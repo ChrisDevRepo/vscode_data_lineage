@@ -991,11 +991,13 @@ export type EngineAspectMode =  { kind: 'bb' } | { kind: 'ct' };
 
 /**
  * Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section
- * angles, whether the summary, other field names.
+ * angles, whether the summary, other field names, and the failed fields the retry sends.
  */
 export interface HeldSubmissionParts {
   readonly sections: readonly CaptureAngle[];
   readonly summary: boolean;
   /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
   readonly fields: readonly string[];
+  /** Top-level fields the held draft failed; none of them is listed as held. */
+  readonly failed: readonly string[];
 }
