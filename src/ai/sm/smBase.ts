@@ -913,7 +913,7 @@ export class NavigationEngine implements IHopStateMachine {
   private emptySummaryRejection(): ToolRejection {
     return makeRejection({
       code: REJECTION_CODES.missingField,
-      hint: 'summary is empty and no summary is held for this node; resend the full call with summary: one sentence on what this node does to the data and hands on.',
+      hint: 'summary is empty and no summary is held for this node; send summary: one sentence on what this node does to the data and hands on.',
       issuePaths: ['summary'],
     });
   }
@@ -3019,6 +3019,13 @@ export class NavigationEngine implements IHopStateMachine {
         issuePaths: classViolation.fields,
       })];
     };
+    // A field fault of a call on the current focus holds it; the retry sends its failed fields.
+    // A call naming another object holds nothing: its content is never moved to this focus.
+    const heldRejection = (rejections: readonly ToolRejection[]): ToolRejection => {
+      const rejection = combineToolRejections(rejections);
+      this.holdFinding(params, (rejection.issuePaths ?? []).map(path => path.split('.')[0]));
+      return this.withRecordedHeld(rejection);
+    };
 
     if (this.getCurrentTasks().some(task => task.callerContext && (!task.nodeId || task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(task.nodeId, task.callerContext)))) {
       return combineToolRejections([...faults(), makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' })]);
@@ -3288,20 +3295,10 @@ export class NavigationEngine implements IHopStateMachine {
         const routeRejection = this.routeRejection(fatalRoutes);
         this.lastRoutedRejected = fatalRoutes.length;
         for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-        const issuePaths = [...new Set([
-          ...(classViolation?.fields ?? []),
-          ...(routeRejection.issuePaths ?? []),
-        ])];
-        this.holdFinding(finding, issuePaths.map(path => path.split('.')[0]));
-        return this.withRecordedHeld({
-          ...combineToolRejections([...faults(), routeRejection]),
-          issuePaths,
-        });
+        return heldRejection([...faults(), routeRejection]);
       }
       const sectionFaults = faults();
-      if (sectionFaults.length > 0) {
-        return this.withRecordedHeld(combineToolRejections(sectionFaults));
-      }
+      if (sectionFaults.length > 0) return heldRejection(sectionFaults);
 
       const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
       for (const notice of notices) {

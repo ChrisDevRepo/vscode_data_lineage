@@ -144,6 +144,11 @@ export interface PresentResultRepairAuthorization {
     readonly index: number;
     readonly fields: readonly ('label' | 'text')[];
   }[];
+  /**
+   * Section keys of the rejected call in authored order, when only some of its sections are held:
+   * the repair puts a resent section back in its place.
+   */
+  readonly sectionOrder?: readonly string[];
 }
 
 /** A preview section carries the served block id it starts at instead of a body. */
@@ -359,7 +364,8 @@ export function presentResultRepairInstruction(
  * Holds the valid fields of a `lineage_present_result` call its stage schema rejected in the
  * handler, so the retry resends only the failed field(s) and {@link mergePresentResultRepairPatch}
  * restores the rest. A top-level key the tool does not define is reported by the rejection and left
- * out; it does not stop valid fields being held.
+ * out; it does not stop valid fields being held. Failed `sections` entries alone are not held when
+ * every section fault sits inside a sections entry; the retry keys a resent entry on its label.
  *
  * @param committed - Sections of the committed report an update call may keep text for, or `null`.
  *   A keep-text section (label, no text) whose label has no committed body is invalid, so
@@ -408,27 +414,40 @@ export function holdRejectedPresentResult(
     ? (rawSections as PresentSectionPatch[]).filter(sec => !('text' in sec && sec.text?.trim()) && !bodies.has(sectionKey(sec))).map(sec => sec.label)
     : [];
   if (unkept.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
+  // A section that fails outside its label and text leaves fails alone; the sections that passed
+  // are held and a resend keys on their labels.
+  const failedSections = new Set(sectionPaths.map(path => Number(path.split('.')[1])));
+  const passedSections = failed.includes('sections') && !hasLeafRepair && unkept.length === 0
+    && Array.isArray(rawSections) && sectionPaths.every(path => /^sections\.\d+(\.|$)/.test(path))
+    ? rawSections.filter((_, index) => !failedSections.has(index))
+    : [];
   const kept = hasLeafRepair
     ? Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && (
       (key === 'highlight_groups' && highlightLabelIndexes)
       || (key === 'sections' && sectionTextLeaves)
       || !failed.includes(key)
     )))
-    : Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && !failed.includes(key)));
+    : {
+      ...Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && !failed.includes(key))),
+      ...(passedSections.length > 0 ? { sections: passedSections } : {}),
+    };
   if (Object.keys(kept).length === 0) return null;
   const fields = failed as PresentResultRepairField[];
   store.hold(kept as PresentResultInput, {
     fields,
     ...(highlightLabelIndexes ? { highlightLabelIndexes } : {}),
     ...(sectionTextLeaves ? { sectionTextLeaves } : {}),
+    ...(passedSections.length > 0
+      ? { sectionOrder: (rawSections as PresentSectionPatch[]).flatMap(sec => (typeof sec?.label === 'string' ? [sectionKey(sec)] : [])) }
+      : {}),
   });
   const heldDescription = hasLeafRepair
     ? 'Held from this call: every valid report field and the complete affected lists; only the offending text is replaceable.'
-    : `Held from this call: every field except ${fields.join(', ')}.`;
+    : `Held from this call: every field except ${fields.map(field => (field === 'sections' && passedSections.length > 0 ? 'the failed sections' : field)).join(', ')}.`;
   const unheld = unkept.length > 0 && !hasLeafRepair
     ? ` sections for ${quoteIds(unkept)} were not held: the committed report has no body for them. Its sections are ${quoteIds((committed ?? []).map(sec => sec.label))}; omit sections to keep the committed report.`
     : '';
-  return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage, false, highlightLabelIndexes, sectionTextLeaves)}`;
+  return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage, passedSections.length > 0, highlightLabelIndexes, sectionTextLeaves)}`;
 }
 
 type PresentNote = NonNullable<PresentResultInput['notes']>[number];
@@ -506,8 +525,13 @@ export function mergePresentResultRepairPatch(
       continue;
     }
     if (key === 'sections' && Array.isArray(value)) {
+      const rank = (section: PresentSection): number => {
+        const index = authorization.sectionOrder?.indexOf(sectionKey(section)) ?? -1;
+        return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+      };
       const merged = RepairDraftStore.mergeByKey<PresentSection>(withEffectiveStarts(draft.sections ?? []), value as PresentSectionPatch[], sectionKey)
-        .map(section => ({ ...section, node_ids: section.node_ids ?? [] }));
+        .map(section => ({ ...section, node_ids: section.node_ids ?? [] }))
+        .sort((a, b) => rank(a) - rank(b));
       updates.sections = merged.every(section => section.start)
         ? merged.sort((a, b) => Number(a.start!.slice(1)) - Number(b.start!.slice(1)))
         : merged;

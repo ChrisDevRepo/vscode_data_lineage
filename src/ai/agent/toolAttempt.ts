@@ -203,7 +203,8 @@ type ToolOutcomeData =
       readonly errors?: ToolError[];
       readonly held?: string[];
       /**
-       * Required fields a call rejected before its schema check left unsent; the last feedback
+       * Fields the retry sends beyond the issue paths: the required fields a call rejected before
+       * its schema check left unsent, or the failed fields of the held draft. The last feedback
        * names them.
        */
       readonly unsent?: readonly string[];
@@ -286,9 +287,6 @@ interface ToolAttemptBody {
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` if none. */
 type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
 
-/** What the held `lineage_submit_findings` draft of the focus restores, read only, or `null`. */
-type HeldSubmission = () => HeldSubmissionParts | null;
-
 /** The arguments a rejected `lineage_submit_findings` call keeps in the transcript; `null` keeps it as sent. */
 type ProjectRejectedSubmission = (input: unknown) => Record<string, unknown> | null;
 
@@ -351,8 +349,6 @@ interface ToolGenerationAttemptInput {
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedSubmission}. */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
-  /** See {@link ToolAttemptExecutionOptions.heldSubmission}. */
-  readonly heldSubmission?: HeldSubmission;
   /** See {@link ToolAttemptExecutionOptions.projectRejectedSubmission}. */
   readonly projectRejectedSubmission?: ProjectRejectedSubmission;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedPresentResult}. */
@@ -400,16 +396,11 @@ interface ToolAttemptExecutionOptions {
    */
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
   /**
-   * Holds the valid parts of a schema-rejected `lineage_submit_findings` call in the session's held
-   * finding draft and names them, so the full resend keeps them by a keep value instead of their
-   * content. Returns `null` when nothing is held.
+   * Holds the valid parts of an argument-rejected `lineage_submit_findings` call (schema or
+   * tool-call notation) in the session's held finding draft and names them, so the retry sends
+   * only the failed fields. Returns `null` when nothing is held.
    */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
-  /**
-   * Reads the session's held finding draft without changing it, for a `lineage_submit_findings`
-   * call rejected before its schema check (tool-call notation): its repair names the held fields.
-   */
-  readonly heldSubmission?: HeldSubmission;
   /**
    * Reduces a rejected `lineage_submit_findings` call in the transcript to the fields a retry
    * resends, the rest being held by the session. Returns `null` when nothing is held for the call.
@@ -771,7 +762,7 @@ interface RecordedToolOutcome {
  * Code, issue paths and detail stay on the paired `ToolMessage.artifact`.
  *
  * @param schema - The tool's input schema as served when the rejection renders.
- * @param unsent - Required fields a call rejected before its schema check left unsent.
+ * @param unsent - Fields the retry sends beyond the issue paths (see `correction.unsent`).
  */
 function rejectionText(rejection: ToolRejection, toolName: string, priorState?: ToolPhaseAttemptState, schema?: () => z.ZodType | undefined, unsent: readonly string[] = []): string {
   const repliesLeft = repliesLeftAfter(priorState);
@@ -802,7 +793,7 @@ function rejectionText(rejection: ToolRejection, toolName: string, priorState?: 
 
 /**
  * The last feedback's fields to correct: the top-level field of each failed path the served schema
- * has, and the required fields the call left unsent. A key the schema lacks is no field to send.
+ * has, and the `unsent` fields the retry sends too. A key the schema lacks is no field to send.
  */
 function fieldsToCorrect(issuePaths: readonly string[], schema: () => z.ZodType | undefined, unsent: readonly string[]): string[] {
   return [...new Set([...issuePaths.map(path => path.split('.')[0]).filter(field => isServedField(schema, field)), ...unsent])];
@@ -1015,7 +1006,6 @@ export async function executeToolAttempt(
     traceSyntheticRejection: options.traceSyntheticRejection,
     presentResultRepairDraftContext: options.presentResultRepairDraftContext,
     holdRejectedSubmission: options.holdRejectedSubmission,
-    heldSubmission: options.heldSubmission,
     projectRejectedSubmission: options.projectRejectedSubmission,
     holdRejectedPresentResult: options.holdRejectedPresentResult,
     priorObservations: priorState?.observations,
@@ -1211,27 +1201,27 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const schemaRejected = call.code === REJECTION_CODES.invalidToolInput;
       const schema = () => input.registry.get(call.toolName)?.inputSchema;
       let resend: string | undefined = argumentRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
-      let heldFields: string[] | undefined;
+      let held: HeldSubmissionParts | null | undefined;
       if (argumentRejected && call.toolName === SUBMIT_FINDINGS_TOOL) {
-        // A schema fault holds the call's valid parts; notation, found before the schema check,
-        // holds nothing and reads the held draft.
-        const held = schemaRejected ? input.holdRejectedSubmission?.(call.input, call.issuePaths ?? []) : input.heldSubmission?.();
-        if (held) {
-          resend = undefined;
-          heldFields = heldSubmissionFields(held);
-        }
+        // The call's valid parts are held. Notation is found before the schema check, so the
+        // served schema's own faults fail their fields too.
+        const served = schema()?.safeParse(call.input);
+        const schemaPaths = served && !served.success ? served.error.issues.map(issue => issue.path.join('.')) : [];
+        held = input.holdRejectedSubmission?.(call.input, [...(call.issuePaths ?? []), ...schemaPaths]);
+        if (held) resend = undefined;
       } else if (schemaRejected && call.toolName === PRESENT_RESULT_TOOL && input.holdRejectedPresentResult) {
         const repair = input.holdRejectedPresentResult(call.input, call.issuePaths ?? []);
         if (repair) resend = repair;
         else if (input.presentResultRepairDraftContext?.()) resend = undefined;
       }
       let data = resend ? withRepairHint(rejected, resend) : rejected;
-      if (heldFields && data.status === 'rejected') data = { ...data, correction: { ...data.correction, held: heldFields } };
       // Notation in a key is found before the schema check: the key is no field to send, the
       // required fields it left unsent are.
       if (call.code === REJECTION_CODES.toolCallNotation && data.status === 'rejected' && (call.issuePaths ?? []).some(path => !isServedField(schema, path.split('.')[0]))) {
         data = { ...data, correction: { ...data.correction, unsent: unsentRequiredFields(schema, call.input) } };
       }
+      // A held draft's retry sends exactly its failed fields.
+      if (held && data.status === 'rejected') data = { ...data, correction: { ...data.correction, held: heldSubmissionFields(held), unsent: held.failed } };
       data = withHeldDraftDetail(data, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome({ ...call, schema }, data, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       const rejection = outcome.rejection!;

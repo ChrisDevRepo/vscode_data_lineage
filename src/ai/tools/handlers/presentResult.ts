@@ -171,7 +171,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const repair = isVisualPreview ? null : holdRejectedPresentResult(sess.presentResultRepairDraft, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
+        const repair = holdRejectedPresentResult(sess.presentResultRepairDraft, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
         const authorization = sess.presentResultRepairDraft.getAuthorization();
         const held = sess.presentResultRepairDraft.get();
         if (held && authorization) rejection.hint = [
@@ -224,7 +224,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: presentResultRepairInstruction(fields, presentResultStage, sectionsHeld, undefined, sectionTextLeaves),
           }));
         }
-      } else if (isVisualPreview) {
+      } else {
+        presentInput = input as PresentResultInput;
+      }
+      // A preview's summary and title come from the discovery answer, a held repair's as well.
+      if (isVisualPreview) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
           ? sess.discoveryScopeArtifact
           : null;
@@ -234,9 +238,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: 'Run the discovery question again, then request its graph preview.',
           }));
         }
-        presentInput = { ...(input as PresentResultInput), summary: previewNarrative.summary, title: previewNarrative.title };
-      } else {
-        presentInput = input as PresentResultInput;
+        presentInput = { ...presentInput, summary: previewNarrative.summary, title: previewNarrative.title };
       }
 
       const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
