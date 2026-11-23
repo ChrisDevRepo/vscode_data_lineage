@@ -10,6 +10,8 @@ type StatusMessage = {
   text: string;
   /** The semantic type of the message, affecting UI styling (color, icons). */
   type: 'info' | 'success' | 'warning' | 'error';
+  /** An error the host classified as transient (the server may still be starting): one automatic retry can succeed. */
+  transient?: boolean;
 };
 
 /** The source context currently being loaded. */
@@ -234,7 +236,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       }
 
       if (msg.type === 'db-error') {
-        setStatus({ text: msg.message, type: 'error' });
+        setStatus({ text: msg.message, type: 'error', transient: msg.transient });
         setIsLoading(false);
         setLoadingContext(null);
         return;

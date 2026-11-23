@@ -1589,6 +1589,7 @@ export function App() {
         progressText={dacpacLoader.status?.type === 'info' ? dacpacLoader.status.text : null}
         stats={loadingStats}
         error={loadingError}
+        autoRetry={dacpacLoader.status?.type === 'error' && dacpacLoader.status.transient === true}
         onCancel={handleCancelVisualizing}
         onBack={handleBackFromError}
         onRetry={retryLoad}

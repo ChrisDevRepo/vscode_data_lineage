@@ -738,7 +738,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-progress'), step: z.number().optional(), total: z.number().optional(), label: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-cancelled'), loadId: z.string().optional() }),
-  z.object({ type: z.literal('db-error'), message: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-error'), message: z.string(), loadId: z.string().optional(), transient: z.boolean().optional() }),
   z.object({ type: z.literal('last-dacpac-gone'), loadId: z.string().optional() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),

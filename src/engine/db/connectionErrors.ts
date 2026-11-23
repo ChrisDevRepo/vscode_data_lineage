@@ -99,6 +99,16 @@ export function isSignInCancelled(err: unknown): boolean {
   return classify(err) === 'signInCancelled';
 }
 
+/**
+ * Whether the connect failure is transient, so one automatic retry can succeed: the server is
+ * unavailable or still starting (an `unavailable` error, or a connect that timed out or dropped).
+ * A failed login, a missing permission, an unknown host and any other error are not.
+ */
+export function isTransientConnectionError(err: unknown): boolean {
+  const kind = classify(err);
+  return kind === 'unavailable' || (kind === 'network' && STARTING_CODES.has(errorCode(err) ?? ''));
+}
+
 function classify(err: unknown): ErrorKind {
   const text = errorMessage(err);
   const number = errorNumber(err);
