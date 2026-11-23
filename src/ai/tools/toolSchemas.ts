@@ -569,7 +569,7 @@ const HopVerdictSchema = z.enum(['analyze', 'passthrough']).describe(
   + 'The focus stays.',
 );
 
-const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries.';
+const COLUMN_FLOW_DESCRIPTION = 'One entry per output column a tracked column reaches at this node: a copy and a calculation from one input are two entries, each listing only its in-scope sources and leaving out-of-scope operands unlisted; [] when none. `upstream_columns` names what each neighbor carries.';
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
