@@ -4,7 +4,7 @@ import { getSession } from './ai/session/session';
 import { registerCommands } from './commands';
 import { openPanel, getActivePanel, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { postToWebview } from './bridge/host';
-import { Logger, OUTPUT_CHANNEL_NAME } from './utils/log';
+import { Logger, OUTPUT_CHANNEL_NAME, OUTPUT_POINTER } from './utils/log';
 import { clearOnceToasts, notifyErrorOnce, notifyWarning, notifyWarningOnce } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } from './engine/projectStore';
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
@@ -58,7 +58,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     notifyWarning(
       projectLogger,
       'Project store validation',
-      `Data Lineage: ${skipped} could not be read and ${dropped + droppedViews === 1 ? 'was' : 'were'} skipped. See the ${OUTPUT_CHANNEL_NAME} output channel for details.`,
+      `Data Lineage: ${skipped} could not be read and ${dropped + droppedViews === 1 ? 'was' : 'were'} skipped — ${OUTPUT_POINTER}.`,
       { droppedProjects: dropped, droppedViews, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
     );
   };
@@ -464,7 +464,7 @@ async function loadParseRules(
   }
 
   if (!config) {
-    logger.error('parse rule load', 'code=no-config');
+    logger.error('parse rule load', { code: 'no-config' });
     return;
   }
 

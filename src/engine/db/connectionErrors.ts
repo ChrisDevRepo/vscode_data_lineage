@@ -255,7 +255,7 @@ export function reportConnectionError(
   present: (message: string, ...labels: string[]) => Thenable<string | undefined> = vscode.window.showErrorMessage,
 ): { message: string; actions: ConnectionErrorAction[]; answered: Promise<void> } {
   const { message, actions } = describeConnectionError(err, target, hooks);
-  logger.error('Database connection failed', `code=${errorCode(err) ?? '-'} number=${errorNumber(err) ?? '-'}`);
+  logger.error('Database connection failed', { code: errorCode(err) ?? '-' });
   logger.debug(`Connection error on ${target.name} — code=${errorCode(err) ?? '-'} number=${errorNumber(err) ?? '-'} raw="${redactSecrets(errorMessage(err))}"`);
   const answered = (async () => {
     const choice = await present(message, ...actions.map((a) => a.label));

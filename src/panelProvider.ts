@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { type AiSession } from './ai/session/session';
-import { Logger, OUTPUT_CHANNEL_NAME } from './utils/log';
+import { Logger, OUTPUT_POINTER } from './utils/log';
 import { notifyErrorOnce } from './utils/notifications';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
@@ -143,7 +143,7 @@ export function openPanel(
       notifyErrorOnce(
         bridgeLogger,
         `Handler '${msg.type}' threw unexpectedly`,
-        `Data Lineage: The requested action failed — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`,
+        `Data Lineage: The requested action failed — ${OUTPUT_POINTER}.`,
         err,
         { messageType: msg.type },
         host.showErrorMessage,

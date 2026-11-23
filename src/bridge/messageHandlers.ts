@@ -9,7 +9,7 @@ import {
   sanitizeForLog,
   safeStringifyForLog,
   LOG_TRUNC_JSON,
-  OUTPUT_CHANNEL_NAME,
+  OUTPUT_POINTER,
   type LogCategory,
 } from '../utils/log';
 import { isFirstToast, notifyError, notifyWarning, notifyWarningOnce } from '../utils/notifications';
@@ -621,7 +621,7 @@ export function createMessageHandlers(
       const store = loadProjectStore(context);
       const project = store.projects.find(p => p.id === msg.id);
       if (!project) {
-        host.log('error', 'Bridge', 'Load project', 'code=project-not-found');
+        host.log('error', 'Bridge', 'Load project', { code: 'project-not-found' });
         host.log('debug', 'Bridge', `Project not found: ${msg.id}`);
         host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}` });
         return;
@@ -728,7 +728,7 @@ export function createMessageHandlers(
     'dacpac-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       if (!cachedDacpac) {
-        host.log('error', 'Bridge', 'Dacpac visualize', 'code=session-expired');
+        host.log('error', 'Bridge', 'Dacpac visualize', { code: 'session-expired' });
         host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.' });
         return;
       }
@@ -748,7 +748,7 @@ export function createMessageHandlers(
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, progressToken, onConnecting) => {
         if (!lastConnectionInfo) {
-          host.log('error', 'Bridge', 'Database visualize', 'code=no-connection-info');
+          host.log('error', 'Bridge', 'Database visualize', { code: 'no-connection-info' });
           host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.' });
           return undefined;
         }
@@ -956,8 +956,8 @@ export function createMessageHandlers(
       });
 
       const userMessage = source === 'error-boundary'
-        ? `Data Lineage hit an error and is reloading the view — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`
-        : `Data Lineage encountered an unexpected error — see the "${OUTPUT_CHANNEL_NAME}" Output channel for details.`;
+        ? `Data Lineage hit an error and is reloading the view — ${OUTPUT_POINTER}.`
+        : `Data Lineage encountered an unexpected error — ${OUTPUT_POINTER}.`;
 
       host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}`, err);
       host.log('debug', 'Bridge', `Webview ${sanitizeForLog(source)} error notification="${userMessage}" context=${contextLine}`);
@@ -1348,8 +1348,7 @@ async function handleTableStatsRequestHost(
       void postToDetail(panel, { type: 'table-stats-error', objectRef, message: reported.message }, logger);
       return;
     }
-    host.log('error', 'Stats', 'Profiling failed', err instanceof Error ? err.name : typeof err);
-    host.log('debug', 'Stats', `Profiling failed — ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
+    host.log('error', 'Stats', 'Profiling failed', err);
     void postToDetail(panel, { type: 'table-stats-error', objectRef, message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
   } finally {
     if (session) {

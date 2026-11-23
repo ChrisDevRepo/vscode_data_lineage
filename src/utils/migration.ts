@@ -55,8 +55,8 @@ export async function migrateFromWorkspaceState(
     const project = createProject(name, connection);
     const rawStore = context.globalState.get(PROJECT_STORE_KEY);
     const store = migrateProjectStore(rawStore, (report) => {
-      logger.error('Legacy migration dropped records', `projects=${report.dropped} views=${report.droppedViews ?? 0}`);
-      logger.debug(`Legacy migration dropped records — fields: ${report.issuePaths.join(', ') || 'unknown'}`);
+      logger.error('Legacy migration dropped records', { code: 'dropped' });
+      logger.debug(`Legacy migration dropped records — projects=${report.dropped} views=${report.droppedViews ?? 0}; fields: ${report.issuePaths.join(', ') || 'unknown'}`);
       onProjectsDropped?.(report);
     });
     const updated = updateProject(store, project);

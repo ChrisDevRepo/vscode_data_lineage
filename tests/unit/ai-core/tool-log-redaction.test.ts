@@ -120,4 +120,12 @@ describe('Logger redaction', () => {
     expect(String(ch.debug.mock.calls[0][0])).toContain('Password=[removed]');
     expect(String(ch.debug.mock.calls[0][0])).not.toContain(SECRET);
   });
+
+  it('keeps an identifier-shaped string off the error line and shows only an explicit code detail', () => {
+    const ch = channel();
+    const log = Logger.create(ch as never, 'DB');
+    log.error('Open', 'dbo.Orders');
+    log.error('Load', { code: 'no-config' });
+    expect(ch.error.mock.calls.map(([l]) => String(l))).toEqual(['[DB] FAILED: Open — NonError', '[DB] FAILED: Load — code=no-config']);
+  });
 });

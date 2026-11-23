@@ -8,6 +8,9 @@ import { redactSecrets } from './redact';
 /** Name of the extension's output channel, as users see it in the Output view. */
 export const OUTPUT_CHANNEL_NAME = 'Data Lineage Viz';
 
+/** Where user-visible error text sends the reader for details; follows a dash or open parenthesis. */
+export const OUTPUT_POINTER = `see the "${OUTPUT_CHANNEL_NAME}" Output channel for details`;
+
 /** Categories that tag extension log entries. */
 export type LogCategory =
   | 'DB'
@@ -178,26 +181,21 @@ function identifierOrUndefined(value: unknown): string | undefined {
   return typeof text === 'string' && /^[A-Za-z0-9_$.-]{1,64}$/.test(text) ? text : undefined;
 }
 
-/** A caller-composed enumerated detail such as `code=ECONNRESET number=-`, or a bare token. */
-const ENUMERATED_DETAIL = /^(?:[\w.$-]+|[\w.$-]+=[\w.$-]+(?: [\w.$-]+=[\w.$-]+)*)$/;
-
 /**
  * Logs a critical failure or unhandled exception. The **error** line names the operation, the error
  * class and the code only (`FAILED: op — Class code=X`), so an internal error never shows its
  * text or location there; the message, the stack and the `diagnostic` issue paths go to one debug
- * line. A string `err` that is an enumerated detail (`code=… number=…`) stays on the error line;
- * any other string is prose and goes to debug.
+ * line. A plain `{ code }` object is a caller-composed detail: only `code=X` is logged. Any string
+ * is prose and goes to debug.
  */
 function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
   const operation = normalizeCategorizedLogMessage(cat, op);
-  const enumerated = typeof err === 'string' && err.length <= 200 && ENUMERATED_DETAIL.test(err);
   const code = identifierOrUndefined((err as { code?: unknown } | null | undefined)?.code);
-  const tail = enumerated
-    ? normalizeLogMessage(err)
-    : [err instanceof Error ? identifierOrUndefined(err.name) ?? 'Error' : err === undefined ? '' : 'NonError', code ? `code=${code}` : '']
-      .filter(Boolean).join(' ');
+  const detail = code !== undefined && typeof err === 'object' && !(err instanceof Error);
+  const tail = [err instanceof Error ? identifierOrUndefined(err.name) ?? 'Error' : err === undefined || detail ? '' : 'NonError', code ? `code=${code}` : '']
+    .filter(Boolean).join(' ');
   ch.error(`[${cat}] FAILED: ${operation}${tail ? ` — ${tail}` : ''}`);
-  if (enumerated || err === undefined) return;
+  if (detail || err === undefined) return;
 
   const diagnostic = (err as { diagnostic?: unknown } | null)?.diagnostic;
   const parts = [
