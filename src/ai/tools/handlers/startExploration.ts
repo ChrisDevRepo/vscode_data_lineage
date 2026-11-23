@@ -90,7 +90,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
             detail: { limit: supplementRefusal.limit, nodes: supplementScope.nodes, rounds: supplementScope.rounds, columns: supplementScope.columns },
           }), loggedInput);
         }
-        const res = priorEngine.supplementAgenda(supplementIds, data.supplement.chain);
+        const res = priorEngine.supplementAgenda(supplementIds, [], data.supplement.chain);
         if ('code' in res) return s.logAndReturn('lineage_start_exploration', res, loggedInput);
         if (res.skippedDetails.length > 0) {
           s.logger.debug(`[${sess.id}] supplement skippedIds=[${sanitizeForLog(res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(','))}]`);

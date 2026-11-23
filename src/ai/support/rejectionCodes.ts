@@ -160,6 +160,8 @@ export const REJECTION_CODES = {
   notConnectedToTrace: 'not_connected_to_trace',
   /** A second call to a once-per-reply tool in one provider reply; only the first is evaluated. */
   extraCallNotEvaluated: 'extra_call_not_evaluated',
+  /** A `supplement` lead id names no unresolved pending lead of the completed exploration. */
+  invalidPendingLead: 'invalid_pending_lead',
   /**
    * `lineage_present_result` ran with no presentation source: no loaded scope and no completed
    * exploration (`handlers/presentResult.ts`).

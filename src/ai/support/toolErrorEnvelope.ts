@@ -31,6 +31,7 @@ type SchemaIssueCode = 'type' | 'json_text' | 'unknown_key' | 'never' | 'missing
 const BACKEND_FAULT = {
   category: 'stage',
   label: 'extension fault',
+  correction: 'The run ends; the extension reports the fault to the user.',
 } as const;
 
 /**
@@ -104,63 +105,78 @@ export const ISSUES = {
   [REJECTION_CODES.offPolicy]: {
     category: 'stage',
     label: 'tool not offered in this step',
+    correction: 'Call a tool this step offers.',
   },
   [REJECTION_CODES.alreadyStarted]: {
     category: 'protocol',
     label: 'an exploration is already running',
+    correction: 'Continue the running exploration with lineage_submit_findings.',
   },
   [REJECTION_CODES.duplicateCallId]: {
     category: 'protocol',
     label: 'call id already used in this reply',
+    correction: DUPLICATE_CALL_ID_REPAIR_HINT,
   },
   [REJECTION_CODES.emptyGeneration]: {
     category: 'stage',
     label: 'reply carried no text and no call',
+    correction: 'Answer the user in text, or call a tool for more evidence.',
   },
   [REJECTION_CODES.duplicateRead]: {
     category: 'protocol',
     label: 'read already answered in this step',
+    correction: 'Answer from the result already in the conversation, or call a different read.',
   },
   [REJECTION_CODES.noRunMemory]: {
     category: 'stage',
     label: 'no stored run for the applied view',
+    correction: 'Answer from what the applied view shows.',
   },
   [REJECTION_CODES.staleTurn]: BACKEND_FAULT,
   [REJECTION_CODES.invalidInput]: {
     category: 'value',
     label: 'breaks the input contract of this tool',
+    correction: 'Correct this field as its schema describes.',
   },
   [REJECTION_CODES.notFound]: {
     category: 'reference',
     label: 'not an object in the loaded model',
+    correction: 'Name an object of the loaded model by its id.',
   },
   [REJECTION_CODES.supplementRequiresCompleteEngine]: {
     category: 'stage',
     label: 'no completed exploration to supplement',
+    correction: "Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
   },
   [REJECTION_CODES.supplementEmpty]: {
     category: 'value',
     label: 'supplement names no object',
+    correction: 'Answer from what the completed exploration holds.',
   },
   [REJECTION_CODES.supplementAllRefused]: {
     category: 'reference',
     label: 'every supplement id was refused',
+    correction: 'Propose a new exploration with lineage_start_exploration for an object the trace does not reach.',
   },
   [REJECTION_CODES.invalidRegex]: {
     category: 'value',
     label: 'pattern does not compile within the length and time limits',
+    correction: 'Send a simpler pattern that compiles, or a plain name fragment.',
   },
   [REJECTION_CODES.overDiscoveryBudget]: {
     category: 'stage',
     label: 'scope exceeds the discovery budget',
+    correction: 'Propose an exploration with lineage_start_exploration; it reads the scope hop by hop.',
   },
   [REJECTION_CODES.overActiveScopeBudget]: {
     category: 'stage',
     label: 'scope over the configured round or column limit',
+    correction: 'Propose a narrower scope: fewer levels or fewer columns.',
   },
   [REJECTION_CODES.actionRequired]: {
     category: 'stage',
     label: 'waiting for the user decision on the card',
+    correction: 'Wait for the user decision; the card holds the proposal.',
   },
   [REJECTION_CODES.missingField]: {
     category: 'required',
@@ -175,18 +191,22 @@ export const ISSUES = {
   [REJECTION_CODES.noActiveSession]: {
     category: 'stage',
     label: 'no exploration is running',
+    correction: 'Start an exploration with lineage_start_exploration, or answer from what the conversation holds.',
   },
   [REJECTION_CODES.noProjectLoaded]: {
     category: 'stage',
     label: 'no project is loaded in the Data Lineage panel',
+    correction: NO_PROJECT_LOADED_MESSAGE,
   },
   [REJECTION_CODES.staleProposalRevision]: {
     category: 'protocol',
     label: 'not the revision the approval card shows',
+    correction: 'proposalRevision is valid only while refining the matching pending approval gate.',
   },
   [REJECTION_CODES.routeValidationFailed]: {
     category: 'reference',
     label: 'reference not valid for this hop',
+    correction: 'Correct the listed references; the other fields of the call stay held.',
   },
   [REJECTION_CODES.outColNotOnNode]: {
     category: 'reference',
@@ -226,10 +246,12 @@ export const ISSUES = {
   [REJECTION_CODES.emptyStructuredOutput]: {
     category: 'stage',
     label: 'required call arrived with empty arguments',
+    correction: 'Call the required tool now, with its content as arguments.',
   },
   [REJECTION_CODES.missingRequiredToolCall]: {
     category: 'stage',
     label: 'reply carried no call of the required tool',
+    correction: 'Call the required tool now, with its content as arguments.',
   },
   [REJECTION_CODES.toolExecutionError]: BACKEND_FAULT,
   [REJECTION_CODES.internalError]: BACKEND_FAULT,
@@ -237,91 +259,118 @@ export const ISSUES = {
   [REJECTION_CODES.validation]: {
     category: 'value',
     label: 'breaks the rule of this field',
+    correction: 'Send a value that meets the rule stated above.',
   },
   [REJECTION_CODES.invalidStatus]: BACKEND_FAULT,
   [REJECTION_CODES.explorationComplete]: {
     category: 'stage',
     label: 'exploration complete',
+    correction: 'Call lineage_present_result to assemble the report.',
   },
   [REJECTION_CODES.focusNodeIdMismatch]: {
     category: 'reference',
     label: 'not the current object',
+    correction: 'Use the id of the current object.',
   },
   [REJECTION_CODES.invalidToolInput]: {
     category: 'shape',
     label: 'call does not match the tool schema',
+    correction: 'Correct this field to match the tool schema.',
   },
   [REJECTION_CODES.toolCallNotation]: {
     category: 'shape',
     label: 'value carries tool-call notation',
+    correction: 'Send each field as its own argument, without the notation.',
   },
   [REJECTION_CODES.unknownTool]: {
     category: 'stage',
     label: 'not a tool of this step',
+    correction: UNKNOWN_TOOL_REPAIR_HINT,
   },
   [REJECTION_CODES.invalidStructuredOutput]: {
     category: 'shape',
     label: 'required call missing, repeated or schema-invalid',
+    correction: 'Send one call of the required tool that matches its schema.',
   },
   [REJECTION_CODES.notConnectedToTrace]: {
     category: 'reference',
     label: 'no dependency path to the traced graph',
+    correction: 'Propose a new exploration with lineage_start_exploration for an object the trace does not reach.',
   },
   [REJECTION_CODES.extraCallNotEvaluated]: {
     category: 'protocol',
     label: 'not evaluated: one commit call per reply',
+    correction: 'Send one commit call per reply that carries all its content.',
+  },
+  [REJECTION_CODES.invalidPendingLead]: {
+    category: 'reference',
+    label: 'not an unresolved pending lead',
+    correction: 'Use an unresolved pending lead id from the completed exploration, or provide explicit supplement nodeIds.',
   },
   [REJECTION_CODES.missingResultGraph]: {
     category: 'stage',
     label: 'no preview scope or completed exploration to present',
+    correction: 'Load one bounded scope for a visual preview or complete the active exploration first.',
   },
   [REJECTION_CODES.noOpRefine]: {
     category: 'protocol',
     label: 'refinement changes nothing in the proposal',
+    correction: 'Apply the requested change to scope, mode, classification, columns or filter, or answer the user in text when the plan needs no change.',
   },
   [REJECTION_CODES.originNotFound]: {
     category: 'reference',
     label: 'not an object in the loaded model',
+    correction: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns.',
   },
   [REJECTION_CODES.outOfScopeOrNotNeighbor]: {
     category: 'reference',
     label: 'not a neighbor of the current object in scope',
+    correction: 'Send only ids listed as neighbors of the current object.',
   },
   [REJECTION_CODES.parallelCallForbidden]: {
     category: 'protocol',
     label: 'lineage_start_exploration already called in this reply',
+    correction: 'Send lineage_submit_findings for the current object; each accepted finding serves the next queued object.',
   },
   [REJECTION_CODES.phaseClosed]: {
     category: 'protocol',
     label: 'not executed: an earlier call of this reply closed the step',
+    correction: 'Do not retry it.',
   },
   [REJECTION_CODES.previewSourceUnavailable]: {
     category: 'stage',
     label: 'no discovery behind the preview',
+    correction: 'Run the discovery question again, then request its graph preview.',
   },
   [REJECTION_CODES.queryNotAName]: {
     category: 'value',
     label: 'punctuation only, which matches no name',
+    correction: 'Send part of a name, or set mode to regex for a pattern.',
   },
   [REJECTION_CODES.queryTooShort]: {
     category: 'value',
     label: 'query too short to match a name',
+    correction: 'Send a fragment of an object or column name.',
   },
   [REJECTION_CODES.resultTooLarge]: {
     category: 'stage',
     label: 'result larger than this step holds',
+    correction: 'Send a narrower request: fewer ids, a filter or fewer types.',
   },
   [REJECTION_CODES.unknownColumns]: {
     category: 'reference',
     label: 'not a declared column of the origin',
+    correction: 'Name a column declared on that object.',
   },
   [REJECTION_CODES.unknownNodeIds]: {
     category: 'reference',
     label: 'not an object in the loaded model',
+    correction: 'Name an object of the loaded model by its id.',
   },
   [REJECTION_CODES.asymmetricDepthBothZero]: {
     category: 'value',
     label: 'both depth sides are 0',
+    correction: 'Set at least one depth side above 0.',
   },
 } as const satisfies Record<RegistryCode | SchemaIssueCode, IssueText>;
 

@@ -1,5 +1,5 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
-import { buildRouteValidationRejection, type FatalRoute, isAbsentKind, isFatalRoute, ROUTE_REJECTION_CODE } from './smRouteValidation';
+import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
 import { heldSubmissionFields, hopColumnFlowSchema, hopQuestionSchema, PruneNeighborSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
@@ -202,7 +202,7 @@ export interface IHopStateMachine {
    * @returns Counts agendaed, contracted and skipped, plus `skippedDetails` naming each dropped id
    *   and why.
    */
-  supplementAgenda(nodeIds: string[], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection;
+  supplementAgenda(nodeIds: string[], leadIds?: string[], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection;
 }
 
 /**
@@ -809,7 +809,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** Builds a route rejection whose `issuePaths` invalidate both sides of any prune conflict. */
-  public routeRejection(routes: FatalRoute[]): ToolRejection {
+  public routeRejection(routes: InvalidRoute[]): ToolRejection {
     const rejection = buildRouteValidationRejection(routes);
     // Neither action in a prune conflict (question or column_flow) is valid held content.
     const conflictFields = routes.flatMap(route =>
@@ -828,7 +828,7 @@ export class NavigationEngine implements IHopStateMachine {
    * current focus (resolving omitted held fields on a retry, an omitted focus_node_id to the current
    * focus as {@link holdRejectedSubmission} does); a mismatched focus leaves routes unchecked.
    */
-  public submissionRouteFaults(input: unknown): FatalRoute[] {
+  public submissionRouteFaults(input: unknown): InvalidRoute[] {
     if (!isPlainRecord(input) || !this.currentFocusNodeId || !this.nodeMap.has(this.currentFocusNodeId)) return [];
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
     const rawFocus = input.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
@@ -856,7 +856,7 @@ export class NavigationEngine implements IHopStateMachine {
     const questions = (passing(effective('questions'), hopQuestionSchema(this.currentAnalysisMode, hop)) ?? []).map(({ index, value }) => ({ ...value, index }));
     return this.validateHopRoutes(focusId, columnFlowEntries, rawFlow, pruneNeighbors, questions)
       .invalidRoutes
-      .filter(isFatalRoute);
+      .filter(route => !isAbsentKind(route.kind));
   }
 
   /**
@@ -2599,32 +2599,48 @@ export class NavigationEngine implements IHopStateMachine {
    * moves to `awaiting_findings` only when at least one id was agendaed, so an all-refused call
    * leaves `complete` and a fresh {@link NavigationInitParams} proposal is not blocked.
    *
+   * @param leadIds - Host-selected pending leads; never taken from a model tool payload.
    * @returns Counts for agendaed, contracted and skipped ids, plus per-node `skippedDetails`
    *   (`excluded` | `out_of_allowlist` | `unresolved` | `not_connected_to_trace`, the last two with
    *   a `hint`), or a structured error. A partial admit is always `{ ok: true, ... }`; every skip
    *   is named.
    */
-  public supplementAgenda(nodeIds: string[], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection {
+  public supplementAgenda(nodeIds: string[], leadIds: string[] = [], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection {
     if (this._status !== 'complete') {
       return makeRejection({
         code: REJECTION_CODES.supplementRequiresCompleteEngine,
         hint: `supplementAgenda is only valid after the prior exploration has completed (status === 'complete'). Current status: ${this._status}.`,
       });
     }
-    if (!Array.isArray(nodeIds) || nodeIds.length === 0) {
+    if ((!Array.isArray(nodeIds) || nodeIds.length === 0) && (!Array.isArray(leadIds) || leadIds.length === 0)) {
       return makeRejection({
         code: REJECTION_CODES.supplementEmpty,
         hint: 'supplement requires at least one node id in supplement.nodeIds — pending leads are host-selected and cannot be supplied here. Name the ids from the completed exploration you want extended; if no node is left to extend, do not resend an empty supplement — answer from the completed exploration, or start a fresh exploration by providing an origin instead of supplement.',
       });
     }
 
-    if (chain) nodeIds = this.expandSupplementChain(nodeIds, chain);
-    const requested = nodeIds.flatMap(nodeId => {
-      const id = resolveModelNodeId(nodeId, this.nodeMap, this.model.identifierCaseSensitive);
-      const contexts = this.taskLedger.investigationTasks.filter(task => task.nodeId === id && task.callerContext);
-      return contexts.length ? contexts.map(task => ({ nodeId, question: task.question, taskId: task.id as string | undefined }))
-        : [{ nodeId, question: '', taskId: undefined as string | undefined }];
+    const leadEntries = leadIds.map(leadId => {
+      const lead = this.taskLedger.pendingLeads.find(item => item.id === leadId && item.status === 'pending');
+      const task = lead ? this.taskLedger.getTask(lead.taskId) : undefined;
+      return lead && task ? { lead, task } : null;
     });
+    if (leadEntries.some(entry => !entry)) {
+      return makeRejection({
+        code: REJECTION_CODES.invalidPendingLead,
+        hint: 'Use an unresolved pending lead id from the completed exploration, or provide explicit supplement nodeIds.',
+      });
+    }
+
+    if (chain) nodeIds = this.expandSupplementChain(nodeIds, chain);
+    const requested = [
+      ...nodeIds.flatMap(nodeId => {
+        const id = resolveModelNodeId(nodeId, this.nodeMap, this.model.identifierCaseSensitive);
+        const contexts = this.taskLedger.investigationTasks.filter(task => task.nodeId === id && task.callerContext);
+        return contexts.length ? contexts.map(task => ({ nodeId, question: task.question, taskId: task.id as string | undefined, leadId: undefined as string | undefined }))
+          : [{ nodeId, question: '', taskId: undefined as string | undefined, leadId: undefined as string | undefined }];
+      }),
+      ...leadEntries.map(entry => ({ nodeId: entry!.lead.nodeId, question: entry!.task.question, taskId: entry!.task.id, leadId: entry!.lead.id })),
+    ];
 
     const admission = this.admitSupplementTargets(requested.map(request => request.nodeId));
     const unconnectedIds = new Set(admission.skipped.map(skip => this.identifierKey(skip.nodeId)));
@@ -2708,6 +2724,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (wasVisited) this.visited.delete(id);
       const existingDepth = this.depthFromOrigin.get(id);
       const depth = typeof existingDepth === 'number' ? existingDepth : 0;
+      if (request.leadId) this.taskLedger.scheduleLead(request.leadId);
       this.scheduleLeadsOf(id);
       this.enqueueHop(id, request.question, depth, 3, {
         carry: request.carry,
@@ -3264,7 +3281,7 @@ export class NavigationEngine implements IHopStateMachine {
         }
       }
 
-      const fatalRoutes = invalidRoutes.filter(isFatalRoute);
+      const fatalRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
       if (fatalRoutes.length > 0) {
         const routeRejection = this.routeRejection(fatalRoutes);
         this.lastRoutedRejected = fatalRoutes.length;
