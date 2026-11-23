@@ -709,7 +709,8 @@ export function buildCurrentTaskBlock(
  * message is the only channel carrying the rejection ring, which lets it self-correct from prior
  * rejected hops.
  *
- * @param recentRejections - The engine's recent-rejection ring (max 5); empty renders no block.
+ * @param recentRejections - The engine's recent-rejection ring (max 5); empty renders no block. A
+ *   line leads with the node id only when its reason does not already name it.
  */
 export function buildMemoryBlock(
   stm: Array<{ nodeId: string; summary: string }>,
@@ -726,7 +727,7 @@ export function buildMemoryBlock(
   if (recentRejections.length > 0) {
     blocks.push(
       '<recent_rejections>',
-      ...recentRejections.map(r => `- ${r.nodeId} (hop ${r.atHop}): ${r.reason}`),
+      ...recentRejections.map(r => `- ${r.reason.includes(`\`${r.nodeId}\``) ? '' : `${r.nodeId} `}(hop ${r.atHop}): ${r.reason}`),
       '</recent_rejections>',
     );
   }

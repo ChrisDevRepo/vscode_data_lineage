@@ -20,10 +20,9 @@ import { connectedComponents } from 'graphology-components';
 
 /**
  * Input field a validation error is attributed to, declared structurally at each `addError`
- * site so the repair hint can never desync from a reworded error message. `nodes` covers the
- * empty-result-graph class, which has no single patchable input field.
+ * site so the repair hint can never desync from a reworded error message.
  */
-type PresentResultFailedField = 'name' | 'summary' | 'title' | 'intro' | 'closing' | 'sections' | 'notes' | 'highlight_groups' | 'nodes';
+type PresentResultFailedField = 'name' | 'summary' | 'title' | 'intro' | 'closing' | 'sections' | 'notes' | 'highlight_groups';
 
 /**
  * Stage `lineage_present_result` is called from, as classified by the caller. Drives stage-aware
@@ -1085,8 +1084,10 @@ export function validatePresentResult(
     }
   }
 
+  // A state fault: no field of this call fixes an empty view, so it names none and is not repairable.
   if (resolvedNodeIds.length === 0) {
-    addError('nodes', 'No nodes in view — the result graph is empty or all nodes were pruned');
+    errors.push('No nodes in view — the result graph is empty');
+    allRepairable = false;
   }
 
   const sectionLinkedNodeIds = new Set<string>();
@@ -1183,11 +1184,12 @@ export function validatePresentResult(
   if (errors.length > 0) {
     const resendList = [...repairFields];
     const repairInstructed = allRepairable && resendList.length > 0;
+    const fieldFault = failedFields.size > 0;
     const hint = [
-      repairInstructed ? undefined : `Fix ${[...failedFields].join(', ')}.`,
+      repairInstructed || !fieldFault ? undefined : `Fix ${[...failedFields].join(', ')}.`,
       nodeIdHintNeeded ? presentNodeIdHint(stage) : undefined,
-      repairInstructed ? presentResultRepairInstruction(resendList, stage) : INVALID_TOOL_INPUT_REPAIR_HINT,
-    ].filter(Boolean).join(' ');
+      repairInstructed ? presentResultRepairInstruction(resendList, stage) : fieldFault ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined,
+    ].filter(Boolean).join(' ') || undefined;
     const unlinkable = [...pathUnlinkableIds].map(([path, ids], index) => ({
       path,
       unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })),

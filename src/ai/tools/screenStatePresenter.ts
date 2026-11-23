@@ -431,9 +431,9 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
   if (!run) {
     return rejectionWithEstimate(makeRejection({
       code: REJECTION_CODES.noRunMemory,
-      hint: input.hasPendingProposal
-        ? 'No AI run is stored yet — the held proposal is still awaiting approval or refinement. Reference the proposal already in this turn, or wait for it to be approved before recalling a run.'
-        : 'No AI run is stored for the applied view. Apply an AI bookmark saved after a run, or start a new exploration.',
+      reason: input.hasPendingProposal
+        ? 'No AI run is stored yet — the held proposal is still awaiting approval or refinement.'
+        : 'No AI run is stored for the applied view.',
     }));
   }
   const head = { run_id: run.runId, saved_at: run.savedAt, ...presentAnalyzedSet(run) };
