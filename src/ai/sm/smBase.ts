@@ -877,12 +877,13 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Fatal column, prune and question route faults of a schema-rejected submission against the
-   * current focus (resolving omitted held fields on a retry); focus faults leave routes unchecked.
+   * current focus (resolving omitted held fields on a retry, an omitted focus_node_id to the current
+   * focus as {@link holdRejectedSubmission} does); a mismatched focus leaves routes unchecked.
    */
   public submissionRouteFaults(input: unknown, schemaIssuePaths: readonly string[] = []): InvalidRoute[] {
     if (!isPlainRecord(input) || !this.currentFocusNodeId || !this.nodeMap.has(this.currentFocusNodeId)) return [];
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
-    const rawFocus = input.focus_node_id ?? current?.focus_node_id;
+    const rawFocus = input.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
     if (typeof rawFocus !== 'string') return [];
     const focusId = resolveModelNodeId(rawFocus, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(rawFocus);
     if (focusId !== this.currentFocusNodeId) return [];
@@ -991,15 +992,17 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @param failedPaths - Dotted Zod issue paths of the rejection.
    * @returns What a retry gets restored (held section angles, whether a summary is held, other held
-   *   field names minus those this call failed), or `null` when nothing is held. A call that is not
-   *   a kept verdict of the current focus holds nothing new and reports the existing draft.
+   *   field names minus those this call failed, the failed fields), or `null` when nothing is held.
+   *   A call that is not a kept verdict of the current focus holds nothing new and reports the
+   *   existing draft.
    */
   public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): HeldSubmissionParts | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
     const raw = input as Record<string, unknown>;
-    // A retry omits focus_node_id and verdict like any other held field.
+    // A retry omits focus_node_id and verdict like any other held field; a call that omits
+    // focus_node_id with no draft held is held under the current focus.
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
-    const focusId = raw.focus_node_id ?? current?.focus_node_id;
+    const focusId = raw.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
     const verdict = raw.verdict ?? current?.verdict;
     if ((verdict !== 'analyze' && verdict !== 'passthrough') || typeof focusId !== 'string') return this.heldPartsOfCurrentFocus();
     const focus = resolveModelNodeId(focusId, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(focusId);
@@ -1031,7 +1034,8 @@ export class NavigationEngine implements IHopStateMachine {
     const restored = HELD_CARRIED_FIELDS.filter(field => draft[field] !== undefined && !failed.has(field));
     if (draft.sections.length === 0 && !draft.summary.trim() && restored.length === 0) return null;
     this.holdFinding(draft, [...failed]);
-    return { sections: draft.sections.map(section => section.angle), summary: draft.summary.trim().length > 0, fields: restored };
+    return { sections: draft.sections.map(section => section.angle), summary: draft.summary.trim().length > 0, fields: restored,
+      failed: this.heldFindingDraft.getAuthorization()?.failed ?? [] };
   }
 
   /**
@@ -1110,6 +1114,7 @@ export class NavigationEngine implements IHopStateMachine {
       sections: held.sections.map(section => section.angle),
       summary: held.summary.trim().length > 0,
       fields: HELD_CARRIED_FIELDS.filter(field => held[field] !== undefined && !failed.includes(field)),
+      failed,
     };
   }
 
