@@ -65,12 +65,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         const canonicalQuestion = resolveCanonicalQuestion({
           lastDiscoveryQuestion: sess.lastDiscoveryQuestion,
           currentTurnPrompt: sess.currentTurnPrompt,
-          modelQuestion: data.question,
           pendingInitQuestion: undefined,
         });
-        if (data.question && data.question !== canonicalQuestion) {
-          s.logger.debug('[AI] [StartExploration] model question discarded — a higher-priority question source is in force (supplement)');
-        }
         if (canonicalQuestion) sess.memory.setUserQuestion(canonicalQuestion);
       };
 
@@ -188,12 +184,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const canonicalRefineQuestion = resolveCanonicalQuestion({
         lastDiscoveryQuestion: sess.lastDiscoveryQuestion,
         currentTurnPrompt: sess.currentTurnPrompt,
-        modelQuestion: data.question,
         pendingInitQuestion: isRefining ? pendingInit?.question : undefined,
       });
-      if (data.question && data.question !== canonicalRefineQuestion) {
-        s.logger.debug('[AI] [StartExploration] model question discarded — a higher-priority question source is in force (refine)');
-      }
       const refineQuestion = canonicalRefineQuestion ?? DEFAULT_EXPLORATION_QUESTION;
       const refineAnalysisMode = data.analysisMode ?? pendingInit?.analysisMode;
       const bbTargetConflict = refineAnalysisMode === 'bb'

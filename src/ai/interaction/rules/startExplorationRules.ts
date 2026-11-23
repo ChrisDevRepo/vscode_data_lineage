@@ -4,11 +4,10 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { ISSUES, makeRejection } from '../../support/toolErrorEnvelope';
 
 /**
- * Resolves the canonical user question for an exploration. User-authored text always wins over the
- * model's paraphrase (otherwise the stored question is often the model's restatement or the literal
- * placeholder default, which anchors every hop and synthesis to the wrong text): the retained
- * verbatim discovery prompt covers approve-gate and follow-up flows, the current turn's verbatim
- * prompt covers direct free-text entry, and only then the model-supplied `question`.
+ * Resolves the canonical user question for an exploration from user-authored text only, never the
+ * model's paraphrase (which anchors every hop and synthesis to the wrong text): the retained
+ * verbatim discovery prompt covers approve-gate and follow-up flows, and the current turn's verbatim
+ * prompt covers direct free-text entry.
  * `pendingInitQuestion` outranks the turn's prompt because callers supply it only while refining a
  * held proposal, where the prompt is the scope change ("skip DimCalendar") and it is the last
  * surviving copy of the question once the sliding-memory wipe removes the original chat turn.
@@ -19,7 +18,6 @@ import { ISSUES, makeRejection } from '../../support/toolErrorEnvelope';
 export function resolveCanonicalQuestion(sources: {
   lastDiscoveryQuestion: string | null;
   currentTurnPrompt: string | null;
-  modelQuestion: string | undefined;
   pendingInitQuestion: string | undefined;
 }): string | null {
   const pick = (v: string | null | undefined): string | null =>
@@ -28,8 +26,7 @@ export function resolveCanonicalQuestion(sources: {
       : null;
   return pick(sources.lastDiscoveryQuestion)
     ?? pick(sources.pendingInitQuestion)
-    ?? pick(sources.currentTurnPrompt)
-    ?? pick(sources.modelQuestion);
+    ?? pick(sources.currentTurnPrompt);
 }
 
 /** Rejects named columns inherited into a BB refine without mutating state; `null` if none. */
