@@ -363,74 +363,38 @@ function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = f
 
 
 /**
- * One captured artifact in a detail slot: a `$$ … $$` block, a fenced block, or an inline
- * backticked span. Matched left to right, so a nested delimiter is part of the outer artifact,
- * never a second entry. Group order is render order: math, fence, inline.
+ * One captured artifact in a detail slot: a `$$ … $$` block (group 1), a fenced block, or an inline
+ * backticked span. Matched left to right, so a `$$` inside a fence or span is part of that
+ * artifact, never a formula.
  */
-const CAPTURED_ARTIFACT = /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?([\s\S]*?)```|`([^`\n]+)`/g;
-
-/** An identifier directly followed by `(`: the lexical mark of a call, hence a computed value. */
-const CALL_TOKEN = /\w\(/;
-
-/** A whole DML/DDL statement: it performs an action, whatever it calls along the way. */
-const STATEMENT_START = /^(?:insert|update|delete|merge|truncate|exec|execute|create|alter|drop|declare|select|with|if|begin|end)\b/i;
-
-/** The opening word of a filter condition; it decides which rows survive wherever it is nested. */
-const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
+const CAPTURED_ARTIFACT = /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?[\s\S]*?```|`[^`\n]+`/g;
 
 
 /**
- * Enumerates the value computations and filter conditions the hops captured (`$$ … $$` blocks plus
- * the SQL that computes a value or filters rows), each keyed by the node whose detail slot holds
- * it: one `- <node>` line, then one line per formula.
+ * Enumerates the `$$ … $$` formulas the hops captured, each keyed by the node whose detail slot
+ * holds it: one `- <node>` line, then one line per formula.
  *
- * Formulas and predicates otherwise reach the model only inside slot prose it must re-scan. Only
- * delimited artifacts are read; a formula left in plain prose is not enumerated. A fenced line or
- * inline span qualifies when it carries a {@link CALL_TOKEN} or opens with a
- * {@link PREDICATE_START} keyword and is not a whole {@link STATEMENT_START} statement; a fenced
- * block is read line by line since one body mixes both classes. Output is capture-ordered and
- * de-duplicated per node (byte-stable); which blocks belong in the answer stays the model's
- * judgement.
+ * Captured SQL is not listed: the slot fences already serve it, each with its citation id. Output is
+ * capture-ordered and de-duplicated per node (byte-stable).
  *
  * @returns A markdown checklist, or an empty string when no hop captured a formula.
  */
 function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = false): string {
-  const seen = new Set<string>();
   const byNode = new Map<string, string[]>();
-  const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(' ');
-  const isEnumerable = (artifact: string): boolean =>
-    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
   for (const slot of result.detail_slots) {
     const nodeId = schemaKey(slot.nodeId, identifierCaseSensitive);
-    const push = (formula: string, rendered: string): void => {
-      const key = `${nodeId}\u0000${formula}`;
-      if (formula.length === 0 || seen.has(key)) return;
-      seen.add(key);
-      byNode.set(nodeId, [...(byNode.get(nodeId) ?? []), rendered]);
-    };
     for (const section of slot.sections) {
-      for (const match of section.text.matchAll(CAPTURED_ARTIFACT)) {
-        const [, math, fenced, inline] = match;
-        if (math !== undefined) {
-          const formula = collapse(math);
-          push(formula, `$$ ${formula} $$`);
-          continue;
-        }
-        if (fenced !== undefined) {
-          for (const line of fenced.split('\n')) {
-            const formula = collapse(line);
-            if (isEnumerable(formula)) push(formula, `\`\`\` ${formula} \`\`\``);
-          }
-          continue;
-        }
-        const formula = collapse(inline);
-        if (isEnumerable(formula)) push(formula, `\`${formula}\``);
+      for (const [, math] of section.text.matchAll(CAPTURED_ARTIFACT)) {
+        const formula = (math ?? '').split(/\s+/).filter(Boolean).join(' ');
+        const formulas = byNode.get(nodeId) ?? [];
+        if (formula === '' || formulas.includes(`$$ ${formula} $$`)) continue;
+        byNode.set(nodeId, [...formulas, `$$ ${formula} $$`]);
       }
     }
   }
   if (byNode.size === 0) return '';
   return [
-    'Captured formulas and predicates (hop evidence) — each reappears in the text of the section that links its node:',
+    'Captured formulas (hop evidence) — each reappears in the text of the section that links its node:',
     ...[...byNode].flatMap(([nodeId, formulas]) => [`- ${nodeId}`, ...formulas.map(formula => `  ${formula}`)]),
   ].join('\n');
 }
