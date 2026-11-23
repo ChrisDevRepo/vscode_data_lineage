@@ -97,8 +97,6 @@ function readColumnFlowEntry(raw: unknown): ColumnFlowEntry | null {
  * into the current focus is already visited and cannot be pruned there.
  */
 export interface HopNeighborDisclosure extends HopNeighbor {
-  /** The non-bodied carrier already contracted into this focus, under the visit-once rule. */
-  prune_protected?: boolean;
   /** Already analyzed on an earlier hop; a prune cannot remove committed analysis. */
   already_visited?: boolean;
   /** Already pruned on an earlier hop; a removed node stays removed. */
@@ -2919,11 +2917,6 @@ export class NavigationEngine implements IHopStateMachine {
       node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl', this.identifierCaseSensitive,
     );
 
-    if (this.depthBudget !== null) {
-      const d = this.depthFromOrigin.get(entry.nodeId);
-      if (d !== undefined) focusNode.depth_from_origin = d;
-    }
-
     const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
     const navPath = path ? (path).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
 
@@ -2958,10 +2951,7 @@ export class NavigationEngine implements IHopStateMachine {
     this._lastCurrentTask = this.currentFocusQuestion ?? '';
     this._status = 'awaiting_findings';
     return {
-      sm_status: 'awaiting_findings' as const,
       hop: this.hopCount,
-      analysis_mode: this.currentHopAnalysisMode,
-      agenda_remaining: this._agenda.length,
       focus_node: focusNode,
       ...this.scalarReturnContext(),
       neighbors: this.buildNeighborList(entry.nodeId),
@@ -2981,7 +2971,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.log('debug', `[Invariant] dispatch refused node=${nodeId} field=${field}`);
     this._status = 'error';
     this._errorReason = reason;
-    return { done: false, sm_status: 'error' };
+    return { done: false };
   }
 
   /** Open directional neighbours of `focusId` with their route-admission result. */
@@ -3032,15 +3022,8 @@ export class NavigationEngine implements IHopStateMachine {
     const focusNode = buildHopFocusNode(
       node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl', this.identifierCaseSensitive,
     );
-    if (this.depthBudget !== null) {
-      const d = this.depthFromOrigin.get(focusId);
-      if (d !== undefined) focusNode.depth_from_origin = d;
-    }
     return {
-      sm_status: this._status,
       hop: this.hopCount,
-      analysis_mode: this.currentHopAnalysisMode,
-      agenda_remaining: this._agenda.length,
       focus_node: focusNode,
       ...this.scalarReturnContext(),
       neighbors: this.buildNeighborList(focusId),
@@ -4286,16 +4269,11 @@ export class NavigationEngine implements IHopStateMachine {
         edge_direction: edgeDirection,
         edge_type: edgeVerb.get(nid) ?? 'read', ...(cols?.length ? { cols } : {}),
         ...this.neighborCapabilities(focusId, nid),
-        ...(this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
         ...(this.removedSet.has(nid) ? { already_removed: true } : {}),
         ...(attributedColumns.length ? { attributed_columns: attributedColumns } : {}),
         ...(!this.isReachableInApprovedDirection(nid) ? { out_of_direction: true } : {}),
       };
-
-      const d = this.depthFromOrigin.get(nid);
-      if (d !== undefined) neighbor.depth_from_origin = d;
-      neighbor.in_budget = this.scopeNodeIds.has(nid);
 
       neighbor.in_approved_scope = this.outsideAdmission(nid, n, focusId, originWrites)?.admitted ?? true;
       return neighbor;

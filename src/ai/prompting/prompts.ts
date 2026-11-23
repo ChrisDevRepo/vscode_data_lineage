@@ -654,8 +654,8 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  *
  * A hop tracking at least one column gets a `<column_trace>` block with only that per-hop set and
  * the column-source inspection hint. A hop tracking none runs under the BB contract and gets no
- * such block: its submission form has no `column_flow` field, and its mode reaches the model as
- * `hop_context.analysis_mode`. Invariant CT rules live in the stable system prompt and CT capture
+ * such block: its submission form has no `column_flow` field, and the hop's mode selects the stable system
+ * prompt it runs under. Invariant CT rules live in the stable system prompt and CT capture
  * template so sliding-memory wipes do not repeat the rulebook each hop. When the engine routed this
  * focus to continue an earlier hop's column_flow, a `<lineage_questions>` block follows; it and the
  * sub-questions carry no priority label, and the questions are always this focus's own from its
