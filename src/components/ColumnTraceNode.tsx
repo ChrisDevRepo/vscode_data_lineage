@@ -8,12 +8,14 @@ import {
   COLUMN_NODE_BORDER_WIDTH,
   COLUMN_ROW_HEIGHT,
   COLUMN_ROW_DIM_OPACITY,
+  COLUMN_FACT_LINE_HEIGHT,
   COLUMN_TRANSFORM_NODE_WIDTH,
   COLUMN_TRANSFORM_CIRCLE_DIAMETER,
   COLUMN_TRANSFORM_NAME_STRIP_HEIGHT,
   COLUMN_TRANSFORM_NODE_HEIGHT,
   COLUMN_TRANSFORM_PORT_SPREAD,
   type ColumnTraceRow,
+  type ColumnTraceStepFact,
   type ColumnLineState,
 } from '../engine/columnTraceView';
 import { useColumnHover } from '../contexts/ColumnHoverContext';
@@ -24,6 +26,7 @@ import { COLUMN_TRANSFORM_CLASS_LABELS } from './ColumnTraceEdge';
 import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import { NodeRemoveButton, TraceControlsRail, TraceNeighborPickerToolbar } from './CustomNode';
 import { useTraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
+import { COLUMN_TRANSFORM_CLASSES } from '../engine/shared/bridgeContract';
 import type { ColumnTraceNodeData, ObjectType } from '../engine/types';
 
 function lineStateColor(state: ColumnLineState | undefined): string {
@@ -73,10 +76,32 @@ function portHandleStyle(view: ColumnTraceNodeData['view'], index: number, side:
   if (!view.isTransformNode) return { top: rowCenter(index) };
   const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
   const height = view.height || COLUMN_TRANSFORM_NODE_HEIGHT;
-  const { cx, cy, radius, portY } = transformPortGeometry(view.rows.length, width, height);
+  const { cx, cy, radius, portY } = transformPortGeometry(view.rows.length, width, height - (view.localFacts ? COLUMN_FACT_LINE_HEIGHT : 0));
   const y = portY(index);
   const dx = Math.sqrt(Math.max(radius * radius - (y - cy) ** 2, 0));
   return { top: y - HANDLE_HALF, left: (side === 'source' ? cx + dx : cx - dx) - HANDLE_HALF };
+}
+
+/** One muted, ellipsized line of class counts (`combine 2 · filter 1`); the tooltip lists each fact. */
+function FactSummary({ facts, style }: { facts: readonly ColumnTraceStepFact[]; style?: CSSProperties }) {
+  const text = COLUMN_TRANSFORM_CLASSES
+    .map(c => ({ c, count: facts.filter(f => f.classes.includes(c)).length }))
+    .filter(({ count }) => count > 0)
+    .map(({ c, count }) => `${c} ${count}`)
+    .join(' · ');
+  const full = facts.map(f => `${f.node}.${f.column} — ${f.classes.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}`).join('\n');
+  return (
+    <Tooltip content={full} multiline asChild>
+      <div
+        role="img"
+        aria-label={`Indirect columns: ${text}`}
+        className="text-[9px]"
+        style={{ boxSizing: 'border-box', height: COLUMN_FACT_LINE_HEIGHT, padding: '0 8px', flexShrink: 0, color: 'var(--ln-fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...style }}
+      >
+        {text}
+      </div>
+    </Tooltip>
+  );
 }
 
 function ColumnTraceRowLine({
@@ -225,7 +250,8 @@ function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow, schemaColo
 }) {
   const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
   const height = view.height || COLUMN_TRANSFORM_NODE_HEIGHT;
-  const { cx, cy, radius } = transformPortGeometry(view.rows.length, width, height);
+  const factLine = view.localFacts ? COLUMN_FACT_LINE_HEIGHT : 0;
+  const { cx, cy, radius } = transformPortGeometry(view.rows.length, width, height - factLine);
 
   return (
     <>
@@ -255,7 +281,7 @@ function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow, schemaColo
           position: 'absolute',
           left: 0,
           right: 0,
-          bottom: 0,
+          bottom: factLine,
           height: COLUMN_TRANSFORM_NAME_STRIP_HEIGHT,
           display: 'flex',
           alignItems: 'center',
@@ -267,6 +293,7 @@ function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow, schemaColo
           {nodeTitle}
         </span>
       </div>
+      {view.localFacts && <FactSummary facts={view.localFacts} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, textAlign: 'center' }} />}
     </>
   );
 }
@@ -406,6 +433,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
               />
             ))}
           </div>
+          {view.localFacts && <FactSummary facts={view.localFacts} />}
         </>
       )}
 
