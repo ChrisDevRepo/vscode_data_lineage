@@ -764,17 +764,18 @@ function toLineRanges(lines: number[]): string {
 }
 
 /**
- * Serialized size of the smallest row `lineage_search_ddl` can serve — every field present, every
- * value empty. Derived from the row shape itself, so it cannot drift from what a row costs.
+ * Serialized size of the smallest hit `lineage_search_ddl` can serve — every field present, every
+ * value empty. Derived from the hit shape itself, so it cannot drift from what a hit costs; the
+ * object fields are served once per object in `by_object`, not per hit.
  */
-const MIN_SEARCH_DDL_ROW_CHARS = JSON.stringify({ id: '', name: '', type: '', line: 0, text: '', context: '' }).length;
+const MIN_SEARCH_DDL_HIT_CHARS = JSON.stringify({ line: 0, context: '' }).length;
 
 /** Hint on a located long line: the row is not served as text; the DDL read shows it whole. */
 const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_CHARS} characters, so no row shows them. Read the object's DDL with lineage_get_object_detail and go to the line number; match_offset is where the match starts within the line.`;
 
 /**
  * Searches the DDL of scriptable objects with a regular expression. The contract is grep's: a
- * pattern in, every match out with object, 1-based line number, matched line and context. Nothing
+ * pattern in, every match out under its object with 1-based line number and context. Nothing
  * is sliced: an empty result is stated as a fact, an unusable pattern is an error naming the regex
  * problem, and a result too large for the discovery budget hands off to the approval path instead
  * of returning a partial list.
@@ -785,9 +786,11 @@ const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_
  * line or two away.
  *
  * `by_object` is the one per-object home: each object with a hit, its `hits` total and, where
- * anything is dead, `commented_hits` and the commented lines as ranges. Counts are served, not
- * tallied from rows, since an answer composed by theme merges rows from several places. `objects`
- * is this list's length. Additive: every hit stays in `results` with its own flag.
+ * anything is dead, `commented_hits` and the commented lines as ranges, then its `matches`. Counts
+ * are served, not tallied from rows, since an answer composed by theme merges rows from several
+ * places. `objects` is this list's length. Each hit is served once, as its line and the context
+ * holding that line (the matched line with one line either side), with its own flag; the object and
+ * the matched line are not repeated per hit.
  *
  * Matching is per whole line. A match on a line longer than `SEARCH_LINE_MAX_CHARS` is not served
  * as a row but located in `searched.long_lines` (object id, line number, length, match offset, a
@@ -800,7 +803,7 @@ const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_
  * @param budget - The calling turn's budget the discovery guard is measured against.
  * @param onDebug - Optional sink for a debug line when `query` is rewritten or the result is over
  *   budget.
- * @returns Every matching line with object metadata plus `by_object` counts, or the
+ * @returns Every matching line grouped under its object in `by_object`, or the
  *   empty/invalid/over-budget fact.
  */
 export async function searchDdl(
@@ -831,12 +834,12 @@ export async function searchDdl(
     ...n,
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
-  const rowAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_ROW_CHARS);
+  const hitAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_HIT_CHARS);
   let scanned: import('../../utils/modelSearch').BodyScanResult;
   try {
     const reply = await executeIsolatedRegexSearch({
       kind: 'ddl', pattern: query, nodes: searchableNodes, types: [...typeSet], budget,
-      rowChars: MIN_SEARCH_DDL_ROW_CHARS,
+      rowChars: MIN_SEARCH_DDL_HIT_CHARS,
     }, signal);
     if (!reply.ok || reply.kind !== 'ddl') throw new Error('Search worker did not return a DDL result.');
     const nodesById = new Map(searchableNodes.map(node => [node.id, node]));
@@ -906,47 +909,42 @@ export async function searchDdl(
       : 'Narrow the pattern or restrict types[].'}`,
   }));
 
-  const countAdmission = rowAdmission(scanned.total);
+  const countAdmission = hitAdmission(scanned.total);
   if (countAdmission) {
     onDebug?.(`searchDdl: ${scanned.total} matches in ${scanned.objects} objects exceed the discovery token budget before every row is built — matches omitted, pattern="${query}"`);
     return overBudget(countAdmission, scanned.total, scanned.objects);
   }
   const matches = scanned.matches;
 
-  const results = matches.map(m => ({
-    id:      m.node.id,
-    name:    m.node.name,
-    type:    m.node.type,
-    line:    m.line,
-    text:    m.text,
-    context: m.snippet,
-    ...(m.commented ? { commented: true as const } : {}),
-    ...(m.enclosingPredicate ? { enclosing_predicate: m.enclosingPredicate } : {}),
-  }));
+  if (matches.length === 0) return withSearched(searched => ({ total: 0, objects: 0, searched }));
 
-  if (results.length === 0) return withSearched(searched => ({ results, total: 0, objects: 0, searched }));
-
-  const hitsByObject = new Map<string, { id: string; name: string; type: string; hits: number; commentedLines: number[] }>();
+  type Hit = { line: number; context: string; commented?: true; enclosing_predicate?: string };
+  const hitsByObject = new Map<string, { id: string; name: string; type: string; commentedLines: number[]; matches: Hit[] }>();
   for (const m of matches) {
     let group = hitsByObject.get(m.node.id);
     if (!group) {
-      group = { id: m.node.id, name: m.node.name, type: m.node.type, hits: 0, commentedLines: [] };
+      group = { id: m.node.id, name: m.node.name, type: m.node.type, commentedLines: [], matches: [] };
       hitsByObject.set(m.node.id, group);
     }
-    group.hits++;
+    group.matches.push({
+      line:    m.line,
+      context: m.snippet,
+      ...(m.commented ? { commented: true as const } : {}),
+      ...(m.enclosingPredicate ? { enclosing_predicate: m.enclosingPredicate } : {}),
+    });
     if (m.commented) group.commentedLines.push(m.line);
   }
   const byObject = [...hitsByObject.values()].map(g => ({
-    id: g.id, name: g.name, type: g.type, hits: g.hits,
+    id: g.id, name: g.name, type: g.type, hits: g.matches.length,
     ...(g.commentedLines.length
       ? { commented_hits: g.commentedLines.length, commented_lines: toLineRanges(g.commentedLines) }
       : {}),
+    matches: g.matches,
   }));
   const objects = byObject.length;
 
   const payload = withSearched(searched => ({
-    results,
-    total: results.length,
+    total: matches.length,
     objects,
     by_object: byObject,
     searched,
@@ -954,8 +952,8 @@ export async function searchDdl(
   const resultChars = JSON.stringify(payload).length;
   const admission = checkScopeBudget(budget, 0, resultChars);
   if (admission) {
-    onDebug?.(`searchDdl: ${results.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${admission.detail.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
-    return overBudget(admission, results.length, objects);
+    onDebug?.(`searchDdl: ${matches.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${admission.detail.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
+    return overBudget(admission, matches.length, objects);
   }
   return payload;
 }
