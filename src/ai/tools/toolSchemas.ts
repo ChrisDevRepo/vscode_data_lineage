@@ -947,9 +947,10 @@ export function heldSubmissionRepairHint(): string {
   return 'Send only the failed fields; every other field is held.';
 }
 
-/** The fields a held finding restores on the retry, by name. */
+/** The fields a held finding restores on the retry, by name; a failed field is the retry's to send. */
 export function heldSubmissionFields(held: HeldSubmissionParts): string[] {
-  return ['focus_node_id', 'verdict', ...held.fields, ...(held.summary ? ['summary'] : []), ...held.sections.map(sectionField)];
+  return ['focus_node_id', 'verdict', ...held.fields, ...(held.summary ? ['summary'] : []), ...held.sections.map(sectionField)]
+    .filter(field => !held.failed.includes(field));
 }
 
 /**

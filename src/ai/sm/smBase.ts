@@ -51,8 +51,6 @@ function stripSurplusKeys<T>(schema: ZodType<T>): ZodType<T> {
  * into the current focus is already visited and cannot be pruned there.
  */
 export interface HopNeighborDisclosure extends HopNeighbor {
-  /** The non-bodied carrier already contracted into this focus, under the visit-once rule. */
-  prune_protected?: boolean;
   /** Already analyzed on an earlier hop; a prune cannot remove committed analysis. */
   already_visited?: boolean;
   /** Already pruned on an earlier hop; a removed node stays removed. */
@@ -830,12 +828,13 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Fatal column, prune and question route faults of a schema-rejected submission against the
-   * current focus (resolving omitted held fields on a retry); focus faults leave routes unchecked.
+   * current focus (resolving omitted held fields on a retry, an omitted focus_node_id to the current
+   * focus as {@link holdRejectedSubmission} does); a mismatched focus leaves routes unchecked.
    */
   public submissionRouteFaults(input: unknown): InvalidRoute[] {
     if (!isPlainRecord(input) || !this.currentFocusNodeId || !this.nodeMap.has(this.currentFocusNodeId)) return [];
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
-    const rawFocus = input.focus_node_id ?? current?.focus_node_id;
+    const rawFocus = input.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
     if (typeof rawFocus !== 'string') return [];
     const focusId = resolveModelNodeId(rawFocus, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(rawFocus);
     if (focusId !== this.currentFocusNodeId) return [];
@@ -925,15 +924,17 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @param failedPaths - Dotted Zod issue paths of the rejection.
    * @returns What a retry gets restored (held section angles, whether a summary is held, other held
-   *   field names minus those this call failed), or `null` when nothing is held. A call that is not
-   *   a kept verdict of the current focus holds nothing new and reports the existing draft.
+   *   field names minus those this call failed, the failed fields), or `null` when nothing is held.
+   *   A call that is not a kept verdict of the current focus holds nothing new and reports the
+   *   existing draft.
    */
   public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): HeldSubmissionParts | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
     const raw = input as Record<string, unknown>;
-    // A retry omits focus_node_id and verdict like any other held field.
+    // A retry omits focus_node_id and verdict like any other held field; a call that omits
+    // focus_node_id with no draft held is held under the current focus.
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
-    const focusId = raw.focus_node_id ?? current?.focus_node_id;
+    const focusId = raw.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
     const verdict = raw.verdict ?? current?.verdict;
     if ((verdict !== 'analyze' && verdict !== 'passthrough') || typeof focusId !== 'string') return this.heldPartsOfCurrentFocus();
     const focus = resolveModelNodeId(focusId, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(focusId);
@@ -965,7 +966,8 @@ export class NavigationEngine implements IHopStateMachine {
     const restored = HELD_CARRIED_FIELDS.filter(field => draft[field] !== undefined && !failed.has(field));
     if (draft.sections.length === 0 && !draft.summary.trim() && restored.length === 0) return null;
     this.holdFinding(draft, [...failed]);
-    return { sections: draft.sections.map(section => section.angle), summary: draft.summary.trim().length > 0, fields: restored };
+    return { sections: draft.sections.map(section => section.angle), summary: draft.summary.trim().length > 0, fields: restored,
+      failed: this.heldFindingDraft.getAuthorization()?.failed ?? [] };
   }
 
   /**
@@ -1044,6 +1046,7 @@ export class NavigationEngine implements IHopStateMachine {
       sections: held.sections.map(section => section.angle),
       summary: held.summary.trim().length > 0,
       fields: HELD_CARRIED_FIELDS.filter(field => held[field] !== undefined && !failed.includes(field)),
+      failed,
     };
   }
 
@@ -2853,11 +2856,6 @@ export class NavigationEngine implements IHopStateMachine {
       node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl', this.identifierCaseSensitive,
     );
 
-    if (this.depthBudget !== null) {
-      const d = this.depthFromOrigin.get(entry.nodeId);
-      if (d !== undefined) focusNode.depth_from_origin = d;
-    }
-
     const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
     const navPath = path ? (path).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
 
@@ -2892,10 +2890,7 @@ export class NavigationEngine implements IHopStateMachine {
     this._lastCurrentTask = this.currentFocusQuestion ?? '';
     this._status = 'awaiting_findings';
     return {
-      sm_status: 'awaiting_findings' as const,
       hop: this.hopCount,
-      analysis_mode: this.currentHopAnalysisMode,
-      agenda_remaining: this._agenda.length,
       focus_node: focusNode,
       ...this.scalarReturnContext(),
       neighbors: this.buildNeighborList(entry.nodeId),
@@ -2915,7 +2910,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.log('debug', `[Invariant] dispatch refused node=${nodeId} field=${field}`);
     this._status = 'error';
     this._errorReason = reason;
-    return { done: false, sm_status: 'error' };
+    return { done: false };
   }
 
   /** Open directional neighbours of `focusId` with their route-admission result. */
@@ -2966,15 +2961,8 @@ export class NavigationEngine implements IHopStateMachine {
     const focusNode = buildHopFocusNode(
       node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl', this.identifierCaseSensitive,
     );
-    if (this.depthBudget !== null) {
-      const d = this.depthFromOrigin.get(focusId);
-      if (d !== undefined) focusNode.depth_from_origin = d;
-    }
     return {
-      sm_status: this._status,
       hop: this.hopCount,
-      analysis_mode: this.currentHopAnalysisMode,
-      agenda_remaining: this._agenda.length,
       focus_node: focusNode,
       ...this.scalarReturnContext(),
       neighbors: this.buildNeighborList(focusId),
@@ -4220,16 +4208,11 @@ export class NavigationEngine implements IHopStateMachine {
         edge_direction: edgeDirection,
         edge_type: edgeVerb.get(nid) ?? 'read', ...(cols?.length ? { cols } : {}),
         ...this.neighborCapabilities(focusId, nid),
-        ...(this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
         ...(this.removedSet.has(nid) ? { already_removed: true } : {}),
         ...(attributedColumns.length ? { attributed_columns: attributedColumns } : {}),
         ...(!this.isReachableInApprovedDirection(nid) ? { out_of_direction: true } : {}),
       };
-
-      const d = this.depthFromOrigin.get(nid);
-      if (d !== undefined) neighbor.depth_from_origin = d;
-      neighbor.in_budget = this.scopeNodeIds.has(nid);
 
       neighbor.in_approved_scope = this.outsideAdmission(nid, n, focusId, originWrites)?.admitted ?? true;
       return neighbor;

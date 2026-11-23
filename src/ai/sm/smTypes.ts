@@ -170,10 +170,6 @@ export interface HopNeighbor {
   scope?: 'visited' | 'agenda' | 'pruned' | 'available' | 'external';
   /** List of columns pertinent to the current trace, if applicable. */
   cols?: string[];
-  /** Depth from origin (always surfaced when a depth budget is set). */
-  depth_from_origin?: number;
-  /** False when this node is beyond the active depth budget. Always surfaced when budget is set. */
-  in_budget?: boolean;
   /**
    * Whether the `column_flow` scope check admits this node: focus, scope, visited and in-border
    * tables the origin writes are inside, any other node needs an admitted route (approved border,
@@ -198,18 +194,8 @@ type HopFocusNode = Record<string, unknown>;
 export interface HopContext {
   /** Set to `true` if there are no more nodes to visit in the agenda. */
   done?: boolean;
-  /** Explicit engine status, delivered every hop. */
-  sm_status?: SmStatus;
   /** The current hop index. */
   hop?: number;
-  /**
-   * The contract this hop is dispatched under, as data rather than prose the model must infer: `ct`
-   * when the hop carries at least one traced column, else `bb`. Per hop and so per edge: one node
-   * reached on a carrying edge and a row-shaping edge is dispatched under each contract in turn.
-   */
-  analysis_mode?: 'bb' | 'ct';
-  /** Count of nodes still on the agenda. */
-  agenda_remaining?: number;
   /** The node currently being analyzed. */
   focus_node?: HopFocusNode;
   /** Exact compiler-declared real destinations for the active scalar return task. */
@@ -1005,11 +991,13 @@ export type EngineAspectMode =  { kind: 'bb' } | { kind: 'ct' };
 
 /**
  * Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section
- * angles, whether the summary, other field names.
+ * angles, whether the summary, other field names, and the failed fields the retry sends.
  */
 export interface HeldSubmissionParts {
   readonly sections: readonly CaptureAngle[];
   readonly summary: boolean;
   /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
   readonly fields: readonly string[];
+  /** Top-level fields the held draft failed; none of them is listed as held. */
+  readonly failed: readonly string[];
 }
