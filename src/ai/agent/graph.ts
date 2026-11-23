@@ -47,7 +47,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, describeTurnStop, formatProviderErrorDiagnostic, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type TurnStop } from '../support/text';
+import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, describeTurnStop, formatProviderErrorDiagnostic, hopProgressBlock, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type TurnStop } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -1235,7 +1235,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       // Escape only the display copy: formulas and identifiers are literal summary text.
       const display = truncAtWordBoundary(committedFinding.value.summary.replace(/\s+/g, ' ').trim(), 135);
       const summary = escapeMarkdownText(display);
-      deps.sink.stream(`\n\n**Hop ${progress.current}/${progress.total} — ${focusLabel}**\n\n_${summary}_\n\n`);
+      deps.sink.stream(hopProgressBlock(progress.current, progress.total, focusLabel, summary));
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {

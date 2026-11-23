@@ -235,6 +235,18 @@ const STOP_LINE: Readonly<Record<StopSource, { readonly verb: 'failed' | 'stoppe
 export const TURN_STOP_LINE_END = `Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
 
 /**
+ * The chat block of one committed hop: a bold `Hop n/m` header and the finding summary in italics
+ * (`summary` already Markdown-escaped). UI progress, not a model reply; replayed history drops it
+ * through {@link HOP_PROGRESS_BLOCK}.
+ */
+export function hopProgressBlock(current: number, total: number, label: string, summary: string): string {
+  return `\n\n**Hop ${current}/${total} — ${label}**\n\n_${summary}_\n\n`;
+}
+
+/** Matches every {@link hopProgressBlock}; global, for `replace` only. */
+export const HOP_PROGRESS_BLOCK = /\n\n\*\*Hop \d+\/\d+ — [^\n]*\*\*\n\n_[^\n]*_\n\n/g;
+
+/**
  * The external message of a provider or network stop as the chat line quotes it: already redacted
  * and length-capped by {@link sanitizeProviderErrorDiagnostic}, Markdown-escaped, in double quotes.
  * Undefined for any other source, whose text is Data Lineage's own.
