@@ -56,6 +56,8 @@ function externalFileId(url: string): string {
 /**
  * Resolves persisted references by unique ownership, including legacy delimiter/URL aliases.
  * Current tool/SQL inputs must use {@link resolveModelNodeId}, never this legacy recovery path.
+ * The legacy aliases cannot be dropped after one migration pass: a view with a reference the loaded
+ * model lacks stays unversioned until a model holding that reference loads.
  */
 export function createSavedReferenceResolver(
   model: Pick<DatabaseModel, 'nodes' | 'schemas' | 'identifierCaseSensitive'>,
