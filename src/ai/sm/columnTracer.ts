@@ -279,6 +279,7 @@ export class ColumnTracer {
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
     const activeNorm = this.aspect.active_columns.map(this.columnKey);
     const entryEdges = new Map<number, ColumnEdge[]>();
+    const deleteOnlyEntries = new Set<number>();
     const endpointKey = columnEndpointKeyFactory(nodeMap, model.identifierCaseSensitive);
     const committedRefs = this.aspect.edges.filter(edge => !isIndirectOnly(edge.transforms)).flatMap(edge => [
       { node: edge.from_node, col: edge.from_col },
@@ -487,6 +488,7 @@ export class ColumnTracer {
         });
       }
       entryEdges.set(entryIndex, stagedEdges.slice(stagedBeforeEntry));
+      if (deleteOnlyTarget) deleteOnlyEntries.add(entryIndex);
     }
 
     // A link is admitted only when its destination is in the closure of the tracked roots over the
@@ -518,6 +520,13 @@ export class ColumnTracer {
       const entry = columnFlow[entryIndex];
       const upDetached = detachedIn(edges, attached);
       const downDetached = downstreamAttached ? detachedIn(edges, downstreamAttached) : undefined;
+      // A DELETE never produces direct lineage: a direct pair into its target attaches to nothing.
+      const directIntoDelete = deleteOnlyEntries.has(entryIndex) ? edges.filter(edge => !isIndirectOnly(edge.transforms)) : [];
+      if (directIntoDelete.length > 0) {
+        rejectDetached(entryIndex, directIntoDelete);
+        for (const edge of edges) rejectedEdges.add(edge);
+        continue;
+      }
       if (entry.upstream_columns.length === 0) {
         const target = resolveColumnFlowTarget(entry, focusId, nodeMap, model.identifierCaseSensitive);
         const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
