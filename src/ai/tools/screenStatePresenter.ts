@@ -163,13 +163,7 @@ function staleIds(run: StoredAiRun, getDdl: ((id: string) => string | undefined)
 }
 
 function presentRunSections(run: StoredAiRun): Array<{ label: string; node_ids: string[] }> {
-  const raw = (run as unknown as Record<string, unknown>).sections;
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap(entry => {
-    const sec = asRecord(entry);
-    const label = asString(sec?.label);
-    return label === null ? [] : [{ label, node_ids: asStringList(sec?.node_ids) }];
-  });
+  return run.sections?.map(sec => ({ label: sec.label, node_ids: [...sec.node_ids] })) ?? [];
 }
 
 function presentAiRun(
