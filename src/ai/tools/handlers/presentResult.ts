@@ -497,7 +497,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           field: 'sections',
           messages: [
             `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes)}.`,
-            'For each one: add its id to a sections[].node_ids, or give it one grounded notes[] entry. Tables carry the traced column even when they have no detail slot.',
+            'For each one: add its id to a sections[].node_ids, or give it one grounded notes[] entry. Tables carry their column-chain columns, direct or indirect, even when they have no detail slot.',
           ],
           repairFields: ['sections', 'notes'],
           paths: ['sections', 'notes'],

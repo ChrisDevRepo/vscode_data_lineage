@@ -521,10 +521,11 @@ const ColumnRefSchema = z.object({
   col: z.string(),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Classify this source column’s own role for out_col, end to end; omit when SQL does not determine it. ' +
-    'pass_through: out_col takes this column’s value unchanged. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
+    'pass_through: out_col takes this column’s value unchanged. compute: input of the expression that yields out_col, including a CASE condition operand. aggregate: argument of the aggregate that yields out_col. ' +
     'combine: join, grouping, partition or ordering key. filter: predicate ' +
     'selecting contributing rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
-    'display-only sorting contributes no role.',
+    'display-only sorting contributes no role. ' +
+    'A column that is no input of the expression or aggregate that yields out_col takes only combine or filter, even when an expression or aggregate changes it first.',
   ),
   note: z.string().max(COLUMN_FLOW_NOTE_MAX).optional().describe(
     'The deciding expression, at most ~12 words.',
