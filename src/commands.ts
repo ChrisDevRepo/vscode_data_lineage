@@ -77,6 +77,7 @@ export function registerCommands(
         const tracePath = await traceWriter.enable(traceRoot);
         configLogger.info('AI trace logging enabled for this session');
         configLogger.debug(`AI trace logging writes to ${tracePath}`);
+        vscode.window.setStatusBarMessage(`AI trace logging enabled. Writing to ${tracePath}`, 5000);
         return tracePath;
       } catch (err) {
         notifyError(
@@ -283,6 +284,7 @@ async function createYamlScaffold(
     await vscode.window.showTextDocument(doc);
     logger.info('Create YAML scaffold — created');
     logger.debug(`Created ${fileName} in the workspace root; setting dataLineageViz.${settingName}`);
+    vscode.window.setStatusBarMessage(`Created ${fileName}. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`, 5000);
   } catch (err) {
     notifyError(logger, 'Create YAML scaffold', `Data Lineage: Failed to create ${fileName} — check the Output channel for details.`, err, { fileName, sourceAsset, settingName });
     throw err;

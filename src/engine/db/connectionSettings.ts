@@ -101,6 +101,9 @@ export function dropTcpPrefix(server: string): string {
   return server.trim().replace(TCP_PREFIX, '').trim();
 }
 
+/** Host names of Azure SQL in the public, US government and China clouds. */
+export const AZURE_SQL_HOST = /\.database\.(windows\.net|usgovcloudapi\.net|chinacloudapi\.cn)$/i;
+
 /**
  * Splits a server address the way SqlClient and the mssql extension read it: a leading `tcp:` is
  * dropped, a bracketed IPv6 address `[fe80::1]` loses its brackets, and `host\instance` becomes the

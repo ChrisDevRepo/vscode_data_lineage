@@ -1,15 +1,15 @@
 /**
  * ConnectionErrors
  * One place that turns a failed connect or query into the text and actions the user sees. The
- * driver's own message is shown verbatim behind the connection name, except when the server may
- * still be starting (one plain sentence, the driver text goes to the log); only the actions are
+ * driver's own message is shown verbatim behind the connection name, except when the server reports
+ * that it is unavailable (one plain sentence, the driver text goes to the log); only the actions are
  * chosen, by error number, code or message pattern.
  */
 
 import * as vscode from 'vscode';
 import type { Logger } from '../../utils/log';
 import type { StoredConnectionInfo } from '../shared/bridgeContract';
-import { readBuiltInConnections, upsertBuiltInConnection, describeConnection, type BuiltInConnection } from './connectionSettings';
+import { readBuiltInConnections, upsertBuiltInConnection, describeConnection, resolveServerAddress, AZURE_SQL_HOST, type BuiltInConnection } from './connectionSettings';
 import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, type DbSession } from './dbSession';
 import { pickAccount, signInForSql } from './entraSignIn';
 import { redactSecrets } from '../../utils/redact';
@@ -123,12 +123,12 @@ function grantStatement(grant: string, user: string | undefined): string {
 /**
  * Describes a connection or query failure for the user. `message` is
  * `<connection name>: <original driver text>` with credential-shaped text removed, plus one hint
- * when the server rejects a Microsoft token; for a server that may still be starting (unavailable,
- * or a timed-out or dropped connect) it is "Couldn't connect to <database>. It might still be
- * starting." Actions depend
- * on the error class: those updating a saved connection require a
- * saved `builtIn` `connectionId`, and Retry is offered only when the caller supplies a retry
- * hook. Each action runs on the user's click and any retry is a single attempt, never a loop.
+ * when the server rejects a Microsoft token, or "It might still be starting." when a connect to an
+ * Azure SQL host timed out or dropped; for an unavailable server it is "Couldn't connect to
+ * <database>. It might still be starting." Actions depend on the error class: those updating a
+ * connection are offered for a `builtIn` connection, and Retry is offered only when the caller
+ * supplies a retry hook. Each action runs on the user's click and any retry is a single
+ * attempt, never a loop.
  *
  * @param hooks - Caller-supplied capabilities the actions use.
  */
@@ -138,10 +138,11 @@ export function describeConnectionError(
   hooks: ConnectionErrorHooks = {},
 ): { message: string; actions: ConnectionErrorAction[] } {
   const kind = classify(err);
-  const starting = kind === 'unavailable' || (kind === 'network' && STARTING_CODES.has(errorCode(err) ?? ''));
-  const message = starting
+  const stillStarting = kind === 'network' && STARTING_CODES.has(errorCode(err) ?? '') && AZURE_SQL_HOST.test(resolveServerAddress(target.server).host);
+  const hint = kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : stillStarting ? ' It might still be starting.' : '';
+  const message = kind === 'unavailable'
     ? `Couldn't connect to ${target.database ?? target.name}. It might still be starting.`
-    : `${target.name}: ${redactSecrets(errorMessage(err))}${kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : ''}`;
+    : `${target.name}: ${redactSecrets(errorMessage(err))}${hint}`;
   const builtIn = target.provider === 'builtIn';
   const connectionId = target.connectionId;
 
@@ -185,6 +186,7 @@ export function describeConnectionError(
     retry: () => make('retry', () => retry()),
     copyGrantStatement: () => make('copyGrantStatement', async () => {
       await vscode.env.clipboard.writeText(grantStatement(hooks.grant ?? 'VIEW DEFINITION', target.user));
+      vscode.window.setStatusBarMessage('GRANT statement copied to the clipboard.', 5000);
     }),
     showLog: () => make('showLog', async () => {
       if (hooks.showLog) hooks.showLog();

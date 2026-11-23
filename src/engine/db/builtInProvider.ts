@@ -11,7 +11,7 @@ import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
 import { readDeclaredNumericSetting } from '../../configCore';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
-import { readSavedPassword, savePassword, passwordTooLong, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
+import { readSavedPassword, savePassword, passwordTooLong, describeConnection, resolveServerAddress, AZURE_SQL_HOST, type BuiltInConnection } from './connectionSettings';
 import { redactSecrets } from '../../utils/redact';
 import type { DbQueryOptions, DbSession } from './dbSession';
 import { acquireSqlToken } from './entraSignIn';
@@ -59,8 +59,6 @@ const CONNECT_MAX_RETRIES = CONNECT_RETRY_WINDOW_MS / CONNECT_RETRY_INTERVAL_MS;
 /** Login budget of one connect attempt; Microsoft recommends 30 s for Azure SQL and Synapse. */
 const CONNECT_TIMEOUT_MS = 30 * MS_PER_SECOND;
 
-/** Host names of Azure SQL in the public, US government and China clouds. */
-const AZURE_SQL_HOST = /\.database\.(windows\.net|usgovcloudapi\.net|chinacloudapi\.cn)$/i;
 /** Progress text while an idle Azure SQL database resumes (source: CONNECT_RETRY_WINDOW_MS). */
 const WAKING_LABEL = 'Waking up the database. An idle Azure SQL database can take about a minute to resume.';
 
@@ -412,7 +410,7 @@ export async function openBuiltInSession(
   });
   const session = new BuiltInSession(raw, lib, connectionInfo, label, logger, env.loadQueries);
 
-  options.onConnecting?.(connection.authenticationType === 'entraId' || AZURE_SQL_HOST.test(address.host) ? WAKING_LABEL : `Connecting to ${address.host}…`);
+  options.onConnecting?.(AZURE_SQL_HOST.test(address.host) ? WAKING_LABEL : `Connecting to ${address.host}…`);
   logger.info(`Connecting (${connection.authenticationType})`);
   logger.debug(`Connection target: ${label}${database ? ` / ${database}` : ''}`);
   const started = Date.now();
