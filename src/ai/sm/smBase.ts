@@ -24,7 +24,7 @@ import { CLASSIFICATION_KEPT_ANGLES, sectionField, type ClassificationValue } fr
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ColumnFlowEntry, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ColumnFlowEntry, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
@@ -150,11 +150,8 @@ export interface IHopStateMachine {
   /** The percentage of nodes in scope that have been covered. */
   readonly coveragePct: number;
   readonly columnAspect: ColumnAspect | null;
-  /**
-   * Contract the currently dispatched hop runs under — `bb` on a CT-run branch carrying none of the
-   * traced columns; see {@link NavigationEngine.currentHopAnalysisMode}.
-   */
-  readonly currentHopAnalysisMode: 'bb' | 'ct';
+  /** Analysis mode locked at `init`; every hop runs under its contract (a CT run has no BB hop). */
+  readonly currentAnalysisMode: 'bb' | 'ct';
   /** Out-of-approved-scope routes deferred during the SM session. */
   readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
   /** Typed investigation tasks owned by the engine. */
@@ -269,7 +266,7 @@ function cloneAgendaEntry(entry: AgendaEntry): AgendaEntry {
     depth: entry.depth,
     ...(entry.activeColumns ? { activeColumns: [...entry.activeColumns] } : {}),
     ...(entry.columnCarry
-      ? { columnCarry: entry.columnCarry.kind === 'carry' ? { kind: 'carry' as const, columns: [...entry.columnCarry.columns] } : entry.columnCarry.kind === 'scalar_return' ? { kind: 'scalar_return' as const, outputs: entry.columnCarry.outputs.map(target => ({ ...target })) } : { ...entry.columnCarry } }
+      ? { columnCarry: entry.columnCarry.kind === 'carry' ? { kind: 'carry' as const, columns: [...entry.columnCarry.columns] } : { kind: 'scalar_return' as const, outputs: entry.columnCarry.outputs.map(target => ({ ...target })) } }
       : {}),
     ...(entry.lineageQuestions ? { lineageQuestions: [...entry.lineageQuestions] } : {}),
   };
@@ -635,7 +632,7 @@ export class NavigationEngine implements IHopStateMachine {
     const held = this.heldFindingDraft.get();
     const authorization = this.heldFindingDraft.getAuthorization();
     if (!held || !authorization || authorization.focusId !== this.currentFocusNodeId
-      || authorization.hop !== this.hopCount || authorization.mode !== this.currentHopAnalysisMode) return null;
+      || authorization.hop !== this.hopCount || authorization.mode !== this.currentAnalysisMode) return null;
     return authorization.focusId;
   }
 
@@ -856,7 +853,7 @@ export class NavigationEngine implements IHopStateMachine {
     const rawFlow = effective('column_flow');
     const columnFlowEntries = passing<ColumnFlowEntry>(rawFlow, hopColumnFlowSchema(hop).element)?.map(({ index, value }) => ({ index, entry: value }));
     const pruneNeighbors = (passing(effective('prune_neighbors'), PruneNeighborSchema) ?? []).map(({ index, value }) => ({ id: value.id, index }));
-    const questions = (passing(effective('questions'), hopQuestionSchema(this.currentHopAnalysisMode, hop)) ?? []).map(({ index, value }) => ({ ...value, index }));
+    const questions = (passing(effective('questions'), hopQuestionSchema(this.currentAnalysisMode, hop)) ?? []).map(({ index, value }) => ({ ...value, index }));
     return this.validateHopRoutes(focusId, columnFlowEntries, rawFlow, pruneNeighbors, questions)
       .invalidRoutes
       .filter(route => !isAbsentKind(route.kind));
@@ -1001,7 +998,7 @@ export class NavigationEngine implements IHopStateMachine {
   /** The fields the current hop's served `submit_findings` schema defines, `reason` aside. */
   private get heldSchemaFields(): readonly string[] {
     const angles = this.classification ? CLASSIFICATION_KEPT_ANGLES[this.classification] : CLASSIFICATION_KEPT_ANGLES.both;
-    return ['focus_node_id', 'verdict', ...angles.map(sectionField), 'summary', ...HELD_CARRIED_FIELDS.filter(field => field !== 'column_flow' || this.currentHopAnalysisMode === 'ct')];
+    return ['focus_node_id', 'verdict', ...angles.map(sectionField), 'summary', ...HELD_CARRIED_FIELDS.filter(field => field !== 'column_flow' || this.currentAnalysisMode === 'ct')];
   }
 
   /**
@@ -1026,7 +1023,7 @@ export class NavigationEngine implements IHopStateMachine {
       failed: this.heldSchemaFields.filter(field => failed.includes(field)),
       focusId: this.currentFocusNodeId,
       hop: this.hopCount,
-      mode: this.currentHopAnalysisMode,
+      mode: this.currentAnalysisMode,
       priorCarried,
     });
   }
@@ -1168,7 +1165,7 @@ export class NavigationEngine implements IHopStateMachine {
     action: SmNodeAction,
     source: SmNodeStateSource,
     reason: SmNodeStateReason,
-    meta: { columns?: string[]; columnRole?: SmNodeColumnRole; viaNodeId?: string; atHop?: number } = {},
+    meta: { columns?: string[]; viaNodeId?: string; atHop?: number } = {},
   ): void {
     const id = resolveModelNodeId(nodeId, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(nodeId);
     if (!this.nodeMap.has(id)) return;
@@ -1180,12 +1177,10 @@ export class NavigationEngine implements IHopStateMachine {
     };
     const existing = this.nodeStates.get(id);
     const mergedColumns = Array.from(new Set([...(existing?.columns ?? []), ...(meta.columns ?? [])]));
-    const columnRole = meta.columnRole ?? existing?.columnRole;
     if (existing && rank(existing.action) > rank(action)) {
       this.nodeStates.set(id, {
         ...existing,
         columns: mergedColumns.length > 0 ? mergedColumns : existing.columns,
-        ...(columnRole ? { columnRole } : {}),
       });
       return;
     }
@@ -1196,7 +1191,6 @@ export class NavigationEngine implements IHopStateMachine {
       source,
       reason,
       ...(mergedColumns.length > 0 ? { columns: mergedColumns } : {}),
-      ...(columnRole ? { columnRole } : {}),
       ...(meta.viaNodeId ? { viaNodeId: meta.viaNodeId } : existing?.viaNodeId ? { viaNodeId: existing.viaNodeId } : {}),
       ...(typeof meta.atHop === 'number' ? { atHop: meta.atHop } : existing?.atHop !== undefined ? { atHop: existing.atHop } : {}),
     });
@@ -1208,8 +1202,13 @@ export class NavigationEngine implements IHopStateMachine {
    * walk in {@link enqueueHop}, so a prune of it from this focus is a no-op.
    */
   private isCarrierInto(carrierId: string, focusId: string): boolean {
-    return this.nodeStates.get(carrierId)?.action === 'passthrough'
+    return this.nodeStates.get(carrierId)?.action === 'passthrough' && !this.isKeptEndNode(carrierId)
       && this.directionalNeighbors(carrierId, this._direction).includes(focusId);
+  }
+
+  /** A CT neighbour kept without a hop: neither a carrier nor a sender still to be heard. */
+  private isKeptEndNode(nodeId: string): boolean {
+    return this.nodeStates.get(nodeId)?.reason === 'kept_end_node';
   }
 
   /**
@@ -1853,17 +1852,6 @@ export class NavigationEngine implements IHopStateMachine {
   /** Explicit analysis mode captured at {@link init}. */
   public get currentAnalysisMode(): 'bb' | 'ct' {
     return this.initSnapshot?.analysisMode ?? this.mode.kind;
-  }
-
-  /**
-   * Analysis mode of the hop in flight: the contract selector for this hop alone. Unlike the
-   * session-level {@link currentAnalysisMode} (locked at `init`) it varies per hop, even per edge:
-   * a CT hop reaching a branch with no columns to map dispatches as BB rather than demand a
-   * `column_flow` it cannot give. Column state selects the contract, never the AI's prune/keep
-   * verdict.
-   */
-  public get currentHopAnalysisMode(): 'bb' | 'ct' {
-    return this.hopModeFromColumnList(this.tracer?.activeColumns);
   }
 
   /**
@@ -2553,7 +2541,7 @@ export class NavigationEngine implements IHopStateMachine {
    * The qualified continuation a follow-up starts from, without inferring new callers or columns. A
    * selected task keeps its own context; a follow-up named by object continues from the committed
    * endpoints that object owns on the traced spine ({@link ColumnTracer.spineEndpointsFor}), or is
-   * an object visit when it has none. Scalar obligations come from the task ledger.
+   * a CT hop with no traced column when it has none. Scalar obligations come from the task ledger.
    *
    * @returns The carry and qualified leg, or `null` when a recorded scalar binding no longer
    *   resolves.
@@ -2566,10 +2554,12 @@ export class NavigationEngine implements IHopStateMachine {
     if (selectedTask?.kind === 'column_lineage' && (selectedTask.callerContext || this.qualifiedTaskRefs(selectedTask)?.length)) {
       return { carry: { kind: 'carry', columns: selectedTask.activeColumns } };
     }
-    if (selectedTask) return { carry: { kind: 'row_role_only' } };
+    if (selectedTask) return { carry: { kind: 'carry', columns: [] } };
     const side = this.columnTraceDirection();
-    const refs = this.tracer.spineEndpointsFor(nodeId, this.writtenCarrierIds(nodeId), side);
-    if (refs.length === 0) return { carry: { kind: 'row_role_only' } };
+    // A delete-only write supplies no column end of its target, so that target adds none here.
+    const carriers = new Set([...this.writtenCarrierIds(nodeId)].filter(id => !this.isDeleteOnlyWrite(nodeId, id)));
+    const refs = this.tracer.spineEndpointsFor(nodeId, carriers, side);
+    if (refs.length === 0) return { carry: { kind: 'carry', columns: [] } };
     return {
       carry: { kind: 'carry', columns: [...new Map(refs.map(ref => [this.columnKey(ref.col), ref.col])).values()] },
       leg: { sourceRefs: refs, traversalSide: side },
@@ -2579,8 +2569,9 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Recovers established scalar obligations for a follow-up without inferring new callers.
    *
-   * @returns The scalar or row-only carry, `null` when the function has no scalar obligation, or
-   *   `'unbound'` when a recorded caller binding no longer resolves in the loaded model.
+   * @returns The scalar carry or a carry of no column, `null` when the function has no scalar
+   *   obligation, or `'unbound'` when a recorded caller binding no longer resolves in the loaded
+   *   model.
    */
   private supplementScalarCarryFor(nodeId: string, selectedTask?: InvestigationTask): ColumnCarry | 'unbound' | null {
     if (!this.tracer || this.nodeMap.get(nodeId)?.type !== 'function') return null;
@@ -2598,7 +2589,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
     return getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined)?.length
       ? null
-      : { kind: 'row_role_only' };
+      : { kind: 'carry', columns: [] };
   }
 
   /**
@@ -2661,10 +2652,10 @@ export class NavigationEngine implements IHopStateMachine {
       const selectedTask = request.taskId ? this.taskLedger.getTask(request.taskId) : undefined;
       const recovered = id && admittedIds.has(id)
         ? this.supplementCarryFor(id, selectedTask)
-        : { carry: { kind: 'row_role_only' } as ColumnCarry, leg: undefined };
+        : { carry: { kind: 'carry', columns: [] } as ColumnCarry, leg: undefined };
       if (!recovered) unbound.push(id!);
-      const { carry, leg } = recovered ?? { carry: { kind: 'row_role_only' } as ColumnCarry, leg: undefined };
-      const replaceTask = !!selectedTask && (carry.kind === 'row_role_only'
+      const { carry, leg } = recovered ?? { carry: { kind: 'carry', columns: [] } as ColumnCarry, leg: undefined };
+      const replaceTask = !!selectedTask && ((!!this.tracer && carry.kind === 'carry' && carry.columns.length === 0)
         || (carry.kind === 'scalar_return' && !(selectedTask.kind === 'column_lineage' && selectedTask.returnTargets)));
       return {
         ...request,
@@ -2759,8 +2750,8 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * The next scheduled navigation hop's details. CT is selected from this entry's merged demand; a
-   * row-only arrival cannot recover columns from another branch's evidence.
+   * The next scheduled navigation hop's details. The traced columns come from this entry's merged
+   * demand; an arrival with no column cannot recover columns from another branch's evidence.
    */
   public getHopContext(): HopContext {
     let entry: AgendaEntry | undefined;
@@ -2818,7 +2809,7 @@ export class NavigationEngine implements IHopStateMachine {
           }
         }
         candidate.activeColumns = [...new Set(candidate.columnCarry.outputs.map(target => target.col))];
-      } else if (this.tracer && candidate.columnCarry?.kind !== 'row_role_only' && candidate.activeColumns?.length) {
+      } else if (this.tracer && candidate.activeColumns?.length) {
         candidate.activeColumns = this.columnsForEntry(candidate);
       }
 
@@ -2998,7 +2989,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     const archivedAngles = this.memory.getArchivedAngles(this.currentFocusNodeId ?? '');
     const merged = this.applyHeldContent(params);
-    const shape = validateHopSubmissionShape(merged, this.currentHopAnalysisMode, this.classification,
+    const shape = validateHopSubmissionShape(merged, this.currentAnalysisMode, this.classification,
       this.heldFindingFocus !== this.currentFocusNodeId && archivedAngles.size === 0);
     if (!shape.ok) {
       const routes = this.submissionRouteFaults(merged);
@@ -3428,7 +3419,6 @@ export class NavigationEngine implements IHopStateMachine {
       finding.verdict === 'analyze' ? 'submitted_analyze' : 'submitted_passthrough',
       {
         columns: this.tracer?.activeColumns,
-        ...(this.tracer ? { columnRole: this.tracer.activeColumns.length > 0 ? 'carrier' as const : 'row_role_only' as const } : {}),
         atHop: this.hopCount,
       },
     );
@@ -3464,6 +3454,7 @@ export class NavigationEngine implements IHopStateMachine {
           lineageQuestions: columnQuestions,
           freshScopeExpansion: isFreshExpansion,
           admitContractedBodiedTarget: !targetIsBodied,
+          keptEndWhenUntraced: !!this.tracer,
         });
       }
       const added = this._agenda.length - agendaSizeBefore;
@@ -3649,7 +3640,7 @@ export class NavigationEngine implements IHopStateMachine {
         const queued = this._agenda.has(id);
         if (queued || id === this.originNodeId || SCRIPT_TYPES.has(node.type)) {
           const unfinished = queued
-            || (this.scopeNodeIds.has(id) && !this.visited.has(id) && !this.removedSet.has(id));
+            || (this.scopeNodeIds.has(id) && !this.visited.has(id) && !this.removedSet.has(id) && !this.isKeptEndNode(id));
           if (unfinished && sidesOf(id).includes(side)) out.add(id);
           continue;
         }
@@ -3753,8 +3744,10 @@ export class NavigationEngine implements IHopStateMachine {
         : `retained because removing it would disconnect previously visited analysis or saved column endpoints: ${analysis.disconnectedVisited.join(', ')}.`;
       this.memory.recordRejection(nodeId, `\`${nodeId}\`: ${refusal}`, this.hopCount);
       this.log('debug', `[Prune] reject id=${nodeId} reason=${analysis.rejection ?? 'visited_support'} count=${analysis.disconnectedVisited.length}`);
-      // A refused prune leaves the object in scope: it is routed like any other kept neighbour (visit-once and scope checks stay in enqueueHop).
-      this.enqueueHop(nodeId, this.memory.getUserQuestion() ?? '', 0, 2, { carry: this.tracer ? { kind: 'row_role_only' } : { kind: 'carry', columns: [] } });
+      // A refused prune leaves the object in scope: it is routed like any other kept neighbour
+      // (visit-once and scope checks stay in enqueueHop); in CT it names no question, so it is a
+      // kept end node.
+      this.enqueueHop(nodeId, this.tracer ? '' : this.memory.getUserQuestion() ?? '', 0, 2, { carry: { kind: 'carry', columns: [] }, keptEndWhenUntraced: !!this.tracer });
     };
     const batch = ready.filter(({ nodeId }) => {
       const alone = this.removalSupport(this.removedSet, new Set([...this.removedSet, nodeId]));
@@ -3795,9 +3788,9 @@ export class NavigationEngine implements IHopStateMachine {
    * `enqueueHop`.
    *
    * A pass node is topology only: no hop records how its columns map to its inputs, so a column
-   * continuation cannot attach beyond it. Neighbours get the shared BB visit with the
-   * source-qualified unresolved question instead of a CT task whose links would all be detached;
-   * qualified scalar caller outputs keep their binding.
+   * continuation cannot attach beyond it. Neighbours get a CT hop with no traced column and the
+   * source-qualified unresolved question instead of a column task whose links would all be
+   * detached; qualified scalar caller outputs keep their binding.
    */
   private contractThroughPassNode(entry: AgendaEntry): void {
     for (const nid of this.directionalNeighbors(entry.nodeId, this._direction)) {
@@ -3810,7 +3803,7 @@ export class NavigationEngine implements IHopStateMachine {
           ? this.passNodeUnresolvedQuestion(entry.nodeId, this.qualifiedTaskRefs(task) ?? task.activeColumns.map(col => ({ node: entry.nodeId, col })))
           : '';
         this.enqueueHop(nid, unresolved ? `${task.question}${task.question ? '\n' : ''}${unresolved}` : task.question, entry.depth + 1, entry.priority, {
-          carry: targets?.length ? { kind: 'scalar_return', outputs: targets } : { kind: 'row_role_only' },
+          carry: targets?.length ? { kind: 'scalar_return', outputs: targets } : { kind: 'carry', columns: [] },
           parentTaskId: validCaller?.callerTaskId ?? task.id,
           ...(validCaller ? { callerContext: validCaller } : {}),
           lineageQuestions: targets?.length ? entry.lineageQuestions : undefined,
@@ -3824,7 +3817,7 @@ export class NavigationEngine implements IHopStateMachine {
   /** The source-qualified question a column continuation leaves at a pass node it cannot cross. */
   private passNodeUnresolvedQuestion(passNodeId: string, refs: ReadonlyArray<{ node: string; col: string }>): string {
     const named = refs.map(ref => `\`${ref.node}.${ref.col}\``).join(', ');
-    this.log('debug', `[Agenda] column continuation stops at pass node=${passNodeId} refs=[${named}] — unresolved, dispatched as BB`);
+    this.log('debug', `[Agenda] column continuation stops at pass node=${passNodeId} refs=[${named}] — unresolved, dispatched with no traced column`);
     return `Column ${named} continues through \`${passNodeId}\`, which the approved scope passes through without analysis; no column mapping through it is recorded, so this continuation stays unresolved.`;
   }
 
@@ -3892,6 +3885,12 @@ export class NavigationEngine implements IHopStateMachine {
        * `route_outcomes`, so a route with no effect is stated, never left `accepted:true`.
        */
       readonly dispositions?: Map<string, RouteSkipDisposition>;
+      /**
+       * CT route of a committed hop (a kept neighbour or a refused prune): an arrival with no
+       * traced column and no question is a kept end node, not a hop. The contraction recursion
+       * inherits it.
+       */
+      readonly keptEndWhenUntraced?: boolean;
     },
   ): void {
     const {
@@ -3908,6 +3907,7 @@ export class NavigationEngine implements IHopStateMachine {
       parentTaskId,
       admitContractedBodiedTarget = false,
       dispositions,
+      keptEndWhenUntraced = false,
     } = opts;
     if (!this.scopeNodeIds.has(targetId) && priority !== 3) {
       const contractedTarget = this.nodeMap.get(targetId);
@@ -3954,8 +3954,13 @@ export class NavigationEngine implements IHopStateMachine {
     if (!this.tracer && activeColumns?.length) {
       throw new Error('BB agenda tasks must not carry active columns');
     }
+    if (keptEndWhenUntraced && !activeColumns?.length && !question.trim()) {
+      if (!this.nodeStates.has(targetId)) this.markNodeState(targetId, 'passthrough', 'engine', 'kept_end_node', { viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined, atHop: this.hopCount });
+      this.log('debug', `[Agenda] kept end node hop=${this.hopCount} id=${targetId} — no traced column, no question`);
+      return;
+    }
     if (SCRIPT_TYPES.has(node.type)) {
-      if (this.tracer && node.type === 'function' && carry.kind === 'row_role_only' && !getNodeColumns(node.id, this.nodeMap, this.store ?? undefined)?.length) {
+      if (this.tracer && node.type === 'function' && !activeColumns?.length && !getNodeColumns(node.id, this.nodeMap, this.store ?? undefined)?.length) {
         question = `${question}${question ? '\n' : ''}No declared scalar caller output binding is available for this function. This visit does not resolve a caller's column contribution; do not invent function columns or return destinations.`;
       }
       const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined, callerContext, sourceRefs, traversalSide);
@@ -3995,14 +4000,13 @@ export class NavigationEngine implements IHopStateMachine {
       ? (this.columnTraceDirection() === 'downstream' ? this.agendaColumnsFor(carry, activeColumns) ?? [] : this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(carry, activeColumns)) ?? [])
       : undefined;
     const carried = ctCarried ?? activeColumns;
-    const forwardedCarry: ColumnCarry = carry.kind === 'row_role_only' ? carry : { kind: 'carry', columns: carried ?? [] };
+    const forwardedCarry: ColumnCarry = { kind: 'carry', columns: carried ?? [] };
     // The carrier resolves the carried names to its own columns; an arrival whose column the carrier
     // does not hold is not an input of the bodied neighbour behind it, so its source ref narrows with the columns.
     const carriedKeys = new Set((carried ?? []).map(col => this.columnKey(col)));
     const carriedRefs = sourceRefs?.filter(ref => carriedKeys.has(this.columnKey(ref.col)));
     this.markNodeState(targetId, 'passthrough', 'engine', 'non_bodied_passthrough', {
       columns: carried,
-      ...(carry.kind === 'row_role_only' ? { columnRole: 'row_role_only' as const } : {}),
       viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined,
       atHop: this.hopCount,
     });
@@ -4011,7 +4015,8 @@ export class NavigationEngine implements IHopStateMachine {
     // A bidirectional origin has no arriving side: each neighbour continues on every side it lies on (a writer that also reads gets both).
     const bothSidesOfOrigin = !!side && !traversalSide && atOrigin && this.effectiveDirection() === 'bidirectional';
     const columnContinuation = side && !bothSidesOfOrigin ? new Set(this.directionalNeighbors(targetId, side)) : null;
-    // Downstream first: a delete-only writer's upstream leg is a relevance check only, so the question-carrying leg is its first task.
+    // Downstream first: a delete-only writer's upstream leg forwards no question, so the
+    // question-carrying leg is its first task.
     const legs: Array<[string, typeof side]> = bothSidesOfOrigin
       ? (['downstream', 'upstream'] as const).flatMap(leg => this.directionalNeighbors(targetId, leg).map((nid): [string, typeof side] => [nid, leg]))
       : this.directionalNeighbors(targetId, this._direction).map(nid => [nid, side]);
@@ -4020,23 +4025,24 @@ export class NavigationEngine implements IHopStateMachine {
       // Only a walk toward the writers reaches `nid` through its delete: downstream, the same node is a reader of `targetId`.
       const deleteOnly = !!this.tracer && (nidSide ?? this.columnTraceDirection()) === 'upstream' && this.isDeleteOnlyWrite(nid, targetId);
       const continues = !deleteOnly && (columnContinuation === null || columnContinuation.has(nid));
-      const neighborCarry = forwardedCarry.kind === 'row_role_only' || deleteOnly
-        ? { kind: 'row_role_only' as const }
-        : continues ? forwardedCarry : { kind: 'carry' as const, columns: [] };
+      // A delete-only writer tracks the forwarded columns (its predicate is their indirect filter
+      // column); the question, lineage questions and traversal side stop at it.
+      const tracks = continues || deleteOnly;
+      const neighborCarry = tracks ? forwardedCarry : { kind: 'carry' as const, columns: [] };
       const questioned = question.trim().length > 0;
       const reAnchor = deleteOnly
         ? buildDeleteOnlyRelevanceCheck(targetId, nid, carried ?? [])
         : continues && neighbor && SCRIPT_TYPES.has(neighbor.type) && !atOrigin
-          ? buildPassthroughReAnchor(targetId, nid, this.carryAnalysisMode(neighborCarry), questioned)
+          ? buildPassthroughReAnchor(targetId, nid, neighborCarry.kind === 'carry' && neighborCarry.columns.length > 0, questioned)
           : '';
       if (!continues) {
-        this.log('debug', `[Agenda] ${deleteOnly ? 'relevance check only' : 'question not forwarded'} hop=${this.hopCount} id=${nid} ← ${targetId} reason=${deleteOnly ? 'delete_only' : 'other_side'}`);
+        this.log('debug', `[Agenda] ${deleteOnly ? 'delete-only relevance check' : 'question not forwarded'} hop=${this.hopCount} id=${nid} ← ${targetId} reason=${deleteOnly ? 'delete_only' : 'other_side'}`);
       }
       const forwarded = continues ? `${question}${reAnchor}` : deleteOnly ? reAnchor : '';
       this.enqueueHop(nid, forwarded, depth + 1, priority, {
         carry: neighborCarry, lineageQuestions: continues ? lineageQuestions : undefined,
-        visitedRefs: new Set(visitedRefs), contractedContexts, parentTaskId, callerContext, sourceRefs: continues && carriedRefs?.length ? carriedRefs : undefined,
-        traversalSide: continues ? nidSide : undefined, admitContractedBodiedTarget, dispositions,
+        visitedRefs: new Set(visitedRefs), contractedContexts, parentTaskId, callerContext, sourceRefs: tracks && carriedRefs?.length ? carriedRefs : undefined,
+        traversalSide: continues ? nidSide : undefined, admitContractedBodiedTarget, dispositions, keptEndWhenUntraced,
       });
     }
   }
@@ -4072,7 +4078,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private columnsForEntry(entry: AgendaEntry): string[] {
     const columns = entry.activeColumns ?? [];
-    if (!this.tracer || entry.columnCarry?.kind === 'row_role_only') return [];
+    if (!this.tracer) return [];
     if (this.columnTraceDirection() === 'downstream') return [...columns];
     const tasks = entry.taskIds.flatMap(id => this.taskLedger.getTask(id) ?? []);
     const refs = tasks.flatMap(task => task.kind === 'column_lineage' ? task.sourceRefs ?? [] : []);
@@ -4107,22 +4113,7 @@ export class NavigationEngine implements IHopStateMachine {
     const byKey = new Map<string, string>();
     for (const col of carryByNode.get(nodeId) ?? []) if (!byKey.has(this.columnKey(col))) byKey.set(this.columnKey(col), col);
     const columns = [...byKey.values()];
-    return columns.length > 0 ? { kind: 'carry', columns } : { kind: 'row_role_only' };
-  }
-
-  /**
-   * The analysis mode one branch is dispatched under, read from the carry it is enqueued with: the
-   * earlier counterpart of {@link currentHopAnalysisMode}, where the carry is the only evidence.
-   * `ct` when the branch may still carry a traced column, else `bb`.
-   */
-  private carryAnalysisMode(carry: ColumnCarry): 'bb' | 'ct' {
-    return this.hopModeFromColumnList(carry.kind === 'row_role_only' ? [] : carry.kind === 'scalar_return' ? carry.outputs.map(target => target.col) : carry.columns);
-  }
-
-  /** Empty or absent columns (or no tracer) dispatch as BB; a named column set is CT. */
-  private hopModeFromColumnList(columns: readonly string[] | undefined): 'bb' | 'ct' {
-    if (!this.tracer) return 'bb';
-    return (columns?.filter(Boolean).length ?? 0) > 0 ? 'ct' : 'bb';
+    return { kind: 'carry', columns };
   }
 
   /**
@@ -4132,7 +4123,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private carryToRecord(carry: ColumnCarry): { columnCarry?: ColumnCarry } {
     if (!this.tracer) return {};
-    return { columnCarry: carry.kind === 'carry' ? { kind: 'carry', columns: [...carry.columns] } : carry.kind === 'scalar_return' ? { kind: 'scalar_return', outputs: carry.outputs.map(target => ({ ...target })) } : { ...carry } };
+    return { columnCarry: carry.kind === 'carry' ? { kind: 'carry', columns: [...carry.columns] } : { kind: 'scalar_return', outputs: carry.outputs.map(target => ({ ...target })) } };
   }
 
   /**
@@ -4143,7 +4134,6 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private agendaColumnsFor(carry: ColumnCarry, activeColumns: string[] | undefined): string[] | undefined {
     if (!this.tracer) return undefined;
-    if (carry.kind === 'row_role_only') return [];
     if (carry.kind === 'scalar_return') return [...new Set(carry.outputs.map(target => target.col))];
     if (activeColumns !== undefined) return activeColumns;
     const fallback = this.tracer.targetColumns;

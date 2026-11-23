@@ -1130,7 +1130,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { phase: 'active_coordinator' };
     }
 
-    const hopMode = engine.currentHopAnalysisMode;
+    const hopMode = engine.currentAnalysisMode;
     const systemInstruction = getActiveInstructionCached(state, sess, getCtx(state), hopMode, focusId);
 
     const progress = engine.hopProgress;

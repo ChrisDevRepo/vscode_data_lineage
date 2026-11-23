@@ -108,12 +108,14 @@ const NodeStateSchema = z.object({
     'bb_prune_neighbor',
     'user_pass_filter',
     'non_bodied_passthrough',
+    'kept_end_node',
   ]),
   columns: z.array(NonEmptyString).optional(),
   columnRole: z.enum(['carrier', 'row_role_only']).optional(),
   viaNodeId: NonEmptyString.optional(),
   atHop: NonNegativeInt.optional(),
-}).strict();
+  // `columnRole` of a snapshot saved by an earlier version is read and dropped.
+}).strict().transform(({ columnRole: _legacyColumnRole, ...state }) => state);
 
 const DetailSlotSchema = z.object({
   nodeId: NonEmptyString,
@@ -213,10 +215,14 @@ const InitSnapshotSchema = z.discriminatedUnion('analysisMode', [
   }).strict(),
 ]);
 
-const ColumnCarrySchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('carry'), columns: z.array(NonEmptyString) }).strict(),
-  z.object({ kind: z.literal('row_role_only') }).strict(),
-  z.object({ kind: z.literal('scalar_return'), outputs: ScalarReturnTargetsSchema }).strict(),
+const ColumnCarrySchema = z.union([
+  z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('carry'), columns: z.array(NonEmptyString) }).strict(),
+    z.object({ kind: z.literal('scalar_return'), outputs: ScalarReturnTargetsSchema }).strict(),
+  ]),
+  // A snapshot saved by an earlier version marks a no-column arrival `row_role_only`: it loads as a
+  // carry of no column.
+  z.object({ kind: z.literal('row_role_only') }).strict().transform(() => ({ kind: 'carry' as const, columns: [] })),
 ]);
 
 const AgendaEntrySchema = z.object({

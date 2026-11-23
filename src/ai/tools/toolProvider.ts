@@ -250,7 +250,7 @@ class ToolHandler implements ToolServices {
     const phase = sess.phase.kind;
     const engine = sess.stateMachine;
     if (phase === 'exploring' && engine) {
-      const mode = activeModeOf(engine.currentHopAnalysisMode === 'ct');
+      const mode = activeModeOf(engine.currentAnalysisMode === 'ct');
       return { kind: 'active', mode };
     }
     if (phase === 'completed') return { kind: 'completed' };

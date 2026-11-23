@@ -41,7 +41,9 @@ export type SmNodeStateReason =
   | 'submitted_prune'
   | 'bb_prune_neighbor'
   | 'user_pass_filter'
-  | 'non_bodied_passthrough';
+  | 'non_bodied_passthrough'
+  /** CT: a kept neighbor no traced column reaches and no question names; it gets no hop. */
+  | 'kept_end_node';
 
 /**
  * Process state for one node in the SM traversal; the source of truth for lifecycle state.
@@ -57,13 +59,6 @@ export interface SmNodeState {
   reason: SmNodeStateReason;
   /** Traced columns bound to the node; absent in BB sessions. */
   columns?: string[];
-  /**
-   * Column-trace role at the hop that dispatched this node — a carrier of traced columns, or a
-   * node that only decides which rows the answer returns. Absent in BB and on any node no hop has
-   * dispatched yet; `columns` cannot express it, because an empty column set and an unstated one
-   * are both dropped from the record.
-   */
-  columnRole?: SmNodeColumnRole;
   /** Focus node this state was recorded from. */
   viaNodeId?: string;
   /** Hop index at which this state was recorded. */
@@ -285,21 +280,13 @@ export interface FunctionCallerContext extends ScalarReturnTarget {
 }
 
 /**
- * Explicit per-neighbor column demand: ordinary columns, row-only investigation, or
+ * Explicit per-neighbor column demand: ordinary columns (empty: no traced column) or
  * compiler-declared scalar caller outputs. Qualified outputs stay separate when callers share a
  * column name.
  */
 export type ColumnCarry =
   | { readonly kind: 'carry'; readonly columns: readonly string[] }
-  | { readonly kind: 'row_role_only' }
   | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
-
-/**
- * How a node served the traced columns at the hop that dispatched it. Orthogonal to
- * {@link SmNodeAction} and {@link SmNodeStateReason} (what happened and why): the role is its own
- * field so it survives a later, stronger verdict.
- */
-export type SmNodeColumnRole = 'carrier' | 'row_role_only';
 
 /**
  * Per-route outcome in a successful `submitFindings` return. Engine-side only: the tool returns the
@@ -893,7 +880,7 @@ export interface SmState {
     activeColumns?: string[];
     /** CT chain-continuation questions an earlier hop opened for this node, owned by this entry. */
     lineageQuestions?: string[];
-    /** Per-neighbour column-carry decision that survived contraction (`carry`/`row_role_only`). */
+    /** Per-neighbour column-carry decision that survived contraction (`carry`/`scalar_return`). */
     columnCarry?: ColumnCarry;
   }>;
   currentFocusNodeId: string | null;

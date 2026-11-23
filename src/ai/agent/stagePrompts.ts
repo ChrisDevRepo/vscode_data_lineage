@@ -132,11 +132,9 @@ export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptConte
 
 /**
  * Composes the active stable prefix and YAML provenance for `hopMode`, the contract this hop is
- * dispatched under. The mode is the HOP's ({@link NavigationEngine.currentHopAnalysisMode}), not
- * the session's: a CT session reaches branches carrying none of the traced columns, and a hop with
- * no column to map assembles through the plain BB path rather than a CT contract with its column
- * blocks suppressed, which would ask a column-less focus for a `column_flow` account it cannot
- * give.
+ * dispatched under: the analysis mode ({@link NavigationEngine.currentAnalysisMode}). Every hop
+ * of a CT analysis is a CT hop, including one with no traced column; BB hops belong to a BB
+ * analysis.
  *
  * The prefix is byte-identical for every hop of one mode, so the prefix cache holds across
  * same-mode hops; a mode change is a real contract change and earns its miss.
@@ -204,7 +202,7 @@ interface ActiveHopInstruction {
 
 /** Builds the active-hop user message with its focus-sensitive YAML provenance. */
 export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEngine, focusId: string): ActiveHopInstruction {
-  const isCtMode = engine.currentHopAnalysisMode === 'ct';
+  const isCtMode = engine.currentAnalysisMode === 'ct';
   const currentTask = buildCurrentTaskBlock(
     engine.getCurrentTasks(),
     isCtMode ? engine.columnAspect?.active_columns : undefined,

@@ -24,9 +24,9 @@ export interface AgendaEntry {
   activeColumns?: string[];
   /**
    * The router's per-neighbor column decision for this hop, as authored; distinct from
-   * `activeColumns`, the engine's resolved projection rewritten at dispatch. Only `row_role_only`
-   * changes dispatch; `carry` is already expressed by `activeColumns`. Absent on a checkpoint
-   * written before this field existed and on a BB entry, which carries no column state.
+   * `activeColumns`, the engine's resolved projection rewritten at dispatch; `carry` is already
+   * expressed by `activeColumns`. Absent on a checkpoint written before this field existed and on
+   * a BB entry, which carries no column state.
    */
   columnCarry?: ColumnCarry;
   /**
@@ -38,10 +38,10 @@ export interface AgendaEntry {
 }
 
 /**
- * Unions column demands; a row-only arrival cannot erase an existing demand. A scalar-return demand
- * on either side selects the entry's carry (only the qualified scalar outputs); the other side's
- * ordinary demand stays on its own task, kept in `taskIds`, and {@link ordinaryColumnsBeside} names
- * those columns.
+ * Unions column demands; an arrival with no column cannot erase an existing demand. A
+ * scalar-return demand on either side selects the entry's carry (only the qualified scalar
+ * outputs); the other side's ordinary demand stays on its own task, kept in `taskIds`, and
+ * {@link ordinaryColumnsBeside} names those columns.
  */
 function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined, identifierCaseSensitive = false): ColumnCarry | undefined {
   if (existing?.kind === 'scalar_return' || incoming?.kind === 'scalar_return') {
@@ -108,7 +108,6 @@ function worklistRank(entry: AgendaEntry, view: WorklistView, prerequisites: Rea
 
 /** Only this arrival's persisted demand selects CT; global provenance never selects a tier. */
 function hasColumnWork(entry: AgendaEntry): boolean {
-  if (entry.columnCarry?.kind === 'row_role_only') return false;
   return entry.columnCarry?.kind === 'scalar_return'
     || (entry.activeColumns?.length ?? 0) > 0;
 }
@@ -233,9 +232,7 @@ export class AgendaManager {
       if (beside.length > 0) this.onSeparateCarry?.(entry.nodeId, beside);
       const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry, this.identifierCaseSensitive);
       if (carry) existing.columnCarry = carry;
-      if (carry?.kind === 'row_role_only') {
-        existing.activeColumns = [];
-      } else if (carry?.kind === 'scalar_return') {
+      if (carry?.kind === 'scalar_return') {
         existing.activeColumns = mergeUnique(carry.outputs.map(o => o.col), [], this.identifierCaseSensitive);
       } else if (entry.activeColumns) {
         existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns, this.identifierCaseSensitive);

@@ -334,10 +334,10 @@ export class ColumnTracer {
         invalidRoutes.push({ kind: 'absent_contributor', id: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to target "${entry.writes_to.node}" is absent from the loaded model.` });
         continue;
       }
+      const verbs = new Set<string>();
       if (entry.writes_to && toNodeObj && toNodeId && identifierKey(toNodeId) !== identifierKey(focusId)) {
         const focusLower = identifierKey(focusId);
         const toLower = identifierKey(toNodeId);
-        const verbs = new Set<string>();
         for (const e of model.edges) {
           if (identifierKey(e.source) === focusLower && identifierKey(e.target) === toLower) {
             verbs.add(edgeApiType(e, focusNode.type));
@@ -471,9 +471,11 @@ export class ColumnTracer {
         });
       }
 
+      // A delete-only write supplies no value: its target gets no writer edge.
+      const deleteOnlyTarget = verbs.size > 0 && [...verbs].every(verb => verb === 'delete');
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
-      if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
+      if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type) && !deleteOnlyTarget
         && (entry.upstream_columns.length === 0 || (directStaged ? anchors.has(endpointKey(focusId, entry.out_col)) : indirectSeen))) {
         stagedEdges.push({
           hop: 0, // Assigned by caller

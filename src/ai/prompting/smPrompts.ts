@@ -14,27 +14,33 @@ import { isIndirectOnly } from '../../engine/shared/bridgeContract';
  * Suffix appended when a passthrough-inherited sub-question lands on a bodied focus: names the
  * passthrough provenance and re-anchors the verbatim question onto the new focus.
  *
- * @param mode - Mode of the BRANCH the question is forwarded on, not of the session: the column
- *   clause is added only for a branch that carries a traced column.
+ * @param tracedColumn - Whether the forwarded branch carries a traced column; only then is the
+ *   column clause added.
  * @param questioned - False when the forwarded question has no text; the suffix is then the whole
  *   sub-question, names the original question and has no leading newline.
  */
-export function buildPassthroughReAnchor(passthroughId: string, focusId: string, mode: 'bb' | 'ct', questioned = true): string {
+export function buildPassthroughReAnchor(passthroughId: string, focusId: string, tracedColumn: boolean, questioned = true): string {
   const anchor = questioned ? `re-anchor this question to ${focusId}` : `continue the original question at ${focusId}`;
   const reAnchor = `${questioned ? '\n' : ''}(Inherited through passthrough ${passthroughId}; ${anchor}. ${focusId} applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.`;
-  return mode === 'ct' ? `${reAnchor} Ground that in the traced column.)` : `${reAnchor})`;
+  return tracedColumn ? `${reAnchor} Ground that in the traced column.)` : `${reAnchor})`;
 }
 
 /**
  * Spec-02 relevance check for a writer reached through a passthrough table whose write to the table
- * only deletes rows: that write supplies no data, so the writer gets the check, not the column task.
- * It is the whole sub-question: the inherited question is addressed to the passthrough table.
+ * only deletes rows: that write supplies no direct lineage, so the writer's CT hop gets the check
+ * together with a column task on the forwarded columns, whose indirect filter columns its WHERE
+ * columns are. It is the whole sub-question: the inherited question is addressed to the
+ * passthrough table.
  *
- * @param columns - Columns forwarded to the passthrough; empty: the column clause is omitted.
+ * @param columns - Columns forwarded to the passthrough; empty: the column clause and the
+ *   `column_flow` shape of the delete are omitted.
  */
 export function buildDeleteOnlyRelevanceCheck(passthroughId: string, focusId: string, columns: readonly string[]): string {
   const touch = columns.length > 0 ? `; does it touch the forwarded columns [${columns.join(', ')}]` : '';
-  return `(Relevance check through passthrough ${passthroughId}: ${focusId} writes to it only by deleting rows. Does ${focusId} matter for the question at all${touch}?)`;
+  const flow = columns.length > 0
+    ? ` Its delete is its write to ${passthroughId} and copies no value: each forwarded column's \`column_flow\` entry has \`writes_to\` that column on ${passthroughId} and, as its only sources, the columns that decide which rows it deletes, as indirect \`filter\` or \`combine\` sources. Its other reads of ${passthroughId} are no source here; state them in the sections.`
+    : '';
+  return `(Relevance check through passthrough ${passthroughId}: ${focusId} writes to it only by deleting rows. Does ${focusId} matter for the question at all${touch}?${flow})`;
 }
 
 /**
@@ -319,7 +325,8 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  * `node_states` entry is their only trace, so without grounded facts the model drops them from
  * sections/highlights/notes.
  *
- * Facts only, from {@link SmResult.edges}, `fullNodes` (type) and `node_states` (action);
+ * Facts only, from {@link SmResult.edges}, `fullNodes` (type) and `node_states` (action; a kept end
+ * node, which no hop read, is `kept, not analyzed`);
  * `fullNodes` already excludes pruned nodes. A CT dependency carrying no traced value is kept and
  * unslotted, so it appears here too. A qualifying node with no `node_states` entry was never
  * dispositioned (scope reachability alone put it in the render), so it lists under its own heading
@@ -332,7 +339,7 @@ function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = f
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
   const slottedIds = new Set(result.detail_slots.map(s => lc(s.nodeId)));
   const prunedIds = new Set(result.node_states.filter(s => s.action === 'prune').map(s => lc(s.nodeId)));
-  const actionById = new Map(result.node_states.map(s => [lc(s.nodeId), s.action]));
+  const stateById = new Map(result.node_states.map(s => [lc(s.nodeId), s]));
   const flowFacts = computeNodeFlowFacts(result.edges, identifierCaseSensitive);
 
   const qualifying = result.fullNodes
@@ -342,12 +349,13 @@ function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = f
   if (qualifying.length === 0) return '';
 
   const renderLine = (n: { id: string; type: string }): string => {
-    const descriptor = [n.type, actionById.get(n.id)].filter(Boolean).join(', ');
+    const state = stateById.get(n.id);
+    const descriptor = [n.type, state?.reason === 'kept_end_node' ? 'kept, not analyzed' : state?.action].filter(Boolean).join(', ');
     const prefix = descriptor ? ` — ${descriptor}` : '';
     return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id))}`;
   };
-  const dispositioned = qualifying.filter(n => actionById.has(n.id));
-  const undispositioned = qualifying.filter(n => !actionById.has(n.id));
+  const dispositioned = qualifying.filter(n => stateById.has(n.id));
+  const undispositioned = qualifying.filter(n => !stateById.has(n.id));
 
   return [
     'Kept nodes without a detail slot (engine flow facts). Document each in the section of its writer or reader — what it holds for this flow, the predicate it is read or written under, the row grain it lands at, from that writer\'s or reader\'s captured SQL — and give it a `sections[].node_ids` or `notes[].node_id` entry:',
