@@ -479,7 +479,7 @@ const PRUNE_NEIGHBORS_DESCRIPTION =
 const NEIGHBOR_ID_DESCRIPTION = 'A neighbor id from `<hop_context>`.';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off-answer. */
-const PruneNeighborSchema = z.object({
+export const PruneNeighborSchema = z.object({
   id: z.string().min(1).describe(NEIGHBOR_ID_DESCRIPTION),
   reason: z.string().min(1).describe('What in this node\'s SQL shows the neighbor is off the answer.'),
 }).strict();
@@ -824,9 +824,23 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   return hop.outCols?.length === 0 ? flow.max(0) : flow;
 }
 
-/** The `column_flow` field a hop serves, for checking that field on its own. */
-function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
+/** The `column_flow` field a hop serves, for checking that field or one entry on its own. */
+export function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
   return hop ? columnFlowSchemaForHop(hop) : ColumnFlowSchema;
+}
+
+/**
+ * The `questions[]` item a hop serves: BB has no `caller_context`; a CT hop that names its
+ * function neighbours serves `caller_context` for those ids only.
+ */
+export function hopQuestionSchema(mode: 'bb' | 'ct', hop?: SubmitFindingsHopColumns) {
+  if (mode !== 'ct') return NeighborQuestionSchema;
+  if (!hop?.callerContextNodeIds) return CtNeighborQuestionSchema;
+  const [first, ...rest] = hop.callerContextNodeIds;
+  return first === undefined ? NeighborQuestionSchema : z.union([
+    NeighborQuestionSchema,
+    CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]).describe(NEIGHBOR_ID_DESCRIPTION) }),
+  ]);
 }
 
 /**
@@ -865,12 +879,7 @@ export function submitFindingsSchemaForMode(
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
   if (hopKey && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
-    const [first, ...rest] = hop.callerContextNodeIds;
-    const question = first === undefined ? NeighborQuestionSchema : z.union([
-      NeighborQuestionSchema,
-      CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]).describe(NEIGHBOR_ID_DESCRIPTION) }),
-    ]);
-    narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
+    narrowed = narrowed.extend({ questions: z.array(hopQuestionSchema(mode, hop)).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }
   if (classification) {
     const dropped = CLASSIFICATION_KEPT_ANGLES.both.filter(angle => !CLASSIFICATION_KEPT_ANGLES[classification].includes(angle));
