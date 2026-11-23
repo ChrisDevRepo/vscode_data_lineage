@@ -1348,7 +1348,8 @@ async function handleTableStatsRequestHost(
       void postToDetail(panel, { type: 'table-stats-error', objectRef, message: reported.message }, logger);
       return;
     }
-    host.log('error', 'Stats', 'Profiling failed', err);
+    host.log('error', 'Stats', 'Profiling failed', { code: err instanceof Error ? err.name : typeof err });
+    host.log('debug', 'Stats', `Profiling failed — ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
     void postToDetail(panel, { type: 'table-stats-error', objectRef, message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
   } finally {
     if (session) {
