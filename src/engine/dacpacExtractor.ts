@@ -34,6 +34,11 @@ interface DacpacExtractionOptions {
   externalRefsEnabled?: boolean;
   /** Checked metadata returned by this extractor's schema preview; absent preserves CI. */
   identifierCaseSensitive?: boolean;
+  /**
+   * Explicit current-database identity supplied by the caller; package names are not database
+   * identity.
+   */
+  databaseName?: string;
 }
 
 function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 'procedure' | 'function', number> {
@@ -144,7 +149,7 @@ function buildDacpacModel(
     objects,
     deps,
     extractObjectsLightweight(allElements, identifierCaseSensitive),
-    undefined,
+    options.databaseName,
     options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
     onDebugLog,
     identifierCaseSensitive,
