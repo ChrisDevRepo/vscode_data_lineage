@@ -670,7 +670,7 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Resolved model node ids named anywhere in `column_flow` (`upstream_columns`, `writes_to`,
    * `returns_to`). Reads the raw entries so a schema-failed entry still raises its
-   * `prune_column_conflict` in the first rejection (DEF-796, neighbor-action-conflict.test.ts:236).
+   * `prune_column_conflict` in the first rejection.
    */
   private readableColumnFlowEndpoints(rawFlow: unknown): string[] {
     if (!Array.isArray(rawFlow)) return [];
