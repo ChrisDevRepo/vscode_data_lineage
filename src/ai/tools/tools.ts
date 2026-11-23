@@ -209,7 +209,8 @@ function validateQuery(query: string): ToolRejection | null {
  * that tags them, so a per-heading number served here cannot drift from the list it heads.
  * `name_match` resolves a typed object name: rows whose name equals the query, narrowed to the
  * user's filtered scope when any sits in it, as `unique` or `ambiguous` with ids; absent for regex,
- * list-all and substring-only hits.
+ * list-all and substring-only hits. `filter_context` is served only when the user filter hides
+ * an object.
  *
  * @param offeredTools - The tools the current stage serves (`getAllowedLmToolNames`); a hint names
  *   only these.
@@ -350,7 +351,7 @@ export async function searchObjects(
   const resolvedIds = (inScopeRows.length > 0 ? inScopeRows : exactNameRows).map(r => String((r as Record<string, unknown>).id));
 
   const visibleNodeCount = countVisibleNodes(model, activeFilter);
-  const filterContext = {
+  const filterContext = visibleNodeCount < model.nodes.length ? {
     active_schemas: activeFilter?.schemas?.length ? activeFilter.schemas : null,
     active_types: activeFilter?.types?.length ? activeFilter.types : null,
     focus_schemas: activeFilter?.focusSchemas?.length ? activeFilter.focusSchemas : null,
@@ -358,13 +359,13 @@ export async function searchObjects(
     visible_node_count: visibleNodeCount,
     total_node_count: model.nodes.length,
     all_schemas: [...new Set(model.nodes.map(n => n.schema))],
-  };
+  } : null;
 
   const base = {
     results: taggedResults,
     total: taggedResults.length,
     by_type: byType,
-    filter_context: filterContext,
+    ...(filterContext ? { filter_context: filterContext } : {}),
     ...(resolvedIds.length > 0 ? { name_match: { status: resolvedIds.length === 1 ? 'unique' : 'ambiguous', ids: resolvedIds } } : {}),
     ...(columnCursor !== undefined ? { next_cursor: columnCursor } : {}),
   };
