@@ -17,7 +17,7 @@
  * duplicate-read identity and input hashes — read by dispatch, never rendered to the model.
  */
 import { createHash } from 'node:crypto';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { AIMessage, trimMessages } from '@langchain/core/messages';
 import {
   messageContentToText,
@@ -45,14 +45,17 @@ import type {
 } from '../model/modelPort';
 import {
   buildToolExecutionError,
+  combineToolRejections,
   DUPLICATE_CALL_ID_REPAIR_HINT,
   INVALID_TOOL_INPUT_REPAIR_HINT,
   makeRejection,
   readToolError,
+  rejectionFromZodError,
   renderFaults,
   renderLastFeedbackHelp,
   isServedField,
   unsentRequiredFields,
+  zodFieldRepairHint,
   type ToolError,
   type ToolRejection,
   UNKNOWN_TOOL_REPAIR_HINT,
@@ -655,6 +658,41 @@ function withRepairHint(data: ToolOutcomeData, sentence: string): ToolOutcomeDat
   return { ...data, correction: { ...data.correction, hint: hint ? `${hint} ${sentence}` : sentence } };
 }
 
+/**
+ * A notation rejection united with the served schema's faults of the same reply, so the retry learns
+ * every fault: the schema faults carry their field repair as the submit handler states it. A fault
+ * at or under a notation path is the notation's own and stays unstated.
+ *
+ * @returns The united rejection, or `null` when every schema fault is the notation's own.
+ */
+function notationWithSchemaFaults(
+  call: Extract<GeneratedToolCall, { valid: false }>,
+  error: z.ZodError,
+  schema: z.ZodType | undefined,
+): ToolOutcomeData | null {
+  const notation = call.issuePaths ?? [];
+  const own = (path: string) => notation.some(at => path === at || path.startsWith(`${at}.`));
+  const issues = error.issues.flatMap((issue): z.core.$ZodIssue[] => {
+    if (issue.code !== 'unrecognized_keys') return own(issue.path.join('.')) ? [] : [issue];
+    const keys = issue.keys.filter(key => !own([...issue.path, key].join('.')));
+    return keys.length > 0 ? [{ ...issue, keys }] : [];
+  });
+  if (issues.length === 0) return null;
+  const faults = new z.ZodError(issues);
+  return outcomeOfRejection(combineToolRejections([
+    makeRejection({
+      code: call.code,
+      reason: call.reason,
+      hint: call.hint,
+      errors: notation.map(path => ({ path, code: REJECTION_CODES.toolCallNotation, stated: true })),
+    }),
+    {
+      ...rejectionFromZodError(faults, { code: REJECTION_CODES.invalidInput, input: call.input, schema }),
+      hint: zodFieldRepairHint(faults, call.input, schema),
+    },
+  ]));
+}
+
 function modelToolDefinitions(registry: IToolRegistry<string>): ModelToolDefinition[] {
   return registry.getTools().map((tool) => ({
     name: tool.name,
@@ -715,25 +753,29 @@ function rejectionFromInvalid(
 function rejectionFromResult(resultText: string): ToolOutcomeData | null {
   try {
     const rejection = readToolError(JSON.parse(resultText));
-    if (!rejection) return null;
-    return {
-      status: 'rejected',
-      code: rejection.code,
-      message: rejection.reason,
-      ...(rejection.detail !== undefined
-        ? { detail: boundStructuredValue(rejection.detail, MAX_REJECTION_DETAIL_BYTES) }
-        : {}),
-      correction: {
-        ...(rejection.hint ? { hint: rejection.hint } : {}),
-        ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
-        ...(rejection.entryIds ? { entryIds: rejection.entryIds } : {}),
-        ...(rejection.errors ? { errors: rejection.errors } : {}),
-        ...(rejection.held ? { held: rejection.held } : {}),
-      },
-    };
+    return rejection ? outcomeOfRejection(rejection) : null;
   } catch {
     return null;
   }
+}
+
+/** The rejected outcome of a {@link ToolRejection}, its detail bounded. */
+function outcomeOfRejection(rejection: ToolRejection): ToolOutcomeData {
+  return {
+    status: 'rejected',
+    code: rejection.code,
+    message: rejection.reason,
+    ...(rejection.detail !== undefined
+      ? { detail: boundStructuredValue(rejection.detail, MAX_REJECTION_DETAIL_BYTES) }
+      : {}),
+    correction: {
+      ...(rejection.hint ? { hint: rejection.hint } : {}),
+      ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
+      ...(rejection.entryIds ? { entryIds: rejection.entryIds } : {}),
+      ...(rejection.errors ? { errors: rejection.errors } : {}),
+      ...(rejection.held ? { held: rejection.held } : {}),
+    },
+  };
 }
 
 /** Result of one dispatched or synthesized call, ready to become its {@link ModelMessage}. */
@@ -1196,7 +1238,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     }
     if (ONE_CALL_PER_REPLY_TOOLS.has(call.toolName)) evaluatedOncePerReply.set(call.toolName, call.callId);
     if (!call.valid) {
-      const rejected = rejectionFromInvalid(call, input.registry);
+      let rejected = rejectionFromInvalid(call, input.registry);
       const argumentRejected = isArgumentRejection(call.code);
       const schemaRejected = call.code === REJECTION_CODES.invalidToolInput;
       const schema = () => input.registry.get(call.toolName)?.inputSchema;
@@ -1204,11 +1246,15 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       let held: HeldSubmissionParts | null | undefined;
       if (argumentRejected && call.toolName === SUBMIT_FINDINGS_TOOL) {
         // The call's valid parts are held. Notation is found before the schema check, so the
-        // served schema's own faults fail their fields too.
-        const served = schema()?.safeParse(call.input);
+        // served schema's own faults fail their fields too and are stated with the notation.
+        const servedSchema = schema();
+        const served = servedSchema?.safeParse(call.input);
         const schemaPaths = served && !served.success ? served.error.issues.map(issue => issue.path.join('.')) : [];
         held = input.holdRejectedSubmission?.(call.input, [...(call.issuePaths ?? []), ...schemaPaths]);
         if (held) resend = undefined;
+        if (served && !served.success && call.code === REJECTION_CODES.toolCallNotation) {
+          rejected = notationWithSchemaFaults(call, served.error, servedSchema) ?? rejected;
+        }
       } else if (schemaRejected && call.toolName === PRESENT_RESULT_TOOL && input.holdRejectedPresentResult) {
         const repair = input.holdRejectedPresentResult(call.input, call.issuePaths ?? []);
         if (repair) resend = repair;

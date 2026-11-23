@@ -927,10 +927,11 @@ function unwrapNullable(node: JsonSchemaShape): JsonSchemaShape {
 }
 
 /**
- * Hint for `unrecognized_keys` issues: the key is no field, and the fields of the object it sits in
- * are named so a misspelt key is renamed and an invented one dropped (the call itself is the object
- * for a root issue). A root key that a list entry of the call defines is answered with that list,
- * so a flattened entry is moved back instead of dropped.
+ * Hint for `unrecognized_keys` issues: the key is no field, it is removed where it was sent (each
+ * concrete path), and the fields of the object it sits in are named so a misspelt key is renamed
+ * (the call itself is the object for a root issue). A key that an entry of a list in that object
+ * defines is moved from where it was sent into an entry of that list instead of removed, so a
+ * flattened entry key keeps its value.
  *
  * @returns The object-directed hint; `undefined` when the schema is absent or does not resolve the
  *   object, so the caller keeps the key-only wording.
@@ -938,33 +939,48 @@ function unwrapNullable(node: JsonSchemaShape): JsonSchemaShape {
 function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined): string | undefined {
   const issues = error.issues.filter((issue) => issue.code === 'unrecognized_keys');
   if (issues.length === 0) return undefined;
-  const clauses = new Map<string, { keys: Set<string>; allowed: string[] }>();
-  const homes = new Map<string, Set<string>>();
+  const clauses = new Map<string, { at: Map<string, Set<string>>; homes: Map<string, Set<string>>; allowed: string[] }>();
   for (const issue of issues) {
     const node = jsonSchemaNodeAt(schema, issue.path);
     const properties = (node ? unwrapNullable(node) : undefined)?.properties ?? {};
     const allowed = Object.keys(properties);
     if (allowed.length === 0) return undefined;
-    if (issue.path.length === 0) {
-      for (const [list, listNode] of Object.entries(properties)) {
-        const entry = unwrapNullable(listNode).items;
-        const entryKeys = new Set([entry, ...(entry?.anyOf ?? []), ...(entry?.oneOf ?? [])].flatMap(variant => Object.keys(variant?.properties ?? {})));
-        for (const key of issue.keys) {
-          if (entryKeys.has(key)) homes.set(list, (homes.get(list) ?? new Set<string>()).add(key));
-        }
+    const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '') || 'the call';
+    const sentAt = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[${key}]` : acc ? `${acc}.${String(key)}` : String(key)), '');
+    const clause = clauses.get(where) ?? { at: new Map<string, Set<string>>(), homes: new Map<string, Set<string>>(), allowed };
+    for (const [list, listNode] of Object.entries(properties)) {
+      const entry = unwrapNullable(listNode).items;
+      const entryKeys = new Set([entry, ...(entry?.anyOf ?? []), ...(entry?.oneOf ?? [])].flatMap(variant => Object.keys(variant?.properties ?? {})));
+      const home = issue.path.length === 0 ? list : `${where}.${list}`;
+      for (const key of issue.keys) {
+        if (entryKeys.has(key)) clause.homes.set(key, (clause.homes.get(key) ?? new Set<string>()).add(`${home}[]`));
       }
     }
-    const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '') || 'the call';
-    const clause = clauses.get(where) ?? { keys: new Set<string>(), allowed };
-    for (const key of issue.keys) clause.keys.add(key);
+    for (const key of issue.keys) clause.at.set(key, (clause.at.get(key) ?? new Set<string>()).add(sentAt));
     clauses.set(where, clause);
   }
-  const parts = [...clauses].map(([where, { keys, allowed }]) =>
-    `${[...keys].map(quoteKey).join(', ')} ${keys.size > 1 ? 'are not fields' : 'is not a field'} of ${where}; its fields are ${allowed.join(', ')}`);
+  const parts = [...clauses].map(([where, { at, homes, allowed }]) => {
+    // Keys sent at the same paths and defined by the same lists share one action.
+    const actions = new Map<string, { from: string; into: string; keys: string[] }>();
+    for (const [key, paths] of at) {
+      const from = [...paths].join(', ');
+      const into = [...(homes.get(key) ?? [])].join(' or ');
+      const action = actions.get(`${from}\n${into}`) ?? { from, into, keys: [] };
+      action.keys.push(key);
+      actions.set(`${from}\n${into}`, action);
+    }
+    const verb = ({ into }: { into: string }) => (into ? 'move' : 'remove');
+    const target = ({ from, into }: { from: string; into: string }) => `${from ? ` from ${from}` : ''}${into ? ` into a ${into} entry` : ''}`;
+    const list = [...actions.values()];
+    const action = list.length === 1
+      ? `${verb(list[0]!)} ${at.size > 1 ? 'them' : 'it'}${target(list[0]!)}`
+      : list.every(a => !a.into)
+        ? `remove ${list.map(a => `${a.keys.map(quoteKey).join(', ')}${target(a)}`).join(' and ')}`
+        : list.map(a => `${verb(a)} ${a.keys.map(quoteKey).join(', ')}${target(a)}`).join(' and ');
+    return `${[...at.keys()].map(quoteKey).join(', ')} ${at.size > 1 ? 'are not fields' : 'is not a field'} of ${where}: ${action}; its fields are ${allowed.join(', ')}`;
+  });
   const sentence = parts.join('; ');
-  const nestedHomes = [...homes].map(([list, keys]) =>
-    ` ${[...keys].map(quoteKey).join(', ')} ${keys.size > 1 ? 'are fields' : 'is a field'} of a ${list}[] entry: send ${keys.size > 1 ? 'them' : 'it'} there.`);
-  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.${nestedHomes.join('')}`;
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
 }
 
 /**
