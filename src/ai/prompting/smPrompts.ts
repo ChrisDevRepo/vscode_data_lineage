@@ -441,20 +441,19 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
  * surface (the `lineage_submit_findings` completion branch and the host-graph synthesis node both
  * call its builder). {@link synthesis_reminder} carries the user-question anchor plus the flow-role
  * block, the only place the model learns which nodes are terminal sources, and the
- * {@link buildPassthroughFlowFacts} digest for kept nodes with no detail slot.
+ * {@link buildPassthroughFlowFacts} digest for kept nodes with no detail slot. Engine bookkeeping
+ * no synthesis text reads (who decided a state, from which hop and focus, the visit question) is
+ * not served.
  */
 interface SmCompletionEnvelope {
-  readonly ok: true;
-  readonly done: true;
   readonly result: {
-    readonly status: SmResult['status'];
     readonly originNodeId: string;
     readonly scope: { readonly nodes: number; readonly edges: number; readonly node_ids: readonly string[] };
     readonly suggested_sections: SmResult['suggested_sections'];
-    readonly node_states: SmResult['node_states'];
-    readonly detail_slots: SmResult['detail_slots'];
+    readonly node_states: ReadonlyArray<Omit<SmResult['node_states'][number], 'source' | 'viaNodeId' | 'atHop'>>;
+    readonly detail_slots: ReadonlyArray<Omit<SmResult['detail_slots'][number], 'reason_for_visit'>>;
   };
-  readonly deferred_questions: ReadonlyArray<DeferredQuestion>;
+  readonly deferred_questions: ReadonlyArray<Omit<DeferredQuestion, 'atHop'>>;
   readonly synthesis_reminder: string;
 }
 
@@ -504,17 +503,15 @@ export function buildSmCompletionEnvelope(
   );
   const mustCoverBlock = mustCover.length > 0 ? `\nLink in \`sections[].node_ids\` or caption in \`notes[]\`: ${mustCover.join(', ')}` : '';
   const envelope: SmCompletionEnvelope = {
-    ok: true,
-    done: true,
     result: {
-      status: result.status,
       originNodeId: result.originNodeId,
       scope: { nodes: presentedNodeIds.length, edges: result.edges.length, node_ids: presentedNodeIds },
       suggested_sections: result.suggested_sections,
-      node_states: result.node_states.filter(state => presented.has(state.nodeId)),
-      detail_slots: assignEvidenceIds(result.detail_slots).slots,
+      node_states: result.node_states.filter(state => presented.has(state.nodeId))
+        .map(({ source, viaNodeId, atHop, ...state }) => state),
+      detail_slots: assignEvidenceIds(result.detail_slots).slots.map(({ reason_for_visit, ...slot }) => slot),
     },
-    deferred_questions: deferred,
+    deferred_questions: deferred.map(({ atHop, ...question }) => question),
     synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock + mustLinkBlock + mustCoverBlock,
   };
   return envelope;

@@ -110,7 +110,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           sess.stateMachine?.deferredQuestions ?? [],
           model.identifierCaseSensitive,
         );
-        return s.logAndReturn('lineage_submit_findings', envelope, normalizedInput);
+        return s.logAndReturn('lineage_submit_findings', { ok: true, done: true, ...envelope }, normalizedInput);
       }
       return s.logAndReturn('lineage_submit_findings', {
         ok: true,
