@@ -1,5 +1,4 @@
 /**
- * BuiltInProvider
  * Built-in SQL Server connection provider on `tedious` (SQL login or Microsoft Entra ID), rendering
  * results as the mssql extension does so the DMV consumers need no provider branch.
  */

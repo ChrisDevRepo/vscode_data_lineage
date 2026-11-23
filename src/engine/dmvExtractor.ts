@@ -1,5 +1,4 @@
 /**
- * DmvExtractor
  * Turns raw SQL Server DMV results into a structured database model: parses and validates the
  * `sys.*` result sets, rebuilds FK/UQ/CK constraints from rows, maps engine editions to platform
  * names, and builds the lightweight schema previews of Phase 1 exploration.

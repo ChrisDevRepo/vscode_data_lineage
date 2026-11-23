@@ -1,5 +1,4 @@
 /**
- * ColumnStore
  * Provides extension-host-side storage for column metadata and DDL scripts.
  *
  * This store is designed to keep heavy metadata (columns and DDL) off the main webview model

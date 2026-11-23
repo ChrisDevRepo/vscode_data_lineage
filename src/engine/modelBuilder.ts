@@ -1,5 +1,4 @@
 /**
- * ModelBuilder
  * The pipeline both dacpac and DMV extractors use to build a `DatabaseModel`: normalizes schema and
  * object names (case-insensitivity, bracketed identifiers), resolves dependencies into edges,
  * infers read vs. write direction for procedures and views, resolves cross-schema and

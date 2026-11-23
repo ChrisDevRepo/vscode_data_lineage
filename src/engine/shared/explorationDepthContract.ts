@@ -19,12 +19,11 @@ const CANONICAL_DEPTH_DIGITS = /^(?:0|[1-9]\d*)$/;
  *
  * Callers wrap the full `levels`/`all` union with this, never one union member alone: Zod 4's
  * `io: 'input'` JSON Schema projection reads a union's required-ness from each member's raw
- * `optin`, and
- * a preprocess member's `optin` is "optional" (a transform accepts any input), so one wrapped
- * member would mark the whole union optional in the served schema. Wrapping the union as a single
- * preprocess input keeps the field's `optin` resolved to the members (`false`), and is transparent
- * to `z.toJSONSchema` since it only forwards a canonical unsigned-integer string to the number
- * branch, leaving the served `anyOf` unchanged.
+ * `optin`, and a preprocess member's `optin` is "optional" (a transform accepts any input), so one
+ * wrapped member would mark the whole union optional in the served schema. Wrapping the union as a
+ * single preprocess input keeps the field's `optin` resolved to the members (`false`), and is
+ * transparent to `z.toJSONSchema` since it only forwards a canonical unsigned-integer string to the
+ * number branch, leaving the served `anyOf` unchanged.
  *
  * @param schema - The `levels`-shaped schema (a numeric bound, or a `number | 'all'` union) to
  *   wrap.

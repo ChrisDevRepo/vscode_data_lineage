@@ -1,5 +1,4 @@
 /**
- * Redact
  * Removes credential-shaped text from strings bound for logs and user-visible messages. It has no
  * imports, so every layer that writes output can use it.
  */

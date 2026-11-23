@@ -1,5 +1,4 @@
 /**
- * ConnectionManager
  * Database connectivity entry point and DMV query management: loading and validating DMV queries
  * from built-in or custom sources, opening a {@link DbSession} through the built-in connection, and
  * executing queries with timeout handling and placeholder expansion.

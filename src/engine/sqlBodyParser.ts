@@ -560,8 +560,7 @@ type ListState = 'source' | 'name' | 'as' | 'alias';
  * a reserved word other than `AS` or `WITH (`, a word after the alias, any operator, `;` or the
  * closing parenthesis. The member-position word is a name, so `output.T` and `window` stay tables,
  * and a non-reserved clause word after the alias (`OUTPUT`, `WINDOW`) ends the list. A comma after
- * a `JOIN ... ON` condition
- * or an `APPLY` is not rewritten.
+ * a `JOIN ... ON` condition or an `APPLY` is not rewritten.
  *
  * @param sql - Cleaned SQL text.
  */

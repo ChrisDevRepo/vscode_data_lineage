@@ -579,7 +579,7 @@ export function combineToolRejections(rejections: readonly ToolRejection[]): Too
       : rejections[0].code,
     reason: [...new Set(rejections.map(rejection => rejection.reason))].join('\n'),
     ...(hints.length > 0 ? { hint: hints.join(' ') } : {}),
-    issuePaths: rejections.flatMap(rejection => rejection.issuePaths ?? []),
+    issuePaths: [...new Set(rejections.flatMap(rejection => rejection.issuePaths ?? []))],
     entryIds: rejections.flatMap(rejection => rejection.entryIds ?? []),
     ...(details.length > 0 ? { detail: [...new Map(details.map(detail => [JSON.stringify(detail), detail])).values()] } : {}),
     errors: rejections.flatMap(rejection => rejection.errors

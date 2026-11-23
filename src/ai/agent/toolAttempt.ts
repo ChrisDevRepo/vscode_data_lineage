@@ -856,9 +856,7 @@ function repeatedFaultLine(toolName: string, rejection: ToolRejection, priorStat
 
 /** Replies the step has left once the current reply is counted; undefined without step state. */
 function repliesLeftAfter(priorState?: ToolPhaseAttemptState): number | undefined {
-  return priorState
-    ? MAX_TOOL_PROVIDER_CALLS - 1 - Math.max(priorState.noProgressCalls, priorState.rejectedTerminalCalls)
-    : undefined;
+  return priorState ? MAX_TOOL_PROVIDER_CALLS - rejectionLevel(priorState) : undefined;
 }
 
 /**

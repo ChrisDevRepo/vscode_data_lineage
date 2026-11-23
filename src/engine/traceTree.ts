@@ -1,5 +1,4 @@
 /**
- * TraceTree
  * Projects a trace scope into the L0-anchored tree the trace navigator renders: per-side hop levels
  * from direction-restricted breadth-first walks, a group for visible nodes neither walk reaches,
  * and each node's out-of-scope grow candidates.

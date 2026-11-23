@@ -1,5 +1,4 @@
 /**
- * ConnectionCommands
  * The `Add / Edit / Remove Database Connection` and `Update Database Password` commands, and the
  * multi-step add-connection wizard behind them.
  */

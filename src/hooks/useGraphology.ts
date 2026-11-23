@@ -156,7 +156,7 @@ export function useGraphology(): UseGraphologyReturn {
       result = buildGraph(allowlistFiltered, config, annotatedNodeIds);
     } catch (e) {
       layoutFailed = true;
-      log('[Filter] Layout failed — rendering without positions', 'debug');
+      log('[Filter] Layout failed — rendering without positions', 'warn');
       log(`[Filter] Layout failed — ${e instanceof Error ? e.message : String(e)}`);
       try {
         result = buildGraphNoLayout(allowlistFiltered, config);

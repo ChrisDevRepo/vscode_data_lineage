@@ -53,7 +53,6 @@ export class VscodeModelPort implements ModelPort {
   /** Number of native provider requests attempted through this port. */
   public modelCalls = 0;
 
-
   /** {@inheritDoc SingleGenerationModelPort.budget} */
   public readonly budget: TurnTokenBudget;
 

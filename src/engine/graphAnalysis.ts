@@ -1,5 +1,4 @@
 /**
- * GraphAnalysis
  * Provides advanced graph-theoretic analysis functions for the database schema graph.
  *
  * This module leverages `graphology` to perform structural investigations, including:

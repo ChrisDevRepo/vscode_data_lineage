@@ -3081,9 +3081,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (!shape.ok) {
       const routes = this.submissionRouteFaults(merged, shape.error.issuePaths);
       if (routes.length === 0) return shape.error;
-      const combined = combineToolRejections([shape.error, this.routeRejection(routes)]);
-      if (combined.issuePaths) combined.issuePaths = [...new Set(combined.issuePaths)];
-      return combined;
+      return combineToolRejections([shape.error, this.routeRejection(routes)]);
     }
     const empty = this.emptyContentRejection(shape.data);
     if (empty) return empty;

@@ -1,5 +1,4 @@
 /**
- * ConnectionErrors
  * One place that turns a failed connect or query into the text and actions the user sees. The
  * driver's own message is shown verbatim behind the connection name, except when the server reports
  * that it is unavailable (one plain sentence, the driver text goes to the log); only the actions are

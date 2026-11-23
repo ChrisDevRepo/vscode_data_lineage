@@ -55,7 +55,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
         const routes = engine.submissionRouteFaults(input, schemaFault.issuePaths);
         const rejection = routes.length > 0 ? combineToolRejections([schemaFault, engine.routeRejection(routes)]) : schemaFault;
-        if (rejection.issuePaths) rejection.issuePaths = [...new Set(rejection.issuePaths)];
         const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
         if (held) {
           rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes)].filter(Boolean).join(' ');

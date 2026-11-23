@@ -21,13 +21,12 @@
     // run-headless.mjs compiles tests/harness with tsc and requires the compiled cli/shim.
     "tests/harness/cli.ts",
     "tests/harness/vscodeHostShim.ts",
-    // The sibling test suite imports these across the repo boundary (@ext alias /
-    // createRequire), which knip cannot trace from this repo.
+    // Imported by external consumers (@ext alias / createRequire), which knip cannot trace.
     "tests/harness/scriptedModelPort.ts",
     "tests/fixtures/lm-provider-extension/live-provider-adapter.js",
     // extension.js loads it through a conditional require (DLV_CHAT_UI_REAL).
     "tests/fixtures/lm-provider-extension/chat-ui-provider.js",
-    // Comment-batch proof tool invoked by the CI sessions, not the public gate.
+    // Comment-batch proof tool invoked by CI, not the public gate.
     "tests/tools/assert-comment-only.mjs",
   ],
   "project": [
