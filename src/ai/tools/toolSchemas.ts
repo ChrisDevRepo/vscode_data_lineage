@@ -424,28 +424,39 @@ function directlyBefore(chars: readonly string[], index: number): string {
 }
 
 /**
- * One report text body: a `submit_findings` section field and a `present_result` section text,
- * intro or closing. LF is its only allowed C0 control character: any other, such as the TAB a single
- * JSON backslash makes of `\text`, rejects the field instead of reaching the report.
+ * The control-character check of a model-written string: a C0 control character outside `allowed`, such as
+ * the TAB a single JSON backslash makes of `\text`, rejects the field and stops its further checks.
  * An offender is located by the text around it in its canonical JSON escape (a TAB shows as `\t`
  * beside a correctly escaped `\\text`): it is invisible and models cannot count lines or columns.
  * The quote is bounded to the window around the offender.
  */
-const SectionBodySchema = z.string().superRefine((body, ctx) => {
-  const chars = [...body];
-  const offenders = chars.flatMap((char, index) => (char < ' ' && char !== '\n' ? [index] : []));
-  if (offenders.length === 0) return;
-  const named = offenders.slice(0, MAX_CONTROL_OFFENDERS).map(index => {
-    const hex = chars[index].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
-    return `U+${hex} in ${quotedWindow(chars, index)} at character ${index + 1} of ${chars.length}${directlyBefore(chars, index)}`;
-  });
-  const rest = offenders.length - named.length;
-  ctx.addIssue({
-    code: 'custom',
-    message: `contains control character${offenders.length > 1 ? 's' : ''} ${named.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}.`,
-    params: { hint: 'Section text allows only line breaks (\\n) as control characters: indent with spaces, and write each backslash as \\\\ in the JSON string (e.g. \\\\text).' },
-  });
-});
+function controlCharacterCheck(allowed: string, hint: string) {
+  return (text: string, ctx: z.RefinementCtx) => {
+    const chars = [...text];
+    const offenders = chars.flatMap((char, index) => (char < ' ' && !allowed.includes(char) ? [index] : []));
+    if (offenders.length === 0) return;
+    const named = offenders.slice(0, MAX_CONTROL_OFFENDERS).map(index => {
+      const hex = chars[index].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
+      return `U+${hex} in ${quotedWindow(chars, index)} at character ${index + 1} of ${chars.length}${directlyBefore(chars, index)}`;
+    });
+    const rest = offenders.length - named.length;
+    ctx.addIssue({
+      code: 'custom',
+      continue: false,
+      message: `contains control character${offenders.length > 1 ? 's' : ''} ${named.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}.`,
+      params: { hint },
+    });
+  };
+}
+
+/**
+ * One report text body: a `submit_findings` section field and a `present_result` section text,
+ * intro or closing. LF is its only allowed C0 control character.
+ */
+const SectionBodySchema = z.string().superRefine(controlCharacterCheck('\n', 'Section text allows only line breaks (\\n) as control characters: indent with spaces, and write each backslash as \\\\ in the JSON string (e.g. \\\\text).'));
+
+/** One `column_flow` node id: no C0 control character, which no node id holds. */
+const ColumnNodeIdSchema = z.string().superRefine(controlCharacterCheck('', 'A node id holds no control characters: send it exactly as served.'));
 
 /**
  * One top-level string field per fired `*_capture` template ({@link sectionField}), written per
@@ -517,7 +528,7 @@ const BADGE_LABEL_DESCRIPTION = KEPT_VERDICT_ONLY + '2-4 word label for this nod
 const COLUMN_FLOW_NOTE_MAX = 200;
 
 const ColumnRefSchema = z.object({
-  node: z.string(),
+  node: ColumnNodeIdSchema,
   col: z.string(),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Classify this source column’s own role for out_col, end to end; omit when SQL does not determine it. ' +
@@ -533,7 +544,7 @@ const ColumnRefSchema = z.object({
 }).strict();
 
 const ColumnFlowWritesToObject = z.object({
-  node: z.string(),
+  node: ColumnNodeIdSchema,
   col: z.string(),
 }).strict();
 
@@ -769,7 +780,7 @@ export interface SubmitFindingsHopColumns {
  */
 function columnSourceNodeSchema(sources: readonly string[], offered: readonly string[]) {
   const resolvable = new Map(sources.map(id => [id, id] as const));
-  const node = z.string().refine(
+  const node = ColumnNodeIdSchema.refine(
     value => resolveModelNodeId(value, resolvable) !== null,
     { message: 'This node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
   );
