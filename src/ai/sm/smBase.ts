@@ -1,16 +1,16 @@
-import { EngineAspectMode, InvalidRoute, type InvalidRouteKind, type DepthIntent, type HeldSubmissionParts } from './smTypes';
+import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { heldSubmissionFields, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
+import { heldSubmissionFields, hopColumnFlowSchema, hopQuestionSchema, PruneNeighborSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
+import { z, type ZodType } from 'zod';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
 import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
 import { computeSchemas } from '../../engine/shared/modelSchemas';
 import { bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
-import { COLUMN_TRANSFORM_CLASSES } from '../../engine/shared/bridgeContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
@@ -34,62 +34,16 @@ import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigat
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { combineToolRejections, ISSUES, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
-const SCHEMA_CHECKED_ROUTE_KINDS: ReadonlySet<InvalidRouteKind> = new Set([
-  'bad_out_col',
-  'untracked_out_col',
-  'bad_caller_context',
-  'bad_return_target',
-]);
-
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readNodeColPair(value: unknown): { node: string; col: string } | null {
-  if (!isPlainRecord(value) || typeof value.node !== 'string' || typeof value.col !== 'string') return null;
-  return { node: value.node, col: value.col };
-}
-
 /**
- * Extracts a readable {@link ColumnFlowEntry} ignoring unknown keys so schema faults still check
- * column refs.
+ * A served item object in Zod strip mode: surplus keys are dropped here; the strict parse reports
+ * them. A union stays strict: stripped, its first option would admit an item meant for another.
  */
-function readColumnFlowEntry(raw: unknown): ColumnFlowEntry | null {
-  if (!isPlainRecord(raw) || typeof raw.out_col !== 'string' || !Array.isArray(raw.upstream_columns)) return null;
-  let writesTo: ColumnFlowEntry['writes_to'];
-  if (raw.writes_to === null) writesTo = null;
-  else if (raw.writes_to !== undefined) {
-    const pair = readNodeColPair(raw.writes_to);
-    if (!pair) return null;
-    writesTo = pair;
-  }
-  let returnsTo: ColumnFlowEntry['returns_to'];
-  if (raw.returns_to !== undefined) {
-    const pair = readNodeColPair(raw.returns_to);
-    if (!pair) return null;
-    returnsTo = pair;
-  }
-  const upstreamColumns: ColumnFlowEntry['upstream_columns'] = [];
-  for (const item of raw.upstream_columns) {
-    const pair = readNodeColPair(item);
-    if (!pair) return null;
-    const rawRef = item as Record<string, unknown>;
-    const transforms = Array.isArray(rawRef.transforms)
-      && rawRef.transforms.every(t => typeof t === 'string' && (COLUMN_TRANSFORM_CLASSES as readonly string[]).includes(t))
-      ? (rawRef.transforms as ColumnFlowEntry['upstream_columns'][number]['transforms'])
-      : undefined;
-    upstreamColumns.push({
-      ...pair,
-      ...(transforms ? { transforms } : {}),
-      ...(typeof rawRef.note === 'string' ? { note: rawRef.note } : {}),
-    });
-  }
-  return {
-    out_col: raw.out_col,
-    ...(writesTo !== undefined ? { writes_to: writesTo } : {}),
-    ...(returnsTo !== undefined ? { returns_to: returnsTo } : {}),
-    upstream_columns: upstreamColumns,
-  };
+function stripSurplusKeys<T>(schema: ZodType<T>): ZodType<T> {
+  return schema instanceof z.ZodObject ? schema.strip() as unknown as ZodType<T> : schema;
 }
 
 /**
@@ -713,7 +667,8 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Resolved model node ids named anywhere in `column_flow` (`upstream_columns`, `writes_to`,
-   * `returns_to`).
+   * `returns_to`). Reads the raw entries so a schema-failed entry still raises its
+   * `prune_column_conflict` in the first rejection.
    */
   private readableColumnFlowEndpoints(rawFlow: unknown): string[] {
     if (!Array.isArray(rawFlow)) return [];
@@ -752,24 +707,22 @@ export class NavigationEngine implements IHopStateMachine {
       readonly caller_context?: ScalarReturnTarget;
       readonly index: number;
     }>,
-    hasUnreadableFlowEntries = false,
   ) {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedColumnEdges: ColumnEdge[] = [];
     let entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> | undefined;
-    if (this.tracer && (columnFlowEntries !== undefined || this.currentReturnTargets().length > 0)) {
+    if (this.tracer && columnFlowEntries !== undefined) {
       const validated = this.validateFindingColumnFlow(this.tracer, focusId, {
-        column_flow: columnFlowEntries?.map(item => item.entry),
+        column_flow: columnFlowEntries.map(item => item.entry),
       });
       const remapPath = (path: string | undefined): string | undefined => {
-        if (!path || !columnFlowEntries) return path;
+        if (!path) return path;
         return path.replace(/^column_flow\.(\d+)(?=\.|$)/, (_, rawIndex) => {
           const mapped = columnFlowEntries[Number(rawIndex)]?.index;
           return mapped === undefined ? `column_flow.${rawIndex}` : `column_flow.${mapped}`;
         });
       };
       for (const route of validated.invalidRoutes) {
-        if (hasUnreadableFlowEntries && route.kind === 'bad_return_target' && route.path === 'column_flow') continue;
         const path = remapPath(route.path);
         invalidRoutes.push(path === route.path ? route : { ...route, path });
       }
@@ -878,7 +831,7 @@ export class NavigationEngine implements IHopStateMachine {
    * current focus (resolving omitted held fields on a retry, an omitted focus_node_id to the current
    * focus as {@link holdRejectedSubmission} does); a mismatched focus leaves routes unchecked.
    */
-  public submissionRouteFaults(input: unknown, schemaIssuePaths: readonly string[] = []): InvalidRoute[] {
+  public submissionRouteFaults(input: unknown): InvalidRoute[] {
     if (!isPlainRecord(input) || !this.currentFocusNodeId || !this.nodeMap.has(this.currentFocusNodeId)) return [];
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
     const rawFocus = input.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
@@ -893,39 +846,20 @@ export class NavigationEngine implements IHopStateMachine {
     const effective = (field: 'column_flow' | 'prune_neighbors' | 'questions'): unknown =>
       input[field] !== undefined ? input[field] : (held && !priorFailed.includes(field) ? held[field] : undefined);
 
+    // Only the entries that pass the served schema (surplus keys aside) are checked.
+    const passing = <T>(raw: unknown, schema: ZodType<T>) =>
+      Array.isArray(raw) ? raw.flatMap((item, index) => {
+        const parsed = stripSurplusKeys(schema).safeParse(item);
+        return parsed.success ? [{ index, value: parsed.data }] : [];
+      }) : undefined;
+    const hop = this.hopSubmitColumns;
     const rawFlow = effective('column_flow');
-    let columnFlowEntries: Array<{ index: number; entry: ColumnFlowEntry }> | undefined;
-    let hasUnreadableFlowEntries = false;
-    if (Array.isArray(rawFlow)) {
-      columnFlowEntries = [];
-      rawFlow.forEach((rawEntry, index) => {
-        const entry = readColumnFlowEntry(rawEntry);
-        if (entry) columnFlowEntries!.push({ index, entry });
-        else hasUnreadableFlowEntries = true;
-      });
-    }
-
-    const rawPrunes = effective('prune_neighbors');
-    const pruneNeighbors = Array.isArray(rawPrunes)
-      ? rawPrunes.flatMap((item, index) =>
-          isPlainRecord(item) && typeof item.id === 'string' && item.id.trim().length > 0
-            ? [{ id: item.id, index }]
-            : [])
-      : [];
-
-    const rawQuestions = effective('questions');
-    const questions = Array.isArray(rawQuestions)
-      ? rawQuestions.flatMap((item, index) => {
-          if (!isPlainRecord(item) || typeof item.nodeId !== 'string' || item.nodeId.trim().length === 0) return [];
-          const callerContext = readNodeColPair(item.caller_context) ?? undefined;
-          return [{ nodeId: item.nodeId, ...(callerContext ? { caller_context: callerContext } : {}), index }];
-        })
-      : [];
-
-    const schemaPaths = new Set(schemaIssuePaths);
-    return this.validateHopRoutes(focusId, columnFlowEntries, rawFlow, pruneNeighbors, questions, hasUnreadableFlowEntries)
+    const columnFlowEntries = passing<ColumnFlowEntry>(rawFlow, hopColumnFlowSchema(hop).element)?.map(({ index, value }) => ({ index, entry: value }));
+    const pruneNeighbors = (passing(effective('prune_neighbors'), PruneNeighborSchema) ?? []).map(({ index, value }) => ({ id: value.id, index }));
+    const questions = (passing(effective('questions'), hopQuestionSchema(this.currentHopAnalysisMode, hop)) ?? []).map(({ index, value }) => ({ ...value, index }));
+    return this.validateHopRoutes(focusId, columnFlowEntries, rawFlow, pruneNeighbors, questions)
       .invalidRoutes
-      .filter(route => !isAbsentKind(route.kind) && !(route.path && schemaPaths.has(route.path) && SCHEMA_CHECKED_ROUTE_KINDS.has(route.kind)));
+      .filter(route => !isAbsentKind(route.kind));
   }
 
   /**
@@ -3067,7 +3001,7 @@ export class NavigationEngine implements IHopStateMachine {
     const shape = validateHopSubmissionShape(merged, this.currentHopAnalysisMode, this.classification,
       this.heldFindingFocus !== this.currentFocusNodeId && archivedAngles.size === 0);
     if (!shape.ok) {
-      const routes = this.submissionRouteFaults(merged, shape.error.issuePaths);
+      const routes = this.submissionRouteFaults(merged);
       if (routes.length === 0) return shape.error;
       return combineToolRejections([shape.error, this.routeRejection(routes)]);
     }

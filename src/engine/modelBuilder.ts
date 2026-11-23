@@ -203,8 +203,6 @@ function isCurrentDatabase(db: string, currentDatabase: string | undefined): boo
  * body text; used to infer flow direction for SPs.
  *
  * @param target - `[schema, object]` of a local object, or the full parts of a cross-database one.
- * @param currentDatabase - Known current database; when undefined (dacpac) a three-part mutation of a
- *   local target matches in any database, as `isLocalRef` does.
  * @returns `'delete'` when every matching mutation is a DELETE or TRUNCATE (rows removed, no column
  *   data supplied); `'write'` when any is an INSERT, UPDATE or MERGE; otherwise `'read'`.
  */
@@ -220,7 +218,7 @@ function classifyMutation(
     const matches = target.length === 2
       ? parts.length === 1 ? same(parts[0], target[1])
         : parts.length === 2 ? parts.every((part, i) => same(part, target[i]))
-        : parts.length === 3 && (!currentDatabase || isCurrentDatabase(parts[0], currentDatabase)) && parts.slice(1).every((part, i) => same(part, target[i]))
+        : parts.length === 3 && isCurrentDatabase(parts[0], currentDatabase) && parts.slice(1).every((part, i) => same(part, target[i]))
       : parts.length === target.length && parts.every((part, i) => same(part, target[i]));
     if (!matches) continue;
     if (kind === 'write') return 'write';

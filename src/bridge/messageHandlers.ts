@@ -26,7 +26,7 @@ import {
 } from '../engine/connectionManager';
 import type { DbSession } from '../engine/db/dbSession';
 import { usesMssqlExtension } from '../engine/db/mssqlRetiring';
-import { connectionFailure, reportConnectionError } from '../engine/db/connectionErrors';
+import { connectionFailure, isTransientConnectionError, reportConnectionError } from '../engine/db/connectionErrors';
 import { redactSecrets } from '../utils/redact';
 import { type SimpleExecuteResult } from '../types/database';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
@@ -1225,7 +1225,7 @@ async function withDbProgressHost(
           Logger.create(env.outputChannel, 'DB'),
           connectionErrorHooks(env, target.connectionId, token.isCancellationRequested ? undefined : retry),
         );
-        host.postMessage({ type: 'db-error', message: reported.message });
+        host.postMessage({ type: 'db-error', message: reported.message, transient: isTransientConnectionError(failure.error) });
       } else {
         const message = redactSecrets(err instanceof Error ? err.message : String(err));
         host.log('error', 'DB', title, err);

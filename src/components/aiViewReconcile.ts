@@ -114,6 +114,16 @@ export function reconcileSavedView(
   return { profile: reconciled, unresolved: [...unresolved] };
 }
 
+/**
+ * Rewrites a legacy-encoded view to canonical ids stamped `nodeIdEncodingVersion: 2`; `null` when
+ * already v2 or a reference is absent from `model`, so its legacy spelling stays resolvable.
+ */
+export function migrateSavedView(profile: FilterProfile, model: DatabaseModel): FilterProfile | null {
+  if (profile.nodeIdEncodingVersion === 2) return null;
+  const { profile: migrated, unresolved } = reconcileSavedView(profile, model);
+  return unresolved.length ? null : { ...migrated, nodeIdEncodingVersion: 2 };
+}
+
 /** Ids carrying an AI badge or footnote in `metadata`, for the layout's annotation band. */
 export function annotatedNodeIdsFromAiMetadata(metadata: AIViewMetadata): string[] {
   const ids = new Set<string>();

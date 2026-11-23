@@ -53,7 +53,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const routes = engine.submissionRouteFaults(input, schemaFault.issuePaths);
+        const routes = engine.submissionRouteFaults(input);
         const rejection = routes.length > 0 ? combineToolRejections([schemaFault, engine.routeRejection(routes)]) : schemaFault;
         const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
         if (held) {

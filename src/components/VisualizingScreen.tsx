@@ -18,6 +18,8 @@ interface VisualizingScreenProps {
   /** High-level summary stats (node/edge count) shown once parsing is complete. */
   stats: string | null;
   error: string | null;
+  /** The error is transient (the host classified it so): the countdown end retries once; otherwise it returns to the start view. */
+  autoRetry: boolean;
   /** Callback to cancel the current loading operation and stop extraction. */
   onCancel: () => void;
   /** Callback to return to the project selection screen. */
@@ -82,7 +84,7 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
 }
 
 const COUNTDOWN_MS = 8000;
-/** Automatic retries per visit; a login that keeps failing is not repeated every countdown. */
+/** Automatic retries per visit, for a transient error only; each can cost up to the load timeout. */
 const AUTO_RETRY_MAX = 1;
 /** User-facing failure strings (Microsoft style: what happened, the next step, no blame). */
 const RETRY_LABEL = 'Retry';
@@ -97,6 +99,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
   progressText,
   stats,
   error,
+  autoRetry,
   onCancel,
   onBack,
   onRetry,
@@ -111,7 +114,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
 
   const [countdown, setCountdown] = useState<number | null>(null);
   const autoRetries = useRef(0);
-  const willRetry = onRetry !== null && autoRetries.current < AUTO_RETRY_MAX;
+  const willRetry = onRetry !== null && autoRetry && autoRetries.current < AUTO_RETRY_MAX;
 
   useEffect(() => {
     if (!error) { setCountdown(null); return; }
@@ -124,7 +127,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
       if (remaining <= 0) {
         clearInterval(tick);
         setCountdown(0);
-        if (onRetry && autoRetries.current < AUTO_RETRY_MAX) {
+        if (onRetry && autoRetry && autoRetries.current < AUTO_RETRY_MAX) {
           autoRetries.current += 1;
           onRetry();
         } else {
@@ -136,7 +139,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
     }, 250);
 
     return () => clearInterval(tick);
-  }, [error, onBack, onRetry]);
+  }, [error, autoRetry, onBack, onRetry]);
 
   const hasError = !!error;
   const showCancel = phase === 'load' && !hasError;

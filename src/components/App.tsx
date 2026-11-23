@@ -32,7 +32,7 @@ import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { scopeModelForVisualize } from '../engine/modelFilters';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
-import { reconcileAiView, reconcileSavedView, annotatedNodeIdsFromAiMetadata } from './aiViewReconcile';
+import { reconcileAiView, reconcileSavedView, migrateSavedView, annotatedNodeIdsFromAiMetadata } from './aiViewReconcile';
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, parseRejectionLogs, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
 import { notifyUser } from '../utils/notify';
@@ -130,6 +130,19 @@ const getResetFilter = (schemas: ReadonlyArray<{ name: string }>): FilterState =
   exclusionPatterns: [],
 });
 
+/** Reconciles a saved view against the loaded model and warns about the references it drops. */
+function reconcileWithWarning(profile: FilterProfile, model: DatabaseModel | null, vscodeApi: VsCodeAPI): FilterProfile {
+  if (!model) return profile;
+  const { profile: reconciled, unresolved } = reconcileSavedView(profile, model);
+  if (unresolved.length) {
+    vscodeApi.postMessage({
+      type: 'show-warning',
+      text: `Saved view has ${unresolved.length} unresolved object or schema reference(s). Those references were not restored.`,
+    });
+  }
+  return reconciled;
+}
+
 /** Coordinates navigation, model lifecycle, graph filters and interaction modes. */
 export function App() {
   const vscodeApi = useVsCode();
@@ -141,7 +154,9 @@ export function App() {
   const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
   const [lastWizardView, setLastWizardView] = useState<'main' | 'projects'>('main');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  /** The active saved view as applied (reconciled), the baseline of the modified check. */
+  const [activeView, setActiveView] = useState<FilterProfile | null>(null);
+  const activeViewId = activeView?.id ?? null;
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
@@ -225,7 +240,7 @@ export function App() {
       setGraphMode(initialGraphMode);
       setSchemaViewSoftDisabled(trimmed.nodes.length <= effectiveOverviewThreshold(config));
       setExpandedSchemaView(null);
-      setActiveViewId(null);
+      setActiveView(null);
       rebuild(trimmed, f, config, initialGraphMode === 'full', initialGraphMode);
       setLoadingPhase('generate');
     },
@@ -501,7 +516,7 @@ export function App() {
     setLoadingError(null);
     setStartScreenMessage(null);
     setActiveProjectId(null);
-    setActiveViewId(null);
+    setActiveView(null);
     vscodeApi.postMessage({ type: 'request-projects' });
   }, [dacpacLoader.resetToStart, resetScopedModes, vscodeApi]);
 
@@ -1144,21 +1159,12 @@ export function App() {
     }
   }, false, { allowEmptyTextEntry: true });
 
-  const handleApplyView = useCallback((profile: FilterProfile) => {
-    if (model) {
-      const reconciled = reconcileSavedView(profile, model);
-      profile = reconciled.profile;
-      if (reconciled.unresolved.length) {
-        vscodeApi.postMessage({
-          type: 'show-warning',
-          text: `Saved view has ${reconciled.unresolved.length} unresolved object or schema reference(s). Those references were not restored.`,
-        });
-      }
-    }
+  const handleApplyView = useCallback((saved: FilterProfile) => {
+    const profile = reconcileWithWarning(saved, model, vscodeApi);
     const isAdvanced = profile.filter.allowlistNodeIds !== undefined;
     const restored = deserializeFilter(profile.filter);
     if (!isAdvanced && model && !guardSchemaSelection(model, restored.schemas)) return;
-    setActiveViewId(profile.id);
+    setActiveView(profile);
     if (isAdvanced && !viewSnapshotRef.current) viewSnapshotRef.current = captureViewSnapshot();
     const shapeMode: GraphMode | undefined = isAdvanced
       ? 'full'
@@ -1352,15 +1358,24 @@ export function App() {
     vscodeApi.postMessage({ type: 'filter-changed', uiState });
   }, [filterKeyForHost, aiPreview, filterProfiles, model, vscodeApi, expandedSchemaView, trace.mode, trace.selectedNodeId, trace.targetNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.analysisType, trace.autoPromoted, graphMode, filteredCount, renderLimitHit, analysisMode, activeAdvancedProfile, isDetailOpen]);
 
-  const isViewModified = useMemo(() => {
-    if (!activeViewId) return false;
-    const profile = filterProfiles.find(p => p.id === activeViewId);
-    if (!profile) return false;
-    // Compare against the view as applied: Apply restores the reconciled filter, not the persisted
-    // spelling.
-    const saved = model ? reconcileSavedView(profile, model).profile.filter : profile.filter;
-    return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(saved);
-  }, [activeViewId, filterProfiles, filter, model]);
+  const isViewModified = useMemo(
+    () => activeView !== null && JSON.stringify(serializeFilter(filter)) !== JSON.stringify(activeView.filter),
+    [activeView, filter],
+  );
+
+  // Legacy-encoded views are rewritten once per loaded model and persisted as v2.
+  useEffect(() => {
+    if (!model || !activeProjectId) return;
+    const migrated = filterProfiles.flatMap(profile => migrateSavedView(profile, model) ?? []);
+    if (!migrated.length) return;
+    setProjects(prev => migrated.reduce(
+      (store, profile) => addFilterProfile(store, activeProjectId, profile),
+      { schemaVersion: 1 as const, projects: prev, lastOpenedId },
+    ).projects);
+    for (const profile of migrated) {
+      vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+    }
+  }, [model, activeProjectId, filterProfiles, lastOpenedId, vscodeApi]);
 
   const isFilterDirty = useMemo(() => {
     if (!model) return false;
@@ -1400,12 +1415,10 @@ export function App() {
     vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: stamped });
 
     if (options?.clearAiPreview) setAiPreview(null);
-    if (options?.activateProfile) {
-      if (stamped.filter.allowlistNodeIds !== undefined) {
-        setActiveAdvancedProfile(stamped);
-      }
-      setActiveViewId(stamped.id);
+    if (options?.activateProfile && stamped.filter.allowlistNodeIds !== undefined) {
+      setActiveAdvancedProfile(stamped);
     }
+    setActiveView(prev => (options?.activateProfile || prev?.id === stamped.id ? stamped : prev));
   }, [activeProjectId, lastOpenedId, vscodeApi, graphMode, showExpandedSchemaClusters, expandedSchemaView]);
 
   const handleSaveView = useCallback((name: string) => {
@@ -1426,19 +1439,7 @@ export function App() {
     if (!activeProjectId) return;
     const existing = filterProfiles.find(p => p.id === profileId);
     if (!existing) return;
-    // Reconcile stored references before replacing the filter with current canonical IDs.
-    let updated = existing;
-    if (model) {
-      const reconciled = reconcileSavedView(updated, model);
-      updated = reconciled.profile;
-      if (reconciled.unresolved.length) {
-        vscodeApi.postMessage({
-          type: 'show-warning',
-          text: `Saved view has ${reconciled.unresolved.length} unresolved object or schema reference(s). Those references were not restored.`,
-        });
-      }
-    }
-    persistFilterProfile({ ...updated, filter: serializeFilter(filter) });
+    persistFilterProfile({ ...reconcileWithWarning(existing, model, vscodeApi), filter: serializeFilter(filter) });
   }, [activeProjectId, filter, filterProfiles, persistFilterProfile, model, vscodeApi]);
 
   /** Saves a node allowlist (trace, path or analysis result) as a permanent bookmark. */
@@ -1484,7 +1485,7 @@ export function App() {
 
   const handleDeleteView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
-    if (activeViewId === profileId) setActiveViewId(null);
+    if (activeViewId === profileId) setActiveView(null);
     setProjects(prev => {
       const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
       return deleteFilterProfile(store, activeProjectId, profileId).projects;
@@ -1589,6 +1590,7 @@ export function App() {
         progressText={dacpacLoader.status?.type === 'info' ? dacpacLoader.status.text : null}
         stats={loadingStats}
         error={loadingError}
+        autoRetry={dacpacLoader.status?.type === 'error' && dacpacLoader.status.transient === true}
         onCancel={handleCancelVisualizing}
         onBack={handleBackFromError}
         onRetry={retryLoad}
