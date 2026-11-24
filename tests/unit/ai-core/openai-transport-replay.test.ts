@@ -6,6 +6,7 @@ import { ProviderModelPort, type ModelTransport } from '../../../src/ai/model/pr
 import type { WireRecord } from '../../../src/ai/observability/wireLog';
 import { parseModelEntries } from '../../../src/ai/providers/modelEntries';
 import { createProviderModelPort } from '../../../src/ai/providers/openAiTransport';
+import { describeTurnStop } from '../../../src/ai/support/text';
 
 /**
  * Pins the wire shape of a replayed assistant turn: a call whose streamed arguments are no JSON
@@ -156,5 +157,27 @@ describe('OpenAI transport replay of a malformed tool call', () => {
     expect(deltas.join('')).toBe('hello world');
     const wire = records.find((record) => record.type === 'wire-response');
     expect(wire?.type === 'wire-response' ? wire.text : undefined).toBe('hello world');
+  });
+
+  it.each(['chat-completions', 'responses'] as const)('%s: a content_filter finish ends the generation as one blocked port error, recorded in wire-error and never as a stop', async (apiType) => {
+    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType, maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
+    const chatFrames = [{ choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: 'content_filter' }] }]
+      .map((frame) => `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', model: 'gpt-x', ...frame })}\n\n`).join('');
+    const response = { id: 'resp_1', object: 'response', created_at: 1, model: 'gpt-x', output: [] };
+    const responseEvents = [
+      { type: 'response.created', sequence_number: 0, response: { ...response, status: 'in_progress' } },
+      { type: 'response.incomplete', sequence_number: 1, response: { ...response, status: 'incomplete', incomplete_details: { reason: 'content_filter' } } },
+    ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+    const fetchMock = vi.fn(async () => new Response(apiType === 'responses' ? responseEvents : `${chatFrames}data: [DONE]\n\n`, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const records: WireRecord[] = [];
+    const result = await createProviderModelPort(entry, 'key', { wireLog: (record) => records.push(record) })
+      .generateToolTurn({ messages: [new HumanMessage('go')], tools, phase: 'test' });
+    expect(result.status).toBe('error');
+    expect(result.status === 'error' ? result.turnStop : undefined).toMatchObject({ source: 'provider', code: 'blocked' });
+    expect(result.status === 'error' ? describeTurnStop(result.turnStop, 'm') : '').toContain('Model declined to respond.');
+    expect(records.some((record) => record.type === 'wire-error')).toBe(true);
+    expect(records.some((record) => record.type === 'generation')).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

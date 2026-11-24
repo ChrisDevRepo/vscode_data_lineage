@@ -151,6 +151,13 @@ function toWireMessage(message: BaseMessage): WireMessage {
   };
 }
 
+/** Whether a chunk's metadata ends the generation on the provider's content filter (Chat Completions `finish_reason`, Responses `incomplete_details.reason`). */
+function isContentFilter(metadata: Record<string, unknown> | undefined): boolean {
+  const incomplete = metadata?.incomplete_details;
+  return metadata?.finish_reason === 'content_filter'
+    || (typeof incomplete === 'object' && incomplete !== null && (incomplete as { reason?: unknown }).reason === 'content_filter');
+}
+
 function failureCode(error: unknown): ModelPortErrorCode {
   const status = typeof error === 'object' && error !== null ? (error as { status?: unknown }).status : undefined;
   if (status === 401 || status === 403) return 'no_permission';
@@ -229,6 +236,8 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
           if (chunk.response_metadata?.finish_reason === 'error') {
             throw new ModelPortError('provider_error', 'Provider ended the generation with finish_reason error.');
           }
+          // A vendor safety refusal ends the turn: resending the flagged text only repeats it.
+          if (isContentFilter(chunk.response_metadata)) throw new ModelPortError('blocked', 'Model declined to respond.');
           usage = toUsage(chunk.usage_metadata) ?? usage;
           total = total ? total.concat(chunk) : chunk;
           yield chunk;
