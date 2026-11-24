@@ -37,10 +37,11 @@ function entryBody(entry: ModelEntry, effort: string | undefined): Record<string
  * The client for one entry. Its retry is the OpenAI SDK's own (`configuration.maxRetries`, the SDK default
  * of 2): connection errors, timeouts and 408/409/429/5xx, with backoff, `retry-after`, and the turn's signal
  * ending a pending wait. `maxRetries: 0` turns off LangChain's second layer, which would also retry other 4xx.
- * The Chat Completions client writes `verbosity` and one output-cap key (`max_tokens`, or
- * `max_completion_tokens` for a reasoning model name) after `requestBody`. `verbosity` goes to its
- * own field; the cap goes there only when the key the client writes is the key the entry names, so
- * `requestBody` reaches the wire unchanged and never as two keys.
+ * The output cap is the entry's `maxOutputTokens`, or the cap `requestBody` names (`max_tokens` or
+ * `max_completion_tokens`) on Chat Completions. The client writes `verbosity` and the cap key
+ * (`max_tokens`, or `max_completion_tokens` for a reasoning model name) after `requestBody`, so both
+ * go to its own fields; a named cap goes there only when the key the client writes is the key
+ * `requestBody` names, so `requestBody` reaches the wire unchanged and never as two keys.
  */
 function createChatModel(entry: ModelEntry, apiKey: string, effort: string | undefined): ChatOpenAI {
   const responses = entry.apiType === 'responses';
@@ -58,17 +59,19 @@ function createChatModel(entry: ModelEntry, apiKey: string, effort: string | und
     ...(!responses && typeof body.verbosity === 'string' ? { verbosity: body.verbosity as 'low' | 'medium' | 'high' } : {}),
     modelKwargs: { ...entryBody(entry, effort), ...entry.requestBody },
   });
-  if (responses) return build(entry.maxOutputTokens);
-  const named = (['max_tokens', 'max_completion_tokens'] as const).find((key) => typeof body[key] === 'number');
-  if (!named) return build();
+  const named = responses ? undefined : (['max_tokens', 'max_completion_tokens'] as const).find((key) => typeof body[key] === 'number');
+  if (!named) return build(entry.maxOutputTokens);
   const cap = body[named] as number;
   const probe: Record<string, unknown> = new ChatOpenAI({ model: entry.model, apiKey, maxTokens: cap }).invocationParams();
   const written = probe.max_completion_tokens === undefined ? 'max_tokens' : 'max_completion_tokens';
   return written === named ? build(cap) : build();
 }
 
-/** The body fields a trace states: the ones that steer reasoning and tool use, never a header. */
-const WIRE_BODY_FIELDS = ['tool_choice', 'reasoning_effort', 'reasoning', 'output_config', 'thinking'] as const;
+/** The body fields a trace states: the ones that steer sampling, output length, reasoning and tool use, never a header. */
+const WIRE_BODY_FIELDS = [
+  'tool_choice', 'reasoning_effort', 'reasoning', 'output_config', 'thinking',
+  'temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'max_output_tokens',
+] as const;
 
 /** Those fields as the client sends them for `toolChoice`; absent ones are left out. */
 function wireBody(chat: ChatOpenAI, toolChoice: WireToolChoice): Record<string, unknown> {

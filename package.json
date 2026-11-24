@@ -634,7 +634,7 @@
                 "model": { "type": "string", "minLength": 1, "description": "Model name sent in the request." },
                 "apiType": { "type": "string", "enum": ["chat-completions", "responses"], "description": "Wire format of the endpoint." },
                 "maxInputTokens": { "type": "integer", "minimum": 1, "description": "Input window of the model in tokens." },
-                "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit of the model in tokens; sent as `max_output_tokens` on Responses only." },
+                "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit of the model in tokens; sent as the API's output cap (`max_output_tokens` on Responses, `max_tokens` or `max_completion_tokens` on Chat Completions). A `max_tokens` or `max_completion_tokens` in `requestBody` overrides it on Chat Completions." },
                 "supportsReasoningEffort": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Reasoning efforts the model accepts." },
                 "reasoningEffort": { "type": "string", "description": "Reasoning effort sent with each request." },
                 "forcedToolChoice": { "type": "boolean", "default": true, "description": "Whether the endpoint accepts a forced tool choice; when off, `auto` is sent." },

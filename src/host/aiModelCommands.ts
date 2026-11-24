@@ -20,15 +20,22 @@ const EDIT_AI_MODEL_COMMAND = 'dataLineageViz.editAiModel';
 const REMOVE_AI_MODEL_COMMAND = 'dataLineageViz.removeAiModel';
 const UPDATE_AI_MODEL_KEY_COMMAND = 'dataLineageViz.updateAiModelKey';
 
+const OPEN_SETTINGS_JSON = 'workbench.action.openSettingsJson';
+const OPEN_SETTINGS = 'Open settings.json';
+const SAVE_AND_OPEN = 'Save and open settings.json';
+
 const WIZARD_TITLE = 'Add AI Model';
-const WIZARD_STEPS = 8;
+const WIZARD_STEPS = 5;
 const { askInput, askPick } = wizardPrompts(WIZARD_TITLE, WIZARD_STEPS);
 
 type ApiType = ModelEntry['apiType'];
 
-/** The window and output limit a new entry starts from; the user types the model's own. */
+/** The window and output limit a new entry is written with; the user overwrites them in the settings JSON. */
 const DEFAULT_MAX_INPUT_TOKENS = 128_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
+
+/** The sampling Copilot sent on Chat Completions, written into the entry so it is no black box; the OpenAI Responses preset has none (reasoning models reject it). */
+const SAMPLING_REQUEST_BODY = { temperature: 0.1, top_p: 1 };
 
 /** A provider the wizard starts from: its base URL and wire format, so the user types only what differs. */
 interface ModelPreset {
@@ -37,16 +44,18 @@ interface ModelPreset {
   readonly description: string;
   readonly url: string;
   readonly apiType: ApiType;
+  /** The `requestBody` a new entry is written with; the user tunes it in the settings JSON. */
+  readonly requestBody?: Readonly<Record<string, unknown>>;
   /** A local server that ignores the key. */
   readonly local?: true;
 }
 
 const PRESETS: readonly ModelPreset[] = [
   { id: 'openai', label: 'OpenAI', description: 'api.openai.com', url: 'https://api.openai.com/v1/', apiType: 'responses' },
-  { id: 'openrouter', label: 'OpenRouter', description: 'openrouter.ai', url: 'https://openrouter.ai/api/v1/', apiType: 'chat-completions' },
-  { id: 'ollama', label: 'Ollama', description: 'Local server', url: 'http://localhost:11434/v1/', apiType: 'chat-completions', local: true },
-  { id: 'lmstudio', label: 'LM Studio', description: 'Local server', url: 'http://localhost:1234/v1/', apiType: 'chat-completions', local: true },
-  { id: 'custom', label: 'Other OpenAI-compatible endpoint', description: 'Azure OpenAI, a gateway or any server', url: '', apiType: 'chat-completions' },
+  { id: 'openrouter', label: 'OpenRouter', description: 'openrouter.ai', url: 'https://openrouter.ai/api/v1/', apiType: 'chat-completions', requestBody: SAMPLING_REQUEST_BODY },
+  { id: 'ollama', label: 'Ollama', description: 'Local server', url: 'http://localhost:11434/v1/', apiType: 'chat-completions', requestBody: SAMPLING_REQUEST_BODY, local: true },
+  { id: 'lmstudio', label: 'LM Studio', description: 'Local server', url: 'http://localhost:1234/v1/', apiType: 'chat-completions', requestBody: SAMPLING_REQUEST_BODY, local: true },
+  { id: 'custom', label: 'Other OpenAI-compatible endpoint', description: 'Azure OpenAI, a gateway or any server', url: '', apiType: 'chat-completions', requestBody: SAMPLING_REQUEST_BODY },
 ];
 
 /** What the connection test asks the endpoint; any reply shows the URL, key and model are accepted. */
@@ -55,10 +64,7 @@ const TEST_PROMPT = 'Reply with the single word OK.';
 interface WizardState {
   preset?: ModelPreset;
   url: string;
-  apiType: ApiType;
   model: string;
-  maxInputTokens: number;
-  maxOutputTokens: number;
   /** The key to test with and save: the saved one of an edited entry until the user types another. */
   key?: string;
   name: string;
@@ -86,10 +92,6 @@ function newEntryId(name: string, taken: readonly unknown[]): string {
   return id;
 }
 
-const isPositiveInteger = (value: string): boolean => /^\d+$/.test(value.trim()) && Number(value) > 0 && Number.isSafeInteger(Number(value));
-const tokenLimitProblem = (what: string) => (value: string): string | undefined => (
-  isPositiveInteger(value) ? undefined : `${what} is a whole number of tokens above zero.`
-);
 const required = (what: string) => (value: string): string | undefined => (value.trim() ? undefined : `${what} is required.`);
 
 /**
@@ -112,10 +114,11 @@ function testConnection(entry: ModelEntry, apiKey: string, logger: Logger): Then
 }
 
 /**
- * Runs the add (or, with `existing`, edit) wizard and saves the result. Eight steps (provider
- * preset, base URL, wire format for a custom endpoint, model name, context window, output limit,
- * API key, display name), each with a Back button after the first; the entry is test-connected
- * before it is written, which reports a wrong URL, key or model name.
+ * Runs the add (or, with `existing`, edit) wizard and saves the result. Five steps (provider
+ * preset, base URL, model name, API key, display name), each with a Back button after the first; the
+ * entry is test-connected before it is written, which reports a wrong URL, key or model name. A new
+ * entry gets the preset's wire format and the default limits; the user tunes them, and adds
+ * `requestBody` and the rest, in the settings JSON.
  *
  * @param existing - Entry to edit; its id, every field the wizard does not ask and its saved key are
  *   kept. A changed base URL requires the key again, so a saved key is never sent to another host.
@@ -124,8 +127,8 @@ function testConnection(entry: ModelEntry, apiKey: string, logger: Logger): Then
 async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, existing?: ModelEntry): Promise<string | undefined> {
   const savedKey = existing ? await secrets.get(apiKeySecretName(existing.id)) : undefined;
   const state: WizardState = existing
-    ? { url: existing.url, apiType: existing.apiType, model: existing.model, maxInputTokens: existing.maxInputTokens, maxOutputTokens: existing.maxOutputTokens, name: existing.name, key: savedKey }
-    : { url: '', apiType: 'chat-completions', model: '', maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS, name: '' };
+    ? { url: existing.url, model: existing.model, name: existing.name, key: savedKey }
+    : { url: '', model: '', name: '' };
 
   const steps: WizardStep[] = [
     {
@@ -138,7 +141,6 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
         if (typeof answer === 'object' && answer.preset !== state.preset) {
           state.preset = answer.preset;
           state.url = answer.preset.url;
-          state.apiType = answer.preset.apiType;
         }
         return outcome(answer);
       },
@@ -159,44 +161,12 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
       },
     },
     {
-      applies: () => state.preset === undefined || state.preset.id === 'custom',
-      run: async (n) => {
-        const items = [
-          { label: 'Chat Completions', description: 'POST /chat/completions, what most servers speak', value: 'chat-completions' as const },
-          { label: 'Responses', description: 'POST /responses, the newer OpenAI API', value: 'responses' as const },
-        ];
-        const answer = await askPick({ step: n, canGoBack: true, placeholder: 'API of the endpoint', items, active: items.find((item) => item.value === state.apiType) });
-        if (typeof answer === 'object') state.apiType = answer.value;
-        return outcome(answer);
-      },
-    },
-    {
       applies: () => true,
       run: async (n) => {
         const answer = await askInput({
           step: n, canGoBack: true, value: state.model, prompt: 'Model name the endpoint expects, e.g. gpt-5', validate: required('A model name'),
         });
         if (typeof answer === 'string') state.model = answer.trim();
-        return outcome(answer);
-      },
-    },
-    {
-      applies: () => true,
-      run: async (n) => {
-        const answer = await askInput({
-          step: n, canGoBack: true, value: String(state.maxInputTokens), prompt: 'Context window of the model in tokens', validate: tokenLimitProblem('The context window'),
-        });
-        if (typeof answer === 'string') state.maxInputTokens = Number(answer);
-        return outcome(answer);
-      },
-    },
-    {
-      applies: () => true,
-      run: async (n) => {
-        const answer = await askInput({
-          step: n, canGoBack: true, value: String(state.maxOutputTokens), prompt: 'Output limit of the model in tokens', validate: tokenLimitProblem('The output limit'),
-        });
-        if (typeof answer === 'string') state.maxOutputTokens = Number(answer);
         return outcome(answer);
       },
     },
@@ -229,23 +199,30 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
   ];
 
   if (!await runSteps(steps)) return undefined;
+  let openSettings = false;
   while (true) {
     const models = readRawModels();
     const id = existing?.id ?? newEntryId(state.name, models);
-    const candidate = {
-      ...(models.find((entry) => rawId(entry) === id) as object | undefined),
-      id, name: state.name, url: state.url, model: state.model, apiType: state.apiType,
-      maxInputTokens: state.maxInputTokens, maxOutputTokens: state.maxOutputTokens,
+    const stored = models.find((entry) => rawId(entry) === id) as Partial<ModelEntry> | undefined;
+    const added = stored ? {} : {
+      apiType: state.preset?.apiType ?? 'chat-completions',
+      maxInputTokens: DEFAULT_MAX_INPUT_TOKENS,
+      maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      ...(state.preset?.requestBody ? { requestBody: state.preset.requestBody } : {}),
     };
+    const candidate = { ...stored, id, name: state.name, url: state.url, model: state.model, ...added };
     const { entries: [entry], invalid } = parseModelEntries([candidate]);
     if (!entry) throw new Error(`Invalid AI model: ${invalid.flatMap((item) => item.issues).join('; ')}`);
     const failure = await testConnection(entry, state.key!, logger);
     if (failure === 'cancelled') return undefined;
     if (failure) {
-      const choice = await vscode.window.showErrorMessage(failure, 'Edit', 'Cancel');
-      if (choice !== 'Edit') return undefined;
-      if (!await runSteps(steps)) return undefined;
-      continue;
+      const choice = await vscode.window.showErrorMessage(failure, 'Edit', SAVE_AND_OPEN, 'Cancel');
+      if (choice === 'Edit') {
+        if (!await runSteps(steps)) return undefined;
+        continue;
+      }
+      if (choice !== SAVE_AND_OPEN) return undefined;
+      openSettings = true;
     }
     const at = models.findIndex((item) => rawId(item) === id);
     if (at >= 0) models[at] = candidate;
@@ -254,8 +231,17 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
     if (state.key !== savedKey) await secrets.store(apiKeySecretName(id), state.key!);
     logger.info('Saved AI model');
     logger.debug(`Saved AI model ${id}`);
+    void (openSettings ? vscode.commands.executeCommand(OPEN_SETTINGS_JSON) : offerSettingsJson());
     return id;
   }
+}
+
+/** After a save: the limits and any further setting of the entry are the user's to tune in the settings JSON. */
+async function offerSettingsJson(): Promise<void> {
+  const choice = await vscode.window.showInformationMessage(
+    'AI model saved. Tune its limits, requestBody and other settings in dataLineageViz.ai.models.', OPEN_SETTINGS,
+  );
+  if (choice === OPEN_SETTINGS) await vscode.commands.executeCommand(OPEN_SETTINGS_JSON);
 }
 
 /** The valid entry an argument names by id, or the picked one; an invalid entry is named in a warning, never offered. */
