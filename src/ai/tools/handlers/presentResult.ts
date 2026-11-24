@@ -9,7 +9,7 @@ import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
 import {
-  validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
+  validatePresentResult, orderAndAssemble, buildPreviewMetadata, findDisconnectedViewNodes,
   findBareNonPrunedNodes, findUnrenderedDetailSlotIds, requiredDetailSlotIds, buildColumnChainPreface,
   mergePresentResultRepairPatch,
   holdRejectedPresentResult,
@@ -507,15 +507,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ? mergeAmendedNotes(resultGraph.notes, validation.notes, validation.node_ids)
         : validation.notes.map(n => ({ nodeId: n.node_id, text: n.caption }));
       const aiMetadata: PresentationArtifact['aiMetadata'] = {
-        summary: validation.summary,
-        description: validation.description,
-        createdAt: new Date().toISOString(),
-        modelName: sess.modelName ?? 'unknown',
-        runId,
-        highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
-        badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
-        notes: renderedNotes,
-        layoutDirection: validation.layout_direction,
+        ...buildPreviewMetadata({ ...validation, notes: renderedNotes }, { modelName: sess.modelName ?? 'unknown', runId }),
         ...(resultGraph.columnAspect ? {
           columnAspect: {
             edges: resultGraph.columnAspect.edges.map(e => ({

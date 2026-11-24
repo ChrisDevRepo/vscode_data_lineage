@@ -32,7 +32,7 @@ import {
   presentNode, presentColumn, presentColumnCompact, presentFkCompact,
   presentSchema, presentNeighbor, presentFilter, presentForeignKeys,
 } from '../support/aiPresenter';
-import { type GetPathInput, type GetScopeBundleInput, type GetTraceInput } from './toolSchemas';
+import { type CreateGraphPreviewInput, type GetPathInput, type GetScopeBundleInput, type GetTraceInput } from './toolSchemas';
 
 
 import {
@@ -46,7 +46,7 @@ import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope'
 import { buildBareGraph, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { getModelNodeMap } from './handlers/toolServices';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { cursorOffset, nextCursor } from '../support/text';
+import { cursorOffset, nextCursor, quoteIds } from '../support/text';
 
 /** Column-match rows one `lineage_search_objects` page carries; the rest is read with `cursor`. */
 const COLUMN_SEARCH_PAGE = 50;
@@ -722,11 +722,56 @@ export function getPath(model: DatabaseModel, activeFilter: SerializedFilterStat
   };
 }
 
-/** The objects a graph preview shows and every model edge between them. */
-export function getGraphPreviewScope(model: DatabaseModel, activeFilter: SerializedFilterState | null, raw: readonly string[]) {
-  const ids = resolveGraphIds(model, raw);
-  if (!Array.isArray(ids)) return ids;
-  const inScope = new Set(ids);
+/**
+ * The objects a graph preview shows and every model edge between them, with the node ids of its
+ * highlight groups, sections and notes resolved to canonical ids. The preview colors, labels and
+ * captions only the objects it shows, and a node carries one section badge, so a node outside `ids`
+ * or in two sections is rejected with one fault line per path.
+ */
+export function getGraphPreviewScope(model: DatabaseModel, activeFilter: SerializedFilterState | null, input: CreateGraphPreviewInput) {
+  const highlights = input.highlight_groups ?? [];
+  const sections = input.sections ?? [];
+  const notes = input.notes ?? [];
+  const raw = [
+    ...input.ids,
+    ...highlights.flatMap(group => group.node_ids),
+    ...sections.flatMap(section => section.node_ids),
+    ...notes.map(note => note.node_id),
+  ];
+  const resolved = resolveGraphIds(model, raw);
+  if (!Array.isArray(resolved)) return resolved;
+  const canonical = new Map(raw.map((id, index) => [id, resolved[index]]));
+  const canon = (id: string) => canonical.get(id)!;
+  const inScope = new Set(input.ids.map(canon));
+
+  const faults: Array<{ path: string; id: string; message: string }> = [];
+  const checkInScope = (path: string, rawId: string): boolean => {
+    const id = canon(rawId);
+    if (inScope.has(id)) return true;
+    faults.push({ path, id, message: `${quoteIds([id])} is not in ids.` });
+    return false;
+  };
+  highlights.forEach((group, g) => group.node_ids.forEach((id, n) => checkInScope(`/highlight_groups/${g}/node_ids/${n}`, id)));
+  const sectionOf = new Map<string, number>();
+  sections.forEach((section, s) => section.node_ids.forEach((rawId, n) => {
+    const path = `/sections/${s}/node_ids/${n}`;
+    if (!checkInScope(path, rawId)) return;
+    const id = canon(rawId);
+    const first = sectionOf.get(id);
+    if (first === undefined) sectionOf.set(id, s);
+    else if (first !== s) faults.push({ path, id, message: `${quoteIds([id])} is already in /sections/${first}; a node is in one section.` });
+  }));
+  notes.forEach((note, n) => checkInScope(`/notes/${n}/node_id`, note.node_id));
+  if (faults.length > 0) {
+    return makeRejection({
+      code: REJECTION_CODES.validation,
+      reason: faults.map(fault => `${fault.path}: ${fault.message}`).join('\n'),
+      hint: 'Add each to ids or remove it; keep each node in one section.',
+      detail: { ids: [...new Set(faults.map(fault => fault.id))] },
+      issuePaths: faults.map(fault => fault.path.slice(1).split('/').join('.')),
+    });
+  }
+
   const types = getModelEdgeTypeMap(model);
   return {
     nodeIds: [...inScope],
@@ -734,6 +779,11 @@ export function getGraphPreviewScope(model: DatabaseModel, activeFilter: Seriali
     edges: model.edges
       .filter(e => inScope.has(e.source) && inScope.has(e.target))
       .map(e => [e.source, e.target, types.get(`${e.source}→${e.target}`)!]),
+    view: {
+      highlight_groups: highlights.map(group => ({ ...group, node_ids: group.node_ids.map(canon) })),
+      sections: sections.map(section => ({ ...section, node_ids: section.node_ids.map(canon) })),
+      notes: notes.map(note => ({ ...note, node_id: canon(note.node_id) })),
+    },
   };
 }
 

@@ -32,6 +32,8 @@ import { toModelJsonSchema } from '../tools/jsonSchema';
 import { filterRegistry } from '../tools/registry';
 import { TOOL_DEFS } from '../tools/toolDefs';
 import { MCP_TOOL_NAMES, buildAiToolRegistry, deliverToPanel, type AnalysisSettings } from '../tools/toolProvider';
+import { getModelNodeMap } from '../tools/handlers/toolServices';
+import { buildPreviewMetadata, orderAndAssemble } from '../tools/presentResult';
 import { getGraphPreviewScope, getPath, getTrace } from '../tools/tools';
 import { CreateGraphPreviewInputSchema, GetPathInputSchema, GetTraceInputSchema, parseToolInput } from '../tools/toolSchemas';
 import type { StoredRunReader } from '../session/runStore';
@@ -95,8 +97,9 @@ const mcpOnlyTool = <S extends z.ZodType>(tool: Omit<McpOnlyTool, 'inputSchema' 
 }): McpOnlyTool => tool as McpOnlyTool;
 
 /**
- * Tools only MCP clients get: the graph view's trace, Find Path and the discovery card's graph
- * preview. They are not in the chat loop's registry, so its served tool text stays unchanged.
+ * Tools only MCP clients get: the graph view's trace, Find Path and the AI graph preview (it
+ * reuses the `present_result` view schemas and renderer). They are not in the chat loop's registry,
+ * so its served tool text stays unchanged.
  */
 const MCP_ONLY_TOOLS: readonly McpOnlyTool[] = [
   mcpOnlyTool({
@@ -111,22 +114,28 @@ const MCP_ONLY_TOOLS: readonly McpOnlyTool[] = [
   }),
   mcpOnlyTool({
     name: 'lineage_create_graph_preview', title: 'Create Graph Preview', inputSchema: CreateGraphPreviewInputSchema, annotations: VIEW_ANNOTATIONS,
-    description: 'Shows the `ids` objects and every edge between them as the AI graph preview in the graph view. Returns the objects and edges shown, `edges` positional [source, target, type]. Use lineage_search_objects for ids.',
+    description: 'Shows the `ids` objects and every edge between them as the AI graph preview in the graph view, optionally styled. Returns the objects and edges shown, `edges` positional [source, target, type]. Use lineage_search_objects for ids.',
     run: async (input, session, tools, logger) => {
-      const scope = getGraphPreviewScope(session.model!, session.filter, input.ids);
+      const model = session.model!;
+      const scope = getGraphPreviewScope(model, session.filter, input);
       if (!('nodeIds' in scope)) return scope;
+      const { highlight_groups, sections, notes } = scope.view;
+      const { badges, description } = orderAndAssemble(sections, { nodeMap: getModelNodeMap(model) });
       const delivery = await deliverToPanel(tools.getPanel(), {
         type: 'ai-view-preview',
-        name: input.title,
+        name: input.name,
         nodeIds: scope.nodeIds,
-        aiMetadata: { summary: input.summary, createdAt: new Date().toISOString(), modelName: 'MCP client', highlightGroups: [], badges: [] },
+        aiMetadata: buildPreviewMetadata(
+          { summary: input.summary, description, layout_direction: input.layout_direction, highlight_groups, badges, notes: notes.map(n => ({ nodeId: n.node_id, text: n.caption })) },
+          { modelName: 'MCP client' },
+        ),
       }, logger);
       if (delivery === 'no_panel') throw new NoProjectLoadedError();
       if (delivery === 'post_failed') {
         logger.warn('AI preview post failed');
         return makeRejection({ code: REJECTION_CODES.toolExecutionError, reason: 'The graph view refused the preview.' });
       }
-      return { name: input.title, nodes: scope.nodes, edges: scope.edges };
+      return { name: input.name, nodes: scope.nodes, edges: scope.edges };
     },
   }),
 ];

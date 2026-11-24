@@ -11,7 +11,7 @@ import { quoteIds } from '../support/text';
 import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { FOCUS_NODE_HREF_PREFIX, isIndirectEdge, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
+import { FOCUS_NODE_HREF_PREFIX, isIndirectEdge, type AIViewMetadata, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
 import Graph from 'graphology';
@@ -791,6 +791,35 @@ export function orderAndAssemble(
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
   return { badges, description: parts.join('\n\n'), droppedSectionLinks };
+}
+
+/**
+ * The `aiMetadata` of an `ai-view-preview`, built once for the panel's final presentation and the
+ * MCP graph preview from the validated view fields and {@link orderAndAssemble}'s badges and
+ * description. Column-trace data is the caller's to add.
+ */
+export function buildPreviewMetadata<S extends string | undefined, D extends string | undefined>(
+  view: {
+    summary: S;
+    description: D;
+    layout_direction?: 'LR' | 'TB';
+    highlight_groups: NonNullable<PresentResultInput['highlight_groups']>;
+    badges: Array<{ node_id: string; text: string }>;
+    notes: Array<{ nodeId: string; text: string }>;
+  },
+  origin: { modelName: string; runId?: string },
+): AIViewMetadata & { summary: S; description: D } {
+  return {
+    summary: view.summary,
+    description: view.description,
+    createdAt: new Date().toISOString(),
+    modelName: origin.modelName,
+    runId: origin.runId,
+    highlightGroups: view.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
+    badges: view.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
+    notes: view.notes,
+    layoutDirection: view.layout_direction,
+  };
 }
 
 /**
