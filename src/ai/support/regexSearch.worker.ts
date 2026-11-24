@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { compileSearchRegex, searchCatalog, scanBodyMatches, type SearchableNode } from '../../utils/modelSearch';
-import { checkScopeBudget, type TurnTokenBudget } from './tokenBudget';
+import { checkScopeTokens, type TurnTokenBudget } from './tokenBudget';
 
 /** Structured input to isolated native-regexp execution; patterns are data, never worker code. */
 export type RegexSearchJob = {
@@ -9,7 +9,7 @@ export type RegexSearchJob = {
   readonly types?: SearchableNode['type'][];
 } & (
   | { readonly kind: 'catalog'; readonly schemas?: string[]; readonly limit: number }
-  | { readonly kind: 'ddl'; readonly budget: TurnTokenBudget | null; readonly rowChars: number }
+  | { readonly kind: 'ddl'; readonly budget: TurnTokenBudget | null; readonly rowChars: number; readonly rowTokens: number }
 );
 
 /** Complete isolated result, returned only after the entire requested search finishes. */
@@ -31,7 +31,7 @@ if (!compiled.ok) {
     }
     : {
       ok: true, kind: 'ddl',
-      scan: scanBodyMatches(job.nodes, compiled.regex, types, count => checkScopeBudget(job.budget, 0, count * job.rowChars) === null),
+      scan: scanBodyMatches(job.nodes, compiled.regex, types, count => checkScopeTokens(job.budget, 0, count * job.rowTokens, count * job.rowChars) === null),
     };
   parentPort?.postMessage(result);
 }

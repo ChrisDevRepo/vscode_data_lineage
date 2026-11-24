@@ -5,12 +5,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from '../../../src/ai/agent/discoveryCapture';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
-import { checkScopeBudget, createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
+import { checkScopeTokens, createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import { searchDdl } from '../../../src/ai/tools/tools';
 import type { DatabaseModel } from '../../../src/engine/types';
 
 const budget = createTurnTokenBudget();
-const envelope = JSON.stringify(checkScopeBudget(budget, 1_000_000, 0));
+const envelope = JSON.stringify(checkScopeTokens(budget, 1_000_000, 0, 0));
 
 describe('over-budget refusal readers', () => {
   it('reads the rejection envelope by its code, whatever its reason says', () => {

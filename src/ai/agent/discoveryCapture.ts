@@ -20,7 +20,7 @@ const OBJECT_DETAIL_TOOL = 'lineage_get_object_detail';
 
 /**
  * The one tool whose over-budget rejection means "this scope is too large to answer inline".
- * `checkScopeBudget` is shared, so its envelope can surface from any caller (`presentRunRecall`
+ * `checkScopeTokens` is shared, so its envelope can surface from any caller (`presentRunRecall`
  * returns it for an oversized stored-run recall), but only an oversized *scope* request means a
  * neighbourhood that must be walked hop by hop. Matching the envelope alone turned "what did this
  * run prune?" into a fresh exploration gate instead of the recall rejection the model already
@@ -105,7 +105,7 @@ interface OverBudgetNotice {
 /**
  * Reads an `over_discovery_budget` rejection from any tool result. Unlike
  * {@link detectOverBudgetFromResult} it is tool-agnostic: every catalog surface shares
- * `checkScopeBudget`, so the envelope can arrive from scope bundles, DDL detail, group requests or
+ * `checkScopeTokens`, so the envelope can arrive from scope bundles, DDL detail, group requests or
  * screen recall. `null` for anything else, including malformed JSON.
  */
 function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetNotice | null {

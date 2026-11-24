@@ -14,7 +14,8 @@ import {
 } from '../../engine/shared/bridgeContract';
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
+import { checkScopeTokens, type TurnTokenBudget } from '../support/tokenBudget';
+import { countTokens } from '../support/tokenCount';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { schemaKey } from '../../utils/sql';
@@ -269,20 +270,25 @@ export function presentScreenState(input: ScreenStateInput): {
     },
     ...(page.more ? { next_cursor: String(page.offset + SCREEN_STATE_MAX_IDS) } : {}),
   };
-  const chars = JSON.stringify(screen).length;
-  return { screen, _token_estimate: { chars, estimated_tokens: estimateTokens(chars) } };
+  return { screen, _token_estimate: tokenEstimate(JSON.stringify(screen)) };
 }
 
-function withEstimate(payload: Record<string, unknown>): Record<string, unknown> {
-  const chars = JSON.stringify(payload).length;
-  return { ...payload, _token_estimate: { chars, estimated_tokens: estimateTokens(chars) } };
+/** The size of a serialized reply: its characters and its tokens in the budget's own counter. */
+function tokenEstimate(json: string): { chars: number; estimated_tokens: number } {
+  return { chars: json.length, estimated_tokens: countTokens(json) };
+}
+
+function withEstimate(
+  payload: Record<string, unknown>,
+  estimate = tokenEstimate(JSON.stringify(payload)),
+): Record<string, unknown> {
+  return { ...payload, _token_estimate: estimate };
 }
 
 /** The rejection with its own token estimate riding in `detail`, beside any facts already there. */
 function rejectionWithEstimate(rejection: ToolRejection): ToolRejection {
-  const chars = JSON.stringify(rejection).length;
   const detail = rejection.detail !== null && typeof rejection.detail === 'object' ? rejection.detail : {};
-  return { ...rejection, detail: { ...detail, _token_estimate: { chars, estimated_tokens: estimateTokens(chars) } } };
+  return { ...rejection, detail: { ...detail, _token_estimate: tokenEstimate(JSON.stringify(rejection)) } };
 }
 
 function definedOnly(entry: Record<string, unknown>): Record<string, unknown> {
@@ -405,11 +411,11 @@ function recallStale(run: StoredAiRun, getDdl: ((id: string) => string | undefin
   return staleIds(run, getDdl).map(id => ({ id, stored_hash_known: hashes[id] !== UNKNOWN_DDL_HASH }));
 }
 
-function overBudgetHint(input: RunRecallInput, chars: number, tokenBudget: number): string {
+function overBudgetHint(input: RunRecallInput, tokens: number, tokenBudget: number): string {
   if (!input.ids?.length) {
     return 'That class is too large to return in one response. Ask about specific objects with ids instead.';
   }
-  const fits = Math.max(1, Math.floor((input.ids.length * tokenBudget) / estimateTokens(chars)));
+  const fits = Math.max(1, Math.floor((input.ids.length * tokenBudget) / tokens));
   return `Narrow ids to at most ${fits} or use a filter instead.`;
 }
 
@@ -436,12 +442,13 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
     : input.filter === 'pruned' ? { ...head, pruned: recallPruned(run) }
     : input.filter === 'open_leads' ? { ...head, open_leads: recallOpenLeads(run) }
     : { ...head, stale: recallStale(run, input.getDdl) };
-  const chars = JSON.stringify(payload).length;
-  const admission = checkScopeBudget(input.budget, 0, chars);
+  const json = JSON.stringify(payload);
+  const estimate = tokenEstimate(json);
+  const admission = checkScopeTokens(input.budget, 0, estimate.estimated_tokens, json.length);
   if (admission) {
-    return rejectionWithEstimate({ ...admission, hint: overBudgetHint(input, chars, admission.detail.limits.token_budget) });
+    return rejectionWithEstimate({ ...admission, hint: overBudgetHint(input, estimate.estimated_tokens, admission.detail.limits.token_budget) });
   }
-  return withEstimate(payload);
+  return withEstimate(payload, estimate);
 }
 
 /**

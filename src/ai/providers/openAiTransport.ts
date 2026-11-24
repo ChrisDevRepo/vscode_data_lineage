@@ -7,8 +7,6 @@
  */
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { ChatOpenAI, messageToOpenAIRole } from '@langchain/openai';
-import { Tiktoken } from 'js-tiktoken/lite';
-import o200kBase from 'js-tiktoken/ranks/o200k_base';
 import type { ModelEntry } from './modelEntries';
 import {
   ProviderModelPort,
@@ -20,21 +18,7 @@ import {
 import { cancelledError, messageStreamedToolArguments, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
 import { systemPromptHash, type TokenUsage, type WireMessage, type WirePart } from '../observability/wireLog';
 import { sanitizeProviderError } from '../support/text';
-
-/**
- * Factor on every token count. The counter is OpenAI's `o200k_base`; other models tokenize SQL and
- * identifiers into more tokens, and a 32k window has no room for the difference.
- *
- * @internal Test seam.
- */
-export const TOKEN_COUNT_MARGIN = 1.2;
-
-let encoder: Tiktoken | undefined;
-
-function countTokens(text: string): Promise<number> {
-  encoder ??= new Tiktoken(o200kBase);
-  return Promise.resolve(Math.ceil(encoder.encode(text).length * TOKEN_COUNT_MARGIN));
-}
+import { countTokens } from '../support/tokenCount';
 
 /** Request fields the entry's own settings produce, below `requestBody`. */
 function entryBody(entry: ModelEntry, effort: string | undefined): Record<string, unknown> {
@@ -226,7 +210,7 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
   return {
     id: `provider:${entry.id}`,
     identity: { id: entry.id, name: entry.name, vendor: 'openai-compatible', family: entry.model, version: entry.apiType },
-    countTokens,
+    countTokens: text => Promise.resolve(countTokens(text)),
     async *stream({ messages, tools, toolChoice, signal, wire }: TransportRequest) {
       let replyReceived = false;
       try {

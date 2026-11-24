@@ -36,12 +36,12 @@ import { type CreateGraphPreviewInput, type GetPathInput, type GetScopeBundleInp
 
 
 import {
-  checkScopeBudget,
-  estimateTokens,
+  checkScopeTokens,
   REGEX_MAX_LENGTH,
   type DiscoveryBudgetRejection,
   type TurnTokenBudget,
 } from '../support/tokenBudget';
+import { checkScopeText, countTokens } from '../support/tokenCount';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { buildBareGraph, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { getModelNodeMap } from './handlers/toolServices';
@@ -562,7 +562,7 @@ export function getScopeBundle(
       const id = String(key);
       scopeIds.add(id);
       distance?.set(id, depth);
-      if (checkScopeBudget(budget, scopeIds.size, 0)) nodeBudgetExceeded = true;
+      if (checkScopeTokens(budget, scopeIds.size, 0, 0)) nodeBudgetExceeded = true;
       return false;
     }, { mode });
   };
@@ -591,18 +591,21 @@ export function getScopeBundle(
   });
 
   if (nodeBudgetExceeded) {
-    const admission = checkScopeBudget(budget, scopeIds.size, 0);
+    const admission = checkScopeTokens(budget, scopeIds.size, 0, 0);
     if (admission) return overBudgetScopeReply(admission);
   }
 
   let ddlChars = 0;
+  let ddlTokens = 0;
   for (const id of scopeIds) {
     const ddl = getNodeDdl(id, nodeMap, store);
-    if (ddl) ddlChars += ddl.length;
+    if (!ddl) continue;
+    ddlChars += ddl.length;
+    ddlTokens += countTokens(ddl);
   }
-  const ddlFits = checkScopeBudget(budget, 0, ddlChars) === null;
+  const ddlFits = checkScopeTokens(budget, 0, ddlTokens, ddlChars) === null;
   if (includeDdl && !ddlFits) {
-    const admission = checkScopeBudget(budget, scopeIds.size, ddlChars);
+    const admission = checkScopeTokens(budget, scopeIds.size, ddlTokens, ddlChars);
     if (admission) return overBudgetScopeReply(admission);
   }
   const effectiveIncludeDdl = includeDdl === false
@@ -649,7 +652,7 @@ export function getScopeBundle(
       nodes: nodes.length,
       edges: edges.length,
       estimated_ddl_chars: ddlChars,
-      estimated_ddl_tokens: estimateTokens(ddlChars),
+      estimated_ddl_tokens: ddlTokens,
     },
     nodes,
     edges,
@@ -868,8 +871,7 @@ export function runAnalysis(
 
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
 
-  const groupChars = JSON.stringify(result.groups).length;
-  if (checkScopeBudget(budget, 0, groupChars)) {
+  if (checkScopeText(budget, 0, JSON.stringify(result.groups))) {
     const narrowByType: Partial<Record<AnalysisType, string>> = {
       hubs:    'Raise min_degree',
       islands: 'Lower max_size',
@@ -922,7 +924,8 @@ function toLineRanges(lines: number[]): string {
  * value empty. Derived from the hit shape itself, so it cannot drift from what a hit costs; the
  * object fields are served once per object in `by_object`, not per hit.
  */
-const MIN_SEARCH_DDL_HIT_CHARS = JSON.stringify({ line: 0, context: '' }).length;
+const MIN_SEARCH_DDL_HIT_ROW = JSON.stringify({ line: 0, context: '' });
+const MIN_SEARCH_DDL_HIT_CHARS = MIN_SEARCH_DDL_HIT_ROW.length;
 
 /** Hint on a located long line: the row is not served as text; the DDL read shows it whole. */
 const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_CHARS} characters, so no row shows them. Read the object's DDL with lineage_get_object_detail and go to the line number; match_offset is where the match starts within the line.`;
@@ -988,12 +991,13 @@ export async function searchDdl(
     ...n,
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
-  const hitAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_HIT_CHARS);
+  const rowTokens = countTokens(MIN_SEARCH_DDL_HIT_ROW);
+  const hitAdmission = (count: number) => checkScopeTokens(budget, 0, count * rowTokens, count * MIN_SEARCH_DDL_HIT_CHARS);
   let scanned: import('../../utils/modelSearch').BodyScanResult;
   try {
     const reply = await executeIsolatedRegexSearch({
       kind: 'ddl', pattern: query, nodes: searchableNodes, types: [...typeSet], budget,
-      rowChars: MIN_SEARCH_DDL_HIT_CHARS,
+      rowChars: MIN_SEARCH_DDL_HIT_CHARS, rowTokens,
     }, signal);
     if (!reply.ok || reply.kind !== 'ddl') throw new Error('Search worker did not return a DDL result.');
     const nodesById = new Map(searchableNodes.map(node => [node.id, node]));
@@ -1038,7 +1042,7 @@ export async function searchDdl(
       hint: 'The objects with long matching lines exceed the discovery token budget and were not listed. Restrict types[] to list them.',
     },
   };
-  const fitsBudget = (reply: object) => checkScopeBudget(budget, 0, JSON.stringify(reply).length) === null;
+  const fitsBudget = (reply: object) => checkScopeText(budget, 0, JSON.stringify(reply)) === null;
   const withSearched = <T extends object>(build: (searched: typeof searchedListing | typeof searchedCounted) => T): T => {
     const listed = build(searchedListing);
     if (cutLineCount === 0 || fitsBudget(listed)) return listed;
@@ -1103,10 +1107,11 @@ export async function searchDdl(
     by_object: byObject,
     searched,
   }));
-  const resultChars = JSON.stringify(payload).length;
-  const admission = checkScopeBudget(budget, 0, resultChars);
+  const resultJson = JSON.stringify(payload);
+  const resultTokens = budget ? countTokens(resultJson) : 0;
+  const admission = checkScopeTokens(budget, 0, resultTokens, resultJson.length);
   if (admission) {
-    onDebug?.(`searchDdl: ${matches.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${admission.detail.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
+    onDebug?.(`searchDdl: ${matches.length} matches in ${objects} objects exceed the discovery token budget (${resultTokens} > ${admission.detail.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
     return overBudget(admission, matches.length, objects);
   }
   return payload;

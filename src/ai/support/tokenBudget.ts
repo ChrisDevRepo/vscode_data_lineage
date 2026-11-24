@@ -123,23 +123,26 @@ export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget(
  * catalog handler; on overflow the caller returns the structured rejection instead (no truncation,
  * the whole request is refused). An oversized `lineage_get_scope_bundle` never reaches the model:
  * `detectOverBudgetFromResult` makes it a reroute terminal, the turn leaves discovery for SM entry
- * and the consent gate opens there.
+ * and the consent gate opens there. The caller counts the request's DDL tokens (`countTokens` in
+ * `tokenCount.ts`, which this module cannot import: the regex-search worker bundles it), so the
+ * check and the request's own token figure share one counter.
  *
  * @param budget - The calling turn's budget; a caller outside a turn (the MCP server) passes `null`
  *   and every request fits.
  * @param requestedNodes - Nodes the request would load (e.g. BFS result size).
- * @param requestedDdlBytes - Total DDL bytes that would be returned.
+ * @param requestedDdlTokens - Tokens the request's DDL takes.
+ * @param requestedDdlBytes - The same DDL's length, reported in the rejection's counts.
  * @returns `null` when the request fits both caps; otherwise the rejection carrying counts and
  *   limits in `detail` and the AI-facing hint.
  */
-export function checkScopeBudget(
+export function checkScopeTokens(
   budget: TurnTokenBudget | null,
   requestedNodes: number,
+  requestedDdlTokens: number,
   requestedDdlBytes: number,
 ): DiscoveryBudgetRejection | null {
   if (!budget) return null;
-  const tokens = estimateTokens(requestedDdlBytes);
-  if (!exceedsPhaseBudget(budget.discovery, requestedNodes, tokens)) return null;
+  if (!exceedsPhaseBudget(budget.discovery, requestedNodes, requestedDdlTokens)) return null;
   return {
     ...makeRejection({
       code: REJECTION_CODES.overDiscoveryBudget,
