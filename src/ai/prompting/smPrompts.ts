@@ -8,7 +8,7 @@ import { escapePromptText } from '../support/text';
 import { assignEvidenceIds, requiredCtChainNodeIds, requiredDetailSlotIds } from '../tools/presentResult';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
-import { isIndirectOnly } from '../../engine/shared/bridgeContract';
+import { isIndirectEdge } from '../../engine/shared/bridgeContract';
 
 /**
  * Suffix appended when a passthrough-inherited sub-question lands on a bodied focus: names the
@@ -456,7 +456,7 @@ export function buildSmCompletionEnvelope(
   const presented = new Set(presentedNodeIds);
   // The synthesis chain is direct lineage; stored indirect facts reach the must-cover line and the
   // view payload.
-  const directColumnEdges = result.columnAspect?.edges.filter(edge => !isIndirectOnly(edge.transforms)) ?? [];
+  const directColumnEdges = result.columnAspect?.edges.filter(edge => !isIndirectEdge(edge)) ?? [];
   const flowBlock = directColumnEdges.length > 0
     ? '\n' + buildCtSynthesisBlock(result.originNodeId, directColumnEdges, result.edges, presented)
     : result.edges.length > 0

@@ -576,6 +576,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               toCol:    e.to_col,
               ...(e.transforms ? { transforms: e.transforms } : {}),
               ...(e.note ? { note: e.note } : {}),
+              ...(e.indirect ? { indirect: e.indirect } : {}),
             })),
           },
           nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states, model.identifierCaseSensitive),

@@ -48,13 +48,14 @@ export class ColumnTracer {
    * The aspect as delivered, minus the edges whose endpoint the render dispositioned away. A
    * projection for delivery only: {@link state} keeps every committed edge, so the state dump and
    * completeness accounting see the full chain. An edge outside the {@link columnAttachment} of
-   * `roots` (its path ran through a withheld endpoint) is withheld too and named in one `log` line;
-   * no edge is added or rewritten.
+   * `roots` (its path ran through a withheld endpoint) is withheld too and named in one `log` line.
+   * A value edge that is not {@link ColumnAttachment.direct} is delivered with `indirect: true`;
+   * nothing else of an edge is rewritten and no edge is added.
    *
    * @param droppedEndpointIds - Endpoint node ids the render withheld; empty on almost every call.
    * @param rendered - Node ids of the delivered object result; an edge whose destination or
    *   authoring hop is outside it is withheld. A source may lie outside.
-   * @returns The aspect to deliver; the live state itself when nothing was withheld.
+   * @returns The aspect to deliver; the live state itself when nothing was withheld or marked.
    */
   deliveredState(
     droppedEndpointIds: ReadonlySet<string>,
@@ -72,12 +73,14 @@ export class ColumnTracer {
     }
     const endpointKey = columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive);
     const closure = columnAttachment(roots, kept, direction, endpointKey);
-    const delivered = kept.filter(e => closure.attaches(e));
-    if (delivered.length < kept.length) {
-      const detached = kept.filter(e => !delivered.includes(e)).map(e => `${e.from_node}.${e.from_col} -> ${e.to_node}.${e.to_col}`);
+    const attached = kept.filter(e => closure.attaches(e));
+    if (attached.length < kept.length) {
+      const detached = kept.filter(e => !attached.includes(e)).map(e => `${e.from_node}.${e.from_col} -> ${e.to_node}.${e.to_col}`);
       log?.('debug', `[Disposition] getResult withholds ${detached.length} column edge(s) outside the closure of the tracked roots — ${detached.join(', ')}`);
     }
-    return delivered.length === this.aspect.edges.length ? this.aspect : { ...this.aspect, edges: delivered };
+    const delivered = attached.map(e => isIndirectOnly(e.transforms) || closure.direct(e) ? e : { ...e, indirect: true as const });
+    return delivered.every((e, i) => e === this.aspect.edges[i]) && delivered.length === this.aspect.edges.length
+      ? this.aspect : { ...this.aspect, edges: delivered };
   }
 
   /** Columns requested at the start of the trace. */
@@ -93,6 +96,11 @@ export class ColumnTracer {
   /** Column-flow edges committed so far. */
   get edges(): ColumnEdge[] {
     return this.aspect.edges;
+  }
+
+  /** The {@link columnAttachment} of `roots` over every committed edge. */
+  private chain(roots: readonly { node: string; col: string }[], direction: 'upstream' | 'downstream' | 'both'): ColumnAttachment {
+    return columnAttachment(roots, this.aspect.edges, direction, columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive));
   }
 
   /** Distinct nodes at either end of a committed edge. */
@@ -129,6 +137,7 @@ export class ColumnTracer {
    * @param log - Optional logger; the caller supplies the one it already holds.
    * @param traceDirection - `from_node`/`from_col` name the supplier side (next node, upstream);
    *   `to_node`/`to_col` the write target (next node, downstream).
+   * @param roots - With `direction`, the chain of {@link spineEndpointsFor}.
    */
   determineActiveColumnsForCandidate(
     candidateNodeId: string,
@@ -136,9 +145,11 @@ export class ColumnTracer {
     writtenCarrierIds: ReadonlySet<string> = new Set(),
     log: TracerLogFn | undefined,
     traceDirection: 'upstream' | 'downstream',
+    roots: readonly { node: string; col: string }[],
+    direction: 'upstream' | 'downstream' | 'both',
   ): string[] {
     const spineByNorm = new Map<string, string>();
-    for (const ref of this.spineEndpointsFor(candidateNodeId, writtenCarrierIds, traceDirection)) {
+    for (const ref of this.spineEndpointsFor(candidateNodeId, writtenCarrierIds, traceDirection, roots, direction)) {
       const key = this.columnKey(ref.col);
       if (!spineByNorm.has(key)) spineByNorm.set(key, ref.col);
     }
@@ -156,20 +167,25 @@ export class ColumnTracer {
 
   /**
    * The committed endpoints a candidate owns on the traced spine, as qualified identities.
-   * Upstream, the source side of a committed edge on the candidate or on a non-bodied carrier it
-   * writes; downstream, the destination side. Each is an exact recorded (node, column) pair,
-   * deduplicated by identity, never a column name matched on another object.
+   * Upstream, the source side of a direct committed edge on the candidate or on a non-bodied
+   * carrier it writes; downstream, the destination side. Each is an exact recorded (node, column)
+   * pair, deduplicated by identity, never a column name matched on another object.
    *
+   * @param roots - With `direction`, the chain that decides a direct edge
+   *   ({@link ColumnAttachment.direct}).
    * @returns Qualified spine endpoints in commit order.
    */
   spineEndpointsFor(
     candidateNodeId: string,
     writtenCarrierIds: ReadonlySet<string>,
     traceDirection: 'upstream' | 'downstream',
+    roots: readonly { node: string; col: string }[],
+    direction: 'upstream' | 'downstream' | 'both',
   ): Array<{ node: string; col: string }> {
+    const chain = this.chain(roots, direction);
     const endpoints = new Map<string, { node: string; col: string }>();
     for (const e of this.aspect.edges) {
-      if (isIndirectOnly(e.transforms)) continue;
+      if (!chain.direct(e)) continue;
       const node = traceDirection === 'downstream' ? e.to_node : e.from_node;
       const col = traceDirection === 'downstream' ? e.to_col : e.from_col;
       if (!col || (node !== candidateNodeId && !writtenCarrierIds.has(node))) continue;
@@ -180,18 +196,25 @@ export class ColumnTracer {
   }
 
   /**
-   * Generates chain-continuation questions for the real upstream column edges staged at the given
-   * hop, grouped by the upstream node that must next answer each; injected as `<lineage_questions>`
-   * in that node's own `<current_task>`.
+   * Generates chain-continuation questions for the direct column edges staged at the given hop
+   * ({@link ColumnAttachment.direct} of `roots` in `direction`: a second contributor gets none),
+   * grouped by the upstream node that must next answer each; injected as `<lineage_questions>` in
+   * that node's own `<current_task>`.
    *
    * Terminal production (`upstream_columns: []`) stages no edge and no question. Questions are
    * labelled by `edge.from_col` so the wording matches that hop's `<column_trace>` active-column
    * label. Writer edges (`from_node === hop_node`) never spawn one: they attribute the focus's own
    * write rather than continue the chain.
    */
-  getColumnLineageQuestionsByNode(focusId: string, hopCount: number): Map<string, string[]> {
+  getColumnLineageQuestionsByNode(
+    focusId: string,
+    hopCount: number,
+    roots: readonly { node: string; col: string }[],
+    direction: 'upstream' | 'downstream' | 'both',
+  ): Map<string, string[]> {
+    const chain = this.chain(roots, direction);
     const hopEdges = this.aspect.edges.filter(
-      e => e.hop_node === focusId && e.hop === hopCount && e.from_node !== e.hop_node && !isIndirectOnly(e.transforms),
+      e => e.hop_node === focusId && e.hop === hopCount && e.from_node !== e.hop_node && chain.direct(e),
     );
     const byNode = new Map<string, string[]>();
     if (hopEdges.length === 0) return byNode;
@@ -624,6 +647,12 @@ export interface ColumnAttachment {
   readonly flowing: Set<string>;
   /** Whether a committed or staged edge is attached. */
   attaches(edge: ColumnClosureEdge): boolean;
+  /**
+   * Whether an edge is direct lineage: a value class whose source is on the unbroken chain from
+   * the roots (their upstream closure and {@link flowing}) or the hop's writer edge out of itself.
+   * A second contributor to a reached output is attached but not direct.
+   */
+  direct(edge: ColumnClosureEdge): boolean;
 }
 
 /**
@@ -635,7 +664,8 @@ export interface ColumnAttachment {
  * everything they feed, and every input of what they feed (a second contributor to a reached output
  * is attached, its other outputs are not). Both: the union. An edge is attached when its `to`
  * endpoint is. An indirect edge (every class INDIRECT) is no link: it extends nothing and is
- * attached when either endpoint is.
+ * attached when either endpoint is. Direct lineage is the chain alone
+ * ({@link ColumnAttachment.direct}).
  *
  * The origin's explicit write of a requested output (an edge from the root out of the origin hop to
  * another node) attaches that destination when the direction rule does not already hold it, with
@@ -653,12 +683,13 @@ export function columnAttachment(
   const rootKeys = new Set(roots.map(root => endpointKey(root.node, root.col)));
   const direct = edges.filter(edge => !isIndirectOnly(edge.transforms));
   const links = direct.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) }));
-  const endpoints = new Set(rootKeys);
-  if (direction !== 'downstream') for (const key of reachableColumnEndpoints(rootKeys, links, 'upstream')) endpoints.add(key);
+  const chain = new Set(rootKeys);
+  if (direction !== 'downstream') for (const key of reachableColumnEndpoints(rootKeys, links, 'upstream')) chain.add(key);
   const flowing = new Set(rootKeys);
+  const endpoints = new Set(chain);
   if (direction !== 'upstream') {
     const fed = reachableColumnEndpoints(rootKeys, links, 'downstream');
-    for (const key of fed) flowing.add(key);
+    for (const key of fed) { flowing.add(key); chain.add(key); }
     for (const key of reachableColumnEndpoints(fed, links, 'upstream')) endpoints.add(key);
   }
   const ownWrites = new Map<string, string>();
@@ -669,8 +700,10 @@ export function columnAttachment(
   if (ownWrites.size > 0) {
     const ownInputs = new Set<string>();
     direct.forEach((edge, index) => { if (ownWrites.get(links[index].to) === edge.hop_node) ownInputs.add(links[index].from); });
-    for (const key of ownWrites.keys()) endpoints.add(key);
-    for (const key of reachableColumnEndpoints(ownInputs, links.filter(link => !ownWrites.has(link.to)), 'upstream')) endpoints.add(key);
+    for (const key of [...ownWrites.keys(), ...reachableColumnEndpoints(ownInputs, links.filter(link => !ownWrites.has(link.to)), 'upstream')]) {
+      endpoints.add(key);
+      chain.add(key);
+    }
   }
   return {
     endpoints,
@@ -680,6 +713,8 @@ export function columnAttachment(
       if (isIndirectOnly(edge.transforms)) return endpoints.has(to) || endpoints.has(endpointKey(edge.from_node, edge.from_col));
       return endpoints.has(to) && (!ownWrites.has(to) || ownWrites.get(to) === edge.hop_node);
     },
+    direct: edge => !isIndirectOnly(edge.transforms)
+      && ((edge.from_node === edge.hop_node && edge.to_node !== edge.hop_node) || chain.has(endpointKey(edge.from_node, edge.from_col))),
   };
 }
 

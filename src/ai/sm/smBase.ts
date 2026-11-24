@@ -2507,7 +2507,7 @@ export class NavigationEngine implements IHopStateMachine {
     const side = this.columnTraceDirection();
     // A delete-only write supplies no column end of its target, so that target adds none here.
     const carriers = new Set([...this.writtenCarrierIds(nodeId)].filter(id => !this.isDeleteOnlyWrite(nodeId, id)));
-    const refs = this.tracer.spineEndpointsFor(nodeId, carriers, side);
+    const refs = this.tracer.spineEndpointsFor(nodeId, carriers, side, this.columnRoots(), this.columnClosureDirection());
     if (refs.length === 0) return { carry: { kind: 'carry', columns: [] } };
     return {
       carry: { kind: 'carry', columns: [...new Map(refs.map(ref => [this.columnKey(ref.col), ref.col])).values()] },
@@ -3351,7 +3351,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (this.tracer && stagedColumnEdges.length > 0) {
       this.tracer.edges.push(...stagedColumnEdges);
-      lineageQuestionsByNode = this.tracer.getColumnLineageQuestionsByNode(focusId, this.hopCount);
+      lineageQuestionsByNode = this.tracer.getColumnLineageQuestionsByNode(focusId, this.hopCount, this.columnRoots(), this.columnClosureDirection());
       this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this.tracer.edges.length} active_cols=${this.tracer.activeColumns.join(',')}`);
     }
 
@@ -4137,7 +4137,7 @@ export class NavigationEngine implements IHopStateMachine {
         ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => foldedTable ? presentColumnCompact(c) : c.name)
         : undefined;
       const attributedColumns = this.tracer
-        ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log, this.columnTraceDirection())
+        ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log, this.columnTraceDirection(), this.columnRoots(), this.columnClosureDirection())
         : [];
       const neighbor: HopNeighborDisclosure = {
         id: nid, s: n.schema, n: n.name, t: n.type,

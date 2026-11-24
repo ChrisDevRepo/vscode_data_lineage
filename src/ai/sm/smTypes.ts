@@ -144,6 +144,11 @@ export interface ColumnEdge {
    * offered none — the webview then describes the edge structurally instead.
    */
   note?: string;
+  /**
+   * Set by delivery only: a value edge whose source is off the traced chain (a second contributor
+   * of a reached output) is indirect lineage; {@link transforms} stay as recorded.
+   */
+  indirect?: true;
 }
 
 

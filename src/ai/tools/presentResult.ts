@@ -11,7 +11,7 @@ import { quoteIds } from '../support/text';
 import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { FOCUS_NODE_HREF_PREFIX, isIndirectOnly, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
+import { FOCUS_NODE_HREF_PREFIX, isIndirectEdge, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
 import { marked } from 'marked';
@@ -917,6 +917,8 @@ export type ColumnChainEdge = {
   to_col: string;
   /** Recorded contributor roles; omitted when not established. */
   transforms?: readonly ColumnTransformClass[];
+  /** Set when the engine placed a value edge on the indirect side. */
+  indirect?: true;
 };
 
 /**
@@ -935,7 +937,7 @@ export function buildColumnChainPreface(
   edges: readonly ColumnChainEdge[],
   nodeMap?: ReadonlyMap<string, { fullName: string }>,
 ): string | undefined {
-  const direct = edges.filter(edge => !isIndirectOnly(edge.transforms));
+  const direct = edges.filter(edge => !isIndirectEdge(edge));
   if (direct.length === 0) return undefined;
   const outputs = new Map<string, ColumnChainEdge[]>();
   for (const edge of [...direct].sort((a, b) => a.hop - b.hop)) {

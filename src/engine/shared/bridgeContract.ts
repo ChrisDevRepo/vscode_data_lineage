@@ -326,6 +326,14 @@ export function isIndirectOnly(transforms: readonly ColumnTransformClass[] | und
   return !!transforms?.length && transforms.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
 }
 
+/**
+ * Whether a delivered column edge is indirect lineage: the engine set it off the traced chain, or
+ * every class is INDIRECT. The one side test of every surface that reads delivered edges.
+ */
+export function isIndirectEdge(edge: { readonly indirect?: true; readonly transforms?: readonly ColumnTransformClass[] }): boolean {
+  return edge.indirect === true || isIndirectOnly(edge.transforms);
+}
+
 /** Zod form of {@link COLUMN_TRANSFORM_CLASSES}, shared by every schema that carries the field. */
 export const ColumnTransformClassSchema = z.enum(COLUMN_TRANSFORM_CLASSES);
 
@@ -343,6 +351,11 @@ const ColumnAspectEdgeSchema = z.object({
    * structural description.
    */
   note: z.string().optional(),
+  /**
+   * Present only when the engine placed a value edge on the indirect side: its source is off the
+   * traced chain (a second contributor of a reached output). `transforms` stay as recorded.
+   */
+  indirect: z.literal(true).optional(),
 }).strict();
 
 export type ColumnAspectEdge = z.infer<typeof ColumnAspectEdgeSchema>;

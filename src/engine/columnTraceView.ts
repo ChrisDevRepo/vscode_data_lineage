@@ -8,7 +8,7 @@
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName, schemaKey } from '../utils/sql';
-import { COLUMN_TRANSFORM_CLASSES, COLUMN_TRANSFORM_DIRECTION, isIndirectOnly, type ColumnAspectEdge, type ColumnTransformClass, type NodeVerdict } from './shared/bridgeContract';
+import { COLUMN_TRANSFORM_CLASSES, COLUMN_TRANSFORM_DIRECTION, isIndirectEdge, type ColumnAspectEdge, type ColumnTransformClass, type NodeVerdict } from './shared/bridgeContract';
 import type { ExtensionConfig } from './types';
 
 /**
@@ -29,7 +29,8 @@ export interface ColumnTraceRow {
   name: string;
   /**
    * Indirect classes (`COLUMN_TRANSFORM_DIRECTION`) the column plays at a step, in class order,
-   * beside any direct role; absent when no indirect fact names the column.
+   * beside any direct role, or every class of an indirect-side value edge; absent when no indirect
+   * fact names the column.
    */
   indirect?: ColumnTransformClass[];
   /**
@@ -531,20 +532,22 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   const indirectUses = new Map<string, IndirectUse>();
 
   /**
-   * Records the indirect part of a relation (all of it, or the combine/filter classes of a mixed
-   * one): a join key or filter column of the neighbour `fromNode` that the step uses. It becomes a row of the neighbour and one line to the step; no column edge, no
-   * port bridge, no row for the traced column, so it never continues a thread. The step is the hop
-   * node, or the target when the hop is not on the canvas. A transform hub has no column rows, so
-   * its key only reaches the line. A fact with no row to sit on, a hub's or one naming an object
-   * that is not drawn, is kept on the step for its summary line.
+   * Records the indirect part of a relation (all of an indirect edge with its own classes, or the
+   * combine/filter classes of a mixed one): a join key or filter column of the neighbour
+   * `fromNode` that the step uses. It becomes a row of the neighbour and one line to the step; no
+   * column edge, no port bridge, no row for the traced column, so it never continues a thread. The
+   * step is the hop node, or the target when the hop is not on the canvas. A transform hub has no
+   * column rows, so its key only reaches the line. A fact with no row to sit on, a hub's or one
+   * naming an object that is not drawn, is kept on the step for its summary line.
    */
   function recordIndirect(relation: ColumnTraceRelation, sourceObj: ColumnTraceViewObject | undefined, stepObj: ColumnTraceViewObject | undefined): void {
     if (!stepObj) return;
     const sourceAcc = sourceObj && getAcc(sourceObj);
     const stepAcc = getAcc(stepObj);
-    const classes = COLUMN_TRANSFORM_CLASSES.filter(c => relation.transforms?.includes(c) && COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
+    const indirectEdge = isIndirectEdge(relation);
+    const classes = COLUMN_TRANSFORM_CLASSES.filter(c => relation.transforms?.includes(c) && (indirectEdge || COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT'));
     // A mixed relation's note describes its direct expression.
-    const note = isIndirectOnly(relation.transforms) ? relation.note : undefined;
+    const note = indirectEdge ? relation.note : undefined;
     if (!sourceObj || isColumnTraceTransformNode(sourceObj) || isColumnTraceTransformNode(stepObj)) {
       const key = JSON.stringify([schemaKey(relation.fromNode, input.identifierCaseSensitive), normalizeColName(relation.fromCol, input.identifierCaseSensitive)]);
       const fact = stepAcc.localFacts.get(key) ?? { node: relation.fromNode, column: relation.fromCol, classes: [] };
@@ -575,9 +578,10 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   input.relations.forEach((relation, index) => {
     const sourceObj = input.objects.get(schemaKey(relation.fromNode, input.identifierCaseSensitive));
     const targetObj = input.objects.get(schemaKey(relation.toNode, input.identifierCaseSensitive));
-    if (relation.transforms?.some(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT')) {
+    const indirectEdge = isIndirectEdge(relation);
+    if (indirectEdge || relation.transforms?.some(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT')) {
       recordIndirect(relation, sourceObj, input.objects.get(schemaKey(relation.hopNode, input.identifierCaseSensitive)) ?? targetObj);
-      if (isIndirectOnly(relation.transforms)) return;
+      if (indirectEdge) return;
     }
     if (!sourceObj || !targetObj) return;
 

@@ -6,7 +6,7 @@ import {
   type EdgeProps,
 } from '@xyflow/react';
 import { Tooltip } from './ui/Tooltip';
-import type { ColumnTransformClass } from '../engine/shared/bridgeContract';
+import { COLUMN_TRANSFORM_DIRECTION, type ColumnTransformClass } from '../engine/shared/bridgeContract';
 import { COLUMN_EDGE_DIM_OPACITY } from '../engine/columnTraceView';
 import type { ColumnLineState } from '../engine/columnTraceView';
 
@@ -18,7 +18,8 @@ const DIM_STROKE_WIDTH = 1;
 
 /**
  * Dash pattern of an object-level line: no column value crosses it, and the combined line of
- * indirect columns (OpenLineage's INDIRECT class, e.g. a WHERE or JOIN predicate column) is one.
+ * columns on the indirect side of the trace (e.g. a WHERE or JOIN predicate column, or a co-input
+ * off the traced chain) is one.
  */
 const INDIRECT_DASH_PATTERN = '5 4';
 
@@ -68,25 +69,32 @@ export const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass
   filter: 'Filter',
 };
 
-/** The distinct non-identity classes an edge marks — one glyph and one label per class. */
-function markedTransformClasses(transforms: readonly ColumnTransformClass[] | undefined): ColumnTransformClass[] {
-  return [...new Set(transforms ?? [])].filter(c => c !== 'pass_through');
+/**
+ * The distinct classes an edge marks — one glyph and one label per class. A column edge leaves
+ * identity unmarked; a combined line keeps `pass_through`, since there it names a value source off
+ * the traced path.
+ */
+function markedTransformClasses(transforms: readonly ColumnTransformClass[] | undefined, combinedLine: boolean): ColumnTransformClass[] {
+  const classes = [...new Set(transforms ?? [])];
+  return combinedLine ? classes : classes.filter(c => c !== 'pass_through');
 }
 
 /**
  * Tooltip text of the marker chip: the class names, then the model's one-clause note when it gave
  * one, else the structural description.
  *
- * A `pass_through`-only edge never reaches here (it renders no chip). A combined line of indirect
- * columns (`columns` set) names them, the fallback saying they shape the row set, not a value.
+ * A `pass_through`-only column edge never reaches here (it renders no chip). A combined line of
+ * indirect columns (`columns` set) names them; the fallback says they shape the row set, or, when a
+ * value class rides on the line, only that they are used off the traced path.
  * Exported so the contract is testable without hover.
  * @internal
  */
 export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note' | 'columns'>): string {
-  const classes = markedTransformClasses(data.transforms);
+  const classes = markedTransformClasses(data.transforms, !!data.columns);
   if (data.columns) {
     const columns = data.columns.join(', ');
-    return `${classes.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${data.note ? `${columns}\n${data.note}` : `${columns} — shapes which rows reach here.`}`;
+    const role = classes.some(c => COLUMN_TRANSFORM_DIRECTION[c] === 'DIRECT') ? 'used here, off the traced path' : 'shapes which rows reach here';
+    return `${classes.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${data.note ? `${columns}\n${data.note}` : `${columns} — ${role}.`}`;
   }
   if (classes.length === 0) {
     return data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
@@ -220,7 +228,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
     targetPosition,
   });
   const opacity = lit ? 1 : COLUMN_EDGE_DIM_OPACITY;
-  const classes = markedTransformClasses(transforms);
+  const classes = markedTransformClasses(transforms, !!columns);
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
   const showChip = objectLevel ? classes.length > 0 : !identityOnly && (state === 'transformation' || classes.length > 0);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
