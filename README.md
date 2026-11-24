@@ -46,7 +46,7 @@ The graph view has its own chat pane (click **Chat** on its right edge) that ans
 
 - **`dataLineageViz.ai.models`** lists OpenAI-compatible endpoints (Chat Completions or Responses; an Azure `/openai/v1/` base URL or Anthropic's `/v1/` chat-completions URL works like any other). The pane's picker offers them, with an effort picker where the entry supports it.
   An invalid entry is named and not offered; `dataLineageViz.ai.defaultModel` names the one to use.
-- **Data Lineage: Add AI Model** (or **Add model** in the chat) guides you through a provider preset, endpoint, model, limits and key, tests the connection and saves the entry; **Edit AI Model**, **Remove AI Model** and **Update AI Model Key** manage it later. The key is stored in VS Code's secret storage; it is never written to settings, logs or the webview.
+- **Data Lineage: Add AI Model** (or **Add model** in the chat) guides you through a provider preset, endpoint, model, key and display name, tests the connection and saves the entry with default limits you can tune in `dataLineageViz.ai.models`; **Edit AI Model**, **Remove AI Model** and **Update AI Model Key** manage it later. The key is stored in VS Code's secret storage; it is never written to settings, logs or the webview.
 - **Guided exploration** — `/search` answers from lookup tools; `/trace` or a large question proposes a hop-by-hop exploration that runs only after you approve, refine or cancel the plan.
 
 ## MCP server
