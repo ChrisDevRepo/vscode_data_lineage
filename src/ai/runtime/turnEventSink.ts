@@ -2,7 +2,7 @@ import type { TurnEvent } from '../../engine/shared/chatContract';
 
 export type { TurnEvent };
 
-/** Non-terminal progress phases exposed to native chat surfaces. */
+/** Non-terminal progress phases exposed to chat surfaces. */
 export type TurnStatusPhase = Extract<TurnEvent, { type: 'status' }>['phase'];
 
 /** Terminal status of a graph-owned turn. */

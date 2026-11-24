@@ -197,7 +197,7 @@ export class ChatController {
       this.turn.abort.abort();
       await this.turn.done;
     }
-    this.deps.getSession().beginNativeChatSession();
+    this.deps.getSession().beginChatSession();
   }
 
   private async newChat(): Promise<void> {

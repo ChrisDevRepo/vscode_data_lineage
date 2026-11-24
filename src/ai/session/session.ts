@@ -698,7 +698,7 @@ export class AiSession {
   }
 
   /**
-   * Clears cross-turn discovery memory: on model/project (re)load, on a new native chat, and after
+   * Clears cross-turn discovery memory: on model/project (re)load, on a new chat, and after
    * every turn that supplied native history (which then owns cross-turn conversation). Never on SM
    * start.
    */
@@ -875,12 +875,12 @@ export class AiSession {
   }
 
   /**
-   * Starts a new native chat session as one atomic session-owned transition: the established
+   * Starts a new chat session as one atomic session-owned transition: the established
    * exploration reset plus clearing the bounded discovery transcript
    * ({@link clearDiscoveryTranscript}). `AiMemoryManager` is reset only through
    * {@link resetExploration}.
    */
-  public beginNativeChatSession(): void {
+  public beginChatSession(): void {
     this.regenerateSessionId();
     this.resetExploration();
     this.clearDiscoveryTranscript();
