@@ -14,7 +14,7 @@ You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 20 or newer
 2. Open the folder in VS Code and press `F5` (**Run Extension**). It builds the extension and opens the Extension Development Host.
 3. In the host, run **Data Lineage: Open Demo**, or open a folder with a `.dacpac`.
 
-No database or credentials are needed to build and run. A VS Code chat model provider such as GitHub Copilot is only needed to try `@lineage`. The full setup, project layout and commands are in [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md).
+No database or credentials are needed to build and run. To try the AI tools from your own AI client, turn on `dataLineageViz.mcp.enabled`. The full setup, project layout and commands are in [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md).
 
 ## Make a change
 
