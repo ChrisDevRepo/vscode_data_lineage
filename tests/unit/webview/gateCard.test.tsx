@@ -16,7 +16,7 @@ import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const api: VsCodeAPI = { postMessage: () => undefined, getState: () => undefined, setState: () => undefined };
-const args: GateArgs = { turnId: 't1', gateId: 'g1', gate: 'scope', summary: 'Trace **3** objects', classes: ['sliding_memory'] };
+const args: GateArgs = { turnId: 't1', gateId: 'g1', summary: 'Trace **3** objects', classes: ['sliding_memory'] };
 
 let root: Root | undefined;
 let host: HTMLElement | undefined;

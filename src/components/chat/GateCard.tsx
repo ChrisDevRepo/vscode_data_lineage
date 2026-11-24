@@ -1,8 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '../ui/Button';
-import { renderAiMarkdown } from '../markdown/renderAiMarkdown';
-import { useMarkdownLinks } from '../markdown/useMarkdownLinks';
+import { ChatMarkdown } from '../markdown/ChatMarkdown';
 import { useChatContext } from './ChatContext';
 import type { GateDecision, GateFullPlan } from './chatStore';
 
@@ -10,7 +9,6 @@ import type { GateDecision, GateFullPlan } from './chatStore';
 export interface GateArgs extends Record<string, unknown> {
   turnId: string;
   gateId: string;
-  gate: string;
   summary: string;
   fullPlan?: GateFullPlan;
   replacesAnalysis?: boolean;
@@ -18,20 +16,6 @@ export interface GateArgs extends Record<string, unknown> {
 }
 
 const DECIDED_LABEL: Record<GateDecision, string> = { approve: 'Approved', refine: 'Change requested', cancel: 'Cancelled' };
-
-/** Host markdown as the chat shows it: one pipeline, links handled by the shared hook. */
-function Markdown({ text }: { text: string }) {
-  const html = useMemo(() => renderAiMarkdown(text), [text]);
-  const links = useMarkdownLinks();
-  return (
-    <div
-      className="ln-ai-description-md ln-ai-description-font-0"
-      onClick={links.onClick}
-      onKeyDown={links.onKeyDown}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
-}
 
 /**
  * The approval card a turn waits on: the host's scope card (markdown), the full plan behind a
@@ -47,13 +31,13 @@ export function GateCard({ args }: { args: GateArgs }) {
 
   return (
     <section aria-label="Approval needed" className="bg-popover text-popover-foreground border-border my-2 rounded-md border p-3">
-      <Markdown text={args.summary} />
+      <ChatMarkdown text={args.summary} />
       {args.fullPlan && (
         <details className="mt-2">
           <summary className="cursor-pointer text-xs font-semibold">
             Show full plan ({args.fullPlan.objects} objects)
           </summary>
-          <Markdown text={args.fullPlan.markdown} />
+          <ChatMarkdown text={args.fullPlan.markdown} />
         </details>
       )}
       {args.replacesAnalysis && args.decision === undefined && (

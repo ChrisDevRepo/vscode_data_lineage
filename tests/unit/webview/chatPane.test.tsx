@@ -18,11 +18,11 @@ import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const gate = { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3', decision: undefined } as const;
+const gate = { type: 'gate', gateId: 'g1', summary: 'Trace 3', decision: undefined } as const;
 
 describe('toContent', () => {
   it('maps text to a text part and a status to a status tool call keyed by the turn', () => {
-    expect(toContent([{ type: 'status', phase: 'thinking', label: 'Searching' }, { type: 'text', text: 'hi' }], 't1')).toEqual([
+    expect(toContent([{ type: 'status', label: 'Searching' }, { type: 'text', text: 'hi' }], 't1')).toEqual([
       { type: 'tool-call', toolCallId: 't1:status', toolName: 'lineage_status', args: { label: 'Searching' } },
       { type: 'text', text: 'hi' },
     ]);
@@ -32,7 +32,7 @@ describe('toContent', () => {
     const [part] = toContent([gate], 't1');
     expect(part).toMatchObject({
       type: 'tool-call', toolCallId: 'g1', toolName: 'lineage_gate',
-      args: { turnId: 't1', gateId: 'g1', gate: 'scope', summary: 'Trace 3' },
+      args: { turnId: 't1', gateId: 'g1', summary: 'Trace 3' },
     });
     expect(part).not.toHaveProperty('result');
   });
@@ -123,6 +123,28 @@ describe('follow-up suggestions', () => {
       expect(button).toBeDefined();
       await act(async () => { button?.click(); });
       expect(postMessage).toHaveBeenCalledWith({ type: 'chat.send', text: 'Run trace' });
+    });
+
+    it('offers Stop only once the host reports the running turn, and Stop posts that turn id', async () => {
+      (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+      const postMessage = vi.fn();
+      const api = { postMessage, getState: () => undefined, setState: () => undefined } as unknown as VsCodeAPI;
+      host = document.createElement('div');
+      document.body.append(host);
+      root = createRoot(host);
+      act(() => root?.render(<VsCodeProvider api={api}><ChatPane /></VsCodeProvider>));
+      const post = (data: unknown) => act(() => { window.dispatchEvent(new MessageEvent('message', { data: { protocolVersion: BRIDGE_PROTOCOL_VERSION, ...(data as object) } })); });
+      const stop = () => host?.querySelector('.aui-composer-cancel');
+      post({ type: 'chat.history', messages: [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }] });
+      post({ type: 'chat.state', models: [{ id: 'm', name: 'M' }], selectedModelId: 'm', busy: false, followups: [{ label: 'Go', prompt: 'Go on' }] });
+      expect(stop()).toBeNull();
+      // A send before the host reports its turn offers no Stop that could only be dropped.
+      await act(async () => { [...(host?.querySelectorAll('button') ?? [])].find((el) => el.textContent === 'Go')?.click(); });
+      expect(postMessage).toHaveBeenCalledWith({ type: 'chat.send', text: 'Go on' });
+      expect(stop()).toBeNull();
+      post({ type: 'chat.state', models: [{ id: 'm', name: 'M' }], selectedModelId: 'm', busy: true, turnId: 's:r1', followups: [] });
+      await act(async () => { (stop() as HTMLElement | null)?.click(); });
+      expect(postMessage).toHaveBeenCalledWith({ type: 'chat.cancel', turnId: 's:r1' });
     });
   });
 });

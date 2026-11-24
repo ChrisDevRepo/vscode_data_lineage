@@ -38,7 +38,7 @@ export function useChat(): { state: ChatState; actions: ChatActions } {
           dispatch({ type: 'host-event', turnId: msg.turnId, event: msg.event, replacesAnalysis: msg.replacesAnalysis });
           break;
         case 'chat.state':
-          dispatch({ type: 'host-state', models: msg.models, selectedModelId: msg.selectedModelId, effort: msg.effort, busy: msg.busy, turnId: msg.turnId, followups: msg.followups });
+          dispatch({ type: 'host-state', models: msg.models, selectedModelId: msg.selectedModelId, effort: msg.effort, turnId: msg.turnId, followups: msg.followups });
           break;
         case 'chat.history':
           dispatch({ type: 'host-history', messages: msg.messages });
@@ -59,8 +59,8 @@ export function useChat(): { state: ChatState; actions: ChatActions } {
       vscodeApi.postMessage({ type: 'chat.send', text });
     }, [vscodeApi]),
     cancel: useCallback(() => {
-      if (turnId) vscodeApi.postMessage({ type: 'chat.cancel', turnId });
-      else vscodeApi.postMessage({ type: 'log', level: 'debug', text: '[Chat] Cancel ignored: the host has not reported a running turn yet' });
+      // Stop is offered only while the host reports a turn, so `turnId` is set here.
+      if (turnId !== undefined) vscodeApi.postMessage({ type: 'chat.cancel', turnId });
     }, [vscodeApi, turnId]),
     decideGate: useCallback((gateTurnId, gateId, decision, text) => {
       dispatch({ type: 'gate-decided', turnId: gateTurnId, gateId, decision });

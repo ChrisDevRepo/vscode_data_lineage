@@ -11,8 +11,8 @@ export type GateDecision = Extract<ChatToExtensionMsg, { type: 'chat.gate' }>['d
 /** One renderable piece of a chat message. */
 export type ChatPart =
   | { type: 'text'; text: string }
-  | { type: 'status'; phase: string; label: string }
-  | { type: 'gate'; gateId: string; gate: string; summary: string; fullPlan?: GateFullPlan; replacesAnalysis?: boolean; decision: GateDecision | undefined }
+  | { type: 'status'; label: string }
+  | { type: 'gate'; gateId: string; summary: string; fullPlan?: GateFullPlan; replacesAnalysis?: boolean; decision: GateDecision | undefined }
   | { type: 'error'; message: string };
 
 export interface ChatMessage {
@@ -24,7 +24,7 @@ export interface ChatMessage {
 
 export interface ChatState {
   messages: ChatMessage[];
-  busy: boolean;
+  /** The running turn, as the host reports it; undefined when none runs. */
   turnId: string | undefined;
   /** True once the host has sent its first `chat.state`; before it the model list is unknown, not empty. */
   ready: boolean;
@@ -40,13 +40,12 @@ export interface ChatState {
 export type ChatAction =
   | { type: 'send'; text: string }
   | { type: 'host-event'; turnId: string; event: TurnEvent; replacesAnalysis?: boolean }
-  | { type: 'host-state'; models: ChatModelOption[]; selectedModelId: string; effort?: string; busy: boolean; turnId?: string; followups: ChatFollowup[] }
+  | { type: 'host-state'; models: ChatModelOption[]; selectedModelId: string; effort?: string; turnId?: string; followups: ChatFollowup[] }
   | { type: 'host-history'; messages: ChatHistoryMessage[] }
   | { type: 'gate-decided'; turnId: string; gateId: string; decision: GateDecision };
 
 export const initialChatState: ChatState = {
   messages: [],
-  busy: false,
   turnId: undefined,
   ready: false,
   models: [],
@@ -72,7 +71,7 @@ function updateTurn(state: ChatState, turnId: string, update: (parts: ChatPart[]
 function applyEvent(state: ChatState, turnId: string, event: TurnEvent, replacesAnalysis: boolean | undefined): ChatState {
   switch (event.type) {
     case 'status':
-      return updateTurn(state, turnId, parts => [...withoutStatus(parts), { type: 'status', phase: event.phase, label: event.label }]);
+      return updateTurn(state, turnId, parts => [...withoutStatus(parts), { type: 'status', label: event.label }]);
     case 'text':
       return updateTurn(state, turnId, parts => {
         const rest = withoutStatus(parts);
@@ -83,18 +82,20 @@ function applyEvent(state: ChatState, turnId: string, event: TurnEvent, replaces
     case 'gate':
       return updateTurn(state, turnId, parts => [
         ...withoutStatus(parts),
-        { type: 'gate', gateId: event.gateId, gate: event.gate, summary: event.summary, fullPlan: event.fullPlan, replacesAnalysis, decision: undefined },
+        { type: 'gate', gateId: event.gateId, summary: event.summary, fullPlan: event.fullPlan, replacesAnalysis, decision: undefined },
       ]);
     case 'error':
       return updateTurn(state, turnId, parts => [...withoutStatus(parts), { type: 'error', message: event.message }]);
     case 'terminal': {
       const settled = updateTurn(state, turnId, parts => {
         const rest = withoutStatus(parts);
-        const shown = event.error !== undefined && !rest.some(part => part.type === 'error' && part.message === event.error);
-        return shown ? [...rest, { type: 'error', message: event.error ?? '' }] : rest;
+        const { error } = event;
+        return error !== undefined && !rest.some(part => part.type === 'error' && part.message === error)
+          ? [...rest, { type: 'error', message: error }]
+          : rest;
       });
       return settled.turnId === undefined || settled.turnId === turnId
-        ? { ...settled, busy: false, turnId: undefined }
+        ? { ...settled, turnId: undefined }
         : settled;
     }
   }
@@ -106,7 +107,6 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'send':
       return {
         ...state,
-        busy: true,
         nextLocalId: state.nextLocalId + 1,
         messages: [...state.messages, { id: `local-${state.nextLocalId}`, role: 'user', parts: [{ type: 'text', text: action.text }] }],
       };
@@ -118,7 +118,6 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         models: action.models,
         selectedModelId: action.selectedModelId,
         effort: action.effort,
-        busy: action.busy,
         turnId: action.turnId,
         followups: action.followups,
         ready: true,

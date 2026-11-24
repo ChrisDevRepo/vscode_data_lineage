@@ -56,7 +56,6 @@ export function toContent(parts: readonly ChatPart[], turnId: string): Exclude<T
           args: {
             turnId,
             gateId: part.gateId,
-            gate: part.gate,
             summary: part.summary,
             ...(part.fullPlan ? { fullPlan: part.fullPlan } : {}),
             ...(part.replacesAnalysis ? { replacesAnalysis: true } : {}),
@@ -138,13 +137,12 @@ export function ComposerControls() {
     );
   }
   if (models.length === 0) return null;
-  const selected = state.models.find(model => model.id === state.selectedModelId);
   return (
     <ModelSelector.Root
       models={models}
       value={state.selectedModelId}
       onValueChange={actions.selectModel}
-      effort={state.effort ?? selected?.reasoningEffort}
+      effort={state.effort}
       onEffortChange={actions.selectEffort}
     >
       <ModelSelector.Trigger variant="ghost" size="sm" />
@@ -237,7 +235,7 @@ export default function ChatPane() {
   const { state, actions } = chat;
   const runtime = useExternalStoreRuntime<ChatMessage>({
     messages: state.messages,
-    isRunning: state.busy,
+    isRunning: state.turnId !== undefined,
     suggestions: useMemo(() => toSuggestions(state.followups), [state.followups]),
     // The library's own disabled composer; the notice above tells the user why.
     isDisabled: modelsMissing(state),
