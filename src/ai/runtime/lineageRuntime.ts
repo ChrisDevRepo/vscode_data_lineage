@@ -288,7 +288,7 @@ function instrumentRegistry(
     getTools: () => registry.getTools(),
     get: (name) => registry.get(name),
     has: (name) => registry.has(name),
-    invoke: async (name, payload, callId) => {
+    invoke: async (name, payload, callId, context) => {
       const startedAt = performance.now();
       const sequence = instrumentation.nextSequence();
       const base = {
@@ -301,7 +301,7 @@ function instrumentRegistry(
         toolName: name,
       };
       try {
-        const result = await registry.invoke(name, payload, callId);
+        const result = await registry.invoke(name, payload, callId, context);
         const rejection = parseRejection(result);
         const issuePaths = rejection?.issuePaths ?? [];
         void instrumentation.writer.write({

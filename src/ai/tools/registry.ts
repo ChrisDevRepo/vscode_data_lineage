@@ -38,13 +38,19 @@ export interface ToolDefinition {
   readonly progressLabel?: string;
 }
 
+/** What the caller of one dispatch knows about the call, beyond its input. */
+export interface ToolCallContext {
+  /** The input schema the model was served for this call, when a phase replaced the catalog's. */
+  readonly servedSchema?: z.ZodType;
+}
+
 /** A registered tool: a {@link ToolDefinition} plus its bound handler; `O` is the result type. */
 export interface RegisteredTool<O = unknown> extends ToolDefinition {
   /**
    * Runs the tool with the raw, model-supplied input unchanged, so handler boundary validation and
    * policy guards stay authoritative and the registry adds no second validation path.
    */
-  execute(input: unknown): O | Promise<O>;
+  execute(input: unknown, context?: ToolCallContext): O | Promise<O>;
 }
 
 /** Provider-neutral tool dispatch + lookup surface. */
@@ -52,7 +58,7 @@ export interface IToolRegistry<O = unknown> {
   /** Registers a tool; throws on a duplicate name (drift/typo guard). */
   register(tool: RegisteredTool<O>): void;
   /** Dispatches `name` with the raw input and returns the handler's result; throws if unknown. */
-  invoke(name: string, input: unknown, callId?: string): O | Promise<O>;
+  invoke(name: string, input: unknown, callId?: string, context?: ToolCallContext): O | Promise<O>;
   /** All registered tools, in registration order. */
   getTools(): readonly RegisteredTool<O>[];
   get(name: string): RegisteredTool<O> | undefined;
@@ -72,10 +78,10 @@ export class ToolRegistry<O = unknown> implements IToolRegistry<O> {
   }
 
   /** {@inheritDoc IToolRegistry.invoke} */
-  public invoke(name: string, input: unknown, _callId?: string): O | Promise<O> {
+  public invoke(name: string, input: unknown, _callId?: string, context?: ToolCallContext): O | Promise<O> {
     const tool = this.tools.get(name);
     if (!tool) throw new Error(`ToolRegistry: no tool registered under "${name}"`);
-    return tool.execute(input);
+    return tool.execute(input, context);
   }
 
   /** {@inheritDoc IToolRegistry.getTools} */
@@ -107,7 +113,7 @@ export function filterRegistry<O>(reg: IToolRegistry<O>, allowed: ReadonlySet<st
   };
   return {
     register: () => { throw new Error('filterRegistry: view is read-only'); },
-    invoke: (name, input, callId) => { ensure(name); return reg.invoke(name, input, callId); },
+    invoke: (name, input, callId, context) => { ensure(name); return reg.invoke(name, input, callId, context); },
     getTools: () => reg.getTools().filter((t) => allowed.has(t.name)),
     get: (name) => (allowed.has(name) ? reg.get(name) : undefined),
     has: (name) => allowed.has(name) && reg.has(name),
@@ -139,8 +145,8 @@ export function trackInFlightDispatch<O>(reg: IToolRegistry<O>): TrackedRegistry
   const inFlight = new Set<Promise<unknown>>();
   const registry: IToolRegistry<O> = {
     register: (tool) => reg.register(tool),
-    invoke: (name, input, callId) => {
-      const call = Promise.resolve(reg.invoke(name, input, callId));
+    invoke: (name, input, callId, context) => {
+      const call = Promise.resolve(reg.invoke(name, input, callId, context));
       inFlight.add(call);
       call.catch(() => undefined).finally(() => inFlight.delete(call));
       return call;
@@ -185,7 +191,7 @@ export function resolveRegistrySchemas<O>(
   };
   return {
     register: () => { throw new Error('resolveRegistrySchemas: view is read-only'); },
-    invoke: (name, input, callId) => reg.invoke(name, input, callId),
+    invoke: (name, input, callId, context) => reg.invoke(name, input, callId, { servedSchema: context?.servedSchema ?? resolvers.get(name)?.() }),
     getTools: () => reg.getTools().map(projected),
     get: (name) => {
       const tool = reg.get(name);

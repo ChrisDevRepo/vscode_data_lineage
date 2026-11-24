@@ -32,7 +32,8 @@ import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/types';
 import { type SerializedFilterState } from '../../engine/projectStore';
 import { countVisibleNodes } from '../../engine/shared/modelFilters';
 import { getAllowedLmToolNames, activeModeOf, type LmStage } from '../tools/toolPolicy';
-import { ToolRegistry } from '../tools/registry';
+import type { z } from 'zod';
+import { ToolRegistry, type ToolCallContext } from '../tools/registry';
 import { TOOL_DEFS, type ToolName } from '../tools/toolDefs';
 import { readToolError, isConsentGateRejection, makeRejection, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
@@ -402,8 +403,8 @@ class ToolHandler implements ToolServices {
     } catch (err) { return this.toolError('get_scope_bundle', err); }
   }
 
-  public startExploration(input: unknown) {
-    return executeStartExploration(input, this);
+  public startExploration(input: unknown, servedSchema?: z.ZodType) {
+    return executeStartExploration(input, this, servedSchema);
   }
 
 
@@ -498,7 +499,7 @@ class ToolHandler implements ToolServices {
 /** Provider-neutral JSON text returned by every canonical lineage tool. */
 type LineageToolOutput = string;
 
-type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolOutput>;
+type ToolExecutor = (input: unknown, context?: ToolCallContext) => LineageToolOutput | Promise<LineageToolOutput>;
 
 /**
  * Builds the shared lineage {@link ToolRegistry}, the single authoritative dispatch surface
@@ -529,7 +530,7 @@ export function buildAiToolRegistry(
     lineage_get_screen_state: (input) => handler.getScreenState(input),
     lineage_search_objects: (input) => handler.searchObjects(input),
     lineage_get_scope_bundle: (input) => handler.getScopeBundle(input),
-    lineage_start_exploration: (input) => handler.startExploration(input),
+    lineage_start_exploration: (input, context) => handler.startExploration(input, context?.servedSchema),
     lineage_submit_findings: (input) => handler.submitFindings(input),
     lineage_present_result: (input) => handler.presentResult(input),
     lineage_get_object_detail: (input) => handler.getObjectDetail(input),
@@ -547,12 +548,12 @@ export function buildAiToolRegistry(
     const execute = dispatch[def.name];
     registry.register({
       ...def,
-      execute: async (input: unknown) => {
+      execute: async (input: unknown, context?: ToolCallContext) => {
         const invoke = async (): Promise<LineageToolOutput> => {
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
           const offPolicy = handler.authorizeTool(def.name, input);
           if (offPolicy) return offPolicy;
-          const result = await execute(input);
+          const result = await execute(input, context);
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
           return result;
         };

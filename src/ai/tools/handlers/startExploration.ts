@@ -3,6 +3,7 @@
  * preview construction stay local; turn-lease validation and effect serialization stay in the
  * registry wrapper.
  */
+import type { z } from 'zod';
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
 import { DEFAULT_EXPLORATION_QUESTION, type DepthIntent } from '../../sm/smTypes';
@@ -28,8 +29,13 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
 import { makeRejection } from '../../support/toolErrorEnvelope';
 
-/** Validates an exploration proposal, then opens its approval gate or resumes an approved one. */
-export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
+/**
+ * Validates an exploration proposal, then opens its approval gate or resumes an approved one.
+ *
+ * @param servedSchema - The schema the model was served for this call;
+ *   a rejection names its fields.
+ */
+export async function executeStartExploration(input: unknown, s: ToolServices, servedSchema?: z.ZodType): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);
       const sess = s.getSession();
@@ -52,7 +58,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         }
       }
 
-      const parsed = parseToolInput(StartExplorationInputSchema, input);
+      const parsed = parseToolInput(StartExplorationInputSchema, input, servedSchema);
       if (!parsed.ok) return s.logAndReturn('lineage_start_exploration', parsed.error, loggedInput);
       const data = parsed.data;
       if (data.mission_brief !== undefined) {
