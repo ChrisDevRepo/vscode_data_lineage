@@ -130,13 +130,16 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (data.proposalRevision !== undefined && !isRefining) {
         return s.logAndReturn('lineage_start_exploration', makeRejection({
           code: REJECTION_CODES.staleProposalRevision,
-          hint: 'proposalRevision is valid only while refining the matching pending approval gate.',
+          reason: '/proposalRevision is sent while no approval gate awaits refinement.',
+          hint: 'Omit /proposalRevision and send a fresh proposal with /origin.',
         }), loggedInput);
       }
       if (isRefining && data.proposalRevision !== sess.pendingExploration!.revision) {
         return s.logAndReturn('lineage_start_exploration', makeRejection({
           code: REJECTION_CODES.staleProposalRevision,
-          hint: `Refine proposal revision ${sess.pendingExploration!.revision}; do not reuse an older gate revision.`,
+          reason: '/proposalRevision is not the revision of the pending approval gate.',
+          hint: `Set /proposalRevision to ${sess.pendingExploration!.revision}.`,
+          issuePaths: ['proposalRevision'],
         }), loggedInput);
       }
 
@@ -206,7 +209,9 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (!depthIntent) {
         return s.logAndReturn('lineage_start_exploration', makeRejection({
           code: REJECTION_CODES.missingField,
-          hint: 'depth is required for the exploration proposal: send levels and exactness for both upstream and downstream.',
+          reason: '/depth is missing from the exploration proposal.',
+          hint: 'Set levels and exactness for both upstream and downstream.',
+          issuePaths: ['depth'],
         }), loggedInput);
       }
       const refineDirection = directionFromDepth(depthIntent);
@@ -251,7 +256,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if ('code' in initResult) return s.logAndReturn('lineage_start_exploration', initResult, loggedInput);
       const classification = data.classification ?? sess.pendingExploration?.classification;
       if (!classification) {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.missingField, hint: 'classification is required for the exploration proposal.' }), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.missingField, reason: '/classification is missing from the exploration proposal.', hint: 'Send /classification.', issuePaths: ['classification'] }), loggedInput);
       }
       engine.classification = classification;
       const summary = engine.getScopeSummary();
@@ -277,7 +282,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         s.logger.debug(`[AI] [Proposal] no-op refine rejected revision=${sess.pendingExploration.revision}`);
         return s.logAndReturn('lineage_start_exploration', makeRejection({
           code: REJECTION_CODES.noOpRefine,
-          hint: 'The refinement did not change the reviewed proposal. Apply at least one requested scope, mode, classification, column, or filter change; if the request needs no change to the plan, reply to the user in text instead.',
+          reason: 'The refinement did not change the reviewed proposal.',
+          hint: 'Apply at least one requested scope, mode, classification, column, or filter change; if the request needs no change to the plan, reply to the user in text instead.',
         }), loggedInput);
       }
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));

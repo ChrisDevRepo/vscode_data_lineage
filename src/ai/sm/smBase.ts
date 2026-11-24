@@ -12,7 +12,7 @@ import type { ColumnStore } from '../../engine/columnStore';
 import { computeSchemas } from '../../engine/shared/modelSchemas';
 import { bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
-import { buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
+import { buildHopFocusNode, buildUnrelatedMap, notInModel } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { buildDeleteOnlyRelevanceCheck, buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType, presentColumnCompact } from '../support/aiPresenter';
@@ -889,7 +889,8 @@ export class NavigationEngine implements IHopStateMachine {
     if (merged.sections.length === 0 && this.heldFindingFocus === null) {
       return makeRejection({
         code: REJECTION_CODES.missingField,
-        hint: 'No section field is filled and no draft is held for this node; resend the full call with the required section field(s) and a non-empty summary.',
+        reason: 'No section field is filled and no draft is held for this node.',
+        hint: 'Send the required section field(s) and a non-empty /summary.',
       });
     }
     return this.withRecordedHeld(this.emptySummaryRejection());
@@ -899,7 +900,8 @@ export class NavigationEngine implements IHopStateMachine {
   private emptySummaryRejection(): ToolRejection {
     return makeRejection({
       code: REJECTION_CODES.missingField,
-      hint: 'summary is empty and no summary is held for this node; send summary: one sentence on what this node does to the data and hands on.',
+      reason: '/summary is empty.',
+      hint: 'Send /summary: one sentence on what this node does to the data and hands on.',
       issuePaths: ['summary'],
     });
   }
@@ -1273,7 +1275,8 @@ export class NavigationEngine implements IHopStateMachine {
   private rejectNodeRefColumnTargets(nodeRefs: string[]): ToolRejection {
     return makeRejection({
       code: NavigationEngine.TARGET_COLUMNS_NAME_OBJECTS,
-      hint: `targetColumns [${nodeRefs.join(', ')}] resolve to objects in the loaded model, not columns. To trace an object, resend without targetColumns and analysisMode "bb". To trace columns, name the user-named columns of the origin instead.`,
+      reason: `/targetColumns [${nodeRefs.join(', ')}] resolve to objects in the loaded model, not columns.`,
+      hint: 'To trace an object, omit /targetColumns and set /analysisMode to "bb". To trace columns, name the user-named columns of the origin instead.',
     });
   }
 
@@ -2009,18 +2012,22 @@ export class NavigationEngine implements IHopStateMachine {
     if (bothSidesClosed(depthIntent.upstream, depthIntent.downstream)) {
       return makeRejection({
         code: REJECTION_CODES.asymmetricDepthBothZero,
-        hint: 'This refine closes the last open side: resend depth with at least one side ≥ 1 or "all".',
+        reason: 'Both sides of /depth are 0, so nothing would be traced.',
+        hint: 'Set at least one side of /depth to ≥ 1 or "all".',
+        issuePaths: ['depth'],
       });
     }
     if (params.analysisMode === 'ct' && (!params.targetColumns || params.targetColumns.length === 0)) {
       return makeRejection({
         code: REJECTION_CODES.missingField,
-        hint: 'Resend with at least one named targetColumns value for CT, or change analysisMode to "bb" and resend.',
+        reason: '/analysisMode "ct" has no /targetColumns value.',
+        hint: 'Name at least one /targetColumns value, or set /analysisMode to "bb".',
       });
     }
     if (params.analysisMode === 'bb' && params.targetColumns !== undefined) {
       return makeRejection({
         code: REJECTION_CODES.ctFieldForbiddenInBb,
+        reason: `${ISSUES[REJECTION_CODES.ctFieldForbiddenInBb].label}.`,
         hint: ISSUES[REJECTION_CODES.ctFieldForbiddenInBb].correction,
       });
     }
@@ -2047,7 +2054,7 @@ export class NavigationEngine implements IHopStateMachine {
           ...(excludeIds.unresolved.length > 0 ? [`excludeNodeIds not in the loaded model: ${excludeIds.unresolved.join(', ')}`] : []),
           ...(passIds.unresolved.length > 0 ? [`passNodeIds not in the loaded model: ${passIds.unresolved.join(', ')}`] : []),
         ].join('; '),
-        hint: "These ids don't exist in the loaded model after bracket/case normalization. Call lineage_search_objects with each user-named identifier to resolve the canonical schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
+        hint: "Call lineage_search_objects with each user-named identifier to resolve the canonical schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
         detail: { unresolved_excludeNodeIds: excludeIds.unresolved, unresolved_passNodeIds: passIds.unresolved },
       });
     }
@@ -2060,6 +2067,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (!originNode) {
       return makeRejection({
         code: REJECTION_CODES.originNotFound,
+        reason: notInModel([params.origin]),
         hint: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns.',
       });
     }
@@ -2082,9 +2090,8 @@ export class NavigationEngine implements IHopStateMachine {
         this.log('debug', `[AI] [CT] requested columns [${effectiveTargetColumns.join(',')}] offending=[${offending.join(',')}] not on origin ${originNode.id} — rejecting (no partial-trace fallback)`);
         return makeRejection({
           code: REJECTION_CODES.unknownColumns,
-          hint: declaredNames.length > 0
-            ? `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}. Its columns are: [${declaredNames.join(', ')}]. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`
-            : `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}, which exposes no column metadata of its own. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`,
+          reason: `/targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}${declaredNames.length > 0 ? '' : ', which exposes no column metadata of its own'}.`,
+          hint: `${declaredNames.length > 0 ? `Its columns are: [${declaredNames.join(', ')}]. ` : ''}Provide valid columns, ask the user to clarify, or set /analysisMode to "bb".`
         });
       }
       this.log('debug', `[Admit] guard=ct_target_columns phase=init focus=${originNode.id} active=${resolved.length} — tracing [${resolved.join(', ')}]`);
@@ -2558,13 +2565,15 @@ export class NavigationEngine implements IHopStateMachine {
     if (this._status !== 'complete') {
       return makeRejection({
         code: REJECTION_CODES.supplementRequiresCompleteEngine,
-        hint: `supplementAgenda is only valid after the prior exploration has completed (status === 'complete'). Current status: ${this._status}.`,
+        reason: `A supplement needs a completed prior exploration; the engine status is ${this._status}.`,
+        hint: 'Start a fresh exploration instead: omit /supplement and send /origin.',
       });
     }
     if ((!Array.isArray(nodeIds) || nodeIds.length === 0) && (!Array.isArray(leadIds) || leadIds.length === 0)) {
       return makeRejection({
         code: REJECTION_CODES.supplementEmpty,
-        hint: 'supplement requires at least one node id in supplement.nodeIds — pending leads are host-selected and cannot be supplied here. Name the ids from the completed exploration you want extended; if no node is left to extend, do not resend an empty supplement — answer from the completed exploration, or start a fresh exploration by providing an origin instead of supplement.',
+        reason: '/supplement/nodeIds is empty.',
+        hint: 'Pending leads are host-selected and cannot be supplied here. Name the ids from the completed exploration you want extended; if no node is left to extend, answer from the completed exploration, or start a fresh exploration with /origin instead of /supplement.',
       });
     }
 
@@ -2576,6 +2585,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (leadEntries.some(entry => !entry)) {
       return makeRejection({
         code: REJECTION_CODES.invalidPendingLead,
+        reason: 'A named pending lead is not an unresolved pending lead of the completed exploration.',
         hint: 'Use an unresolved pending lead id from the completed exploration, or provide explicit supplement nodeIds.',
       });
     }
@@ -2619,7 +2629,8 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Supplement] refuse hop=${this.hopCount} ids=[${unbound.join(',')}] reason=scalar_binding_unresolved`);
       return makeRejection({
         code: REJECTION_CODES.routeValidationFailed,
-        hint: `The recorded scalar caller binding of ${unbound.join(', ')} no longer resolves in the loaded model, so this follow-up cannot continue it. Nothing was changed; start a new exploration for that function.`,
+        reason: `The recorded scalar caller binding of ${unbound.join(', ')} no longer resolves in the loaded model, so this follow-up cannot continue it.`,
+        hint: 'Start a new exploration for that function.',
       });
     }
     this.restoreConnectors(admission.connectors, 'on the path joining the named target to the trace');
@@ -2924,7 +2935,8 @@ export class NavigationEngine implements IHopStateMachine {
     if (this._status === 'complete') {
       return makeRejection({
         code: REJECTION_CODES.explorationComplete,
-        hint: 'Hop loop is closed - every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
+        reason: 'The hop loop is closed: every scope node has been analyzed and the archive is sealed.',
+        hint: 'Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
         detail: { next_action: 'present_result' },
       });
     }
@@ -2968,7 +2980,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
 
     if (this.getCurrentTasks().some(task => task.callerContext && (!task.nodeId || task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(task.nodeId, task.callerContext)))) {
-      return combineToolRejections([...faults(), makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' })]);
+      return combineToolRejections([...faults(), makeRejection({ code: REJECTION_CODES.routeValidationFailed, reason: 'Caller SQL or task provenance changed after this function investigation was declared.', hint: 'Start a new exploration.' })]);
     }
     try {
       const routeOutcomes: RouteOutcome[] = [];

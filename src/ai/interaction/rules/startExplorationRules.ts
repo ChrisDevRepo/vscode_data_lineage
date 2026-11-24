@@ -32,7 +32,8 @@ export function resolveCanonicalQuestion(sources: {
 /** Rejects named columns inherited into a BB refine without mutating state; `null` if none. */
 export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | undefined): InteractionRuleResult {
   if (!targetColumns?.length) return null;
-  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, hint: ISSUES[REJECTION_CODES.ctFieldForbiddenInBb].correction });
+  const { label, correction } = ISSUES[REJECTION_CODES.ctFieldForbiddenInBb];
+  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, reason: `${label}.`, hint: correction });
 }
 
 /**
@@ -73,6 +74,7 @@ export function evaluateSupplementPrereqRule(engineStatus: string | null): Inter
   if (engineStatus === 'complete') return null;
   return makeRejection({
     code: REJECTION_CODES.supplementRequiresCompleteEngine,
-    hint: `supplement requires a completed prior exploration. Current engine status: ${engineStatus ?? 'none'}. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').`,
+    reason: `A supplement needs a completed prior exploration; the engine status is ${engineStatus ?? 'none'}.`,
+    hint: 'Start a fresh exploration instead: omit /supplement and send /origin.',
   });
 }

@@ -89,7 +89,7 @@ const DUPLICATE_READ_HINT = 'Answer from it, or call a different tool.';
 
 /**
  * Correction hint for a `duplicate_read` whose held observation is itself an error envelope:
- * restates that held error (its code, then its hint or reason line) instead of
+ * restates that held error (its code, then its reason and hint) instead of
  * {@link DUPLICATE_READ_HINT}.
  * @param held - The observation the duplicate read would reuse.
  * @returns The restatement hint, or `undefined` when the held body is not an error envelope.
@@ -98,14 +98,15 @@ function heldErrorEnvelopeDuplicateHint(held: ToolAttemptObservation): string | 
   try {
     const rejection = readToolError(JSON.parse(held.result));
     if (!rejection) return undefined;
-    return `The held result for callId ${held.callId} is an error envelope (${rejection.code}): ${rejection.hint ?? rejection.reason}`;
+    return `The held result for callId ${held.callId} is an error envelope (${rejection.code}): ${[rejection.reason, rejection.hint].filter(Boolean).join(' ')}`;
   } catch {
     return undefined;
   }
 }
 
-/** Hint of a `result_too_large` reply; it names no tool, since the reply can reach any stage. */
-const RESULT_TOO_LARGE_HINT = 'This result is larger than the evidence this step can hold, so none of it was stored. Narrow the request — fewer levels, one direction, or fewer objects — or answer from what is already held.';
+/** Reason and hint of a `result_too_large` reply; they name no tool, since the reply can reach any stage. */
+const RESULT_TOO_LARGE_REASON = 'This result is larger than the evidence this step can hold, so none of it was stored.';
+const RESULT_TOO_LARGE_HINT = 'Narrow the request — fewer levels, one direction, or fewer objects — or answer from what is already held.';
 
 /**
  * The stored stand-in for an accepted result that does not fit the evidence share: a "too big"
@@ -117,6 +118,7 @@ const RESULT_TOO_LARGE_HINT = 'This result is larger than the evidence this step
 function resultTooLargeReply(toolName: string, bytes: number, heldBytes: number, budget: number): string {
   return JSON.stringify(makeRejection({
     code: REJECTION_CODES.resultTooLarge,
+    reason: RESULT_TOO_LARGE_REASON,
     hint: RESULT_TOO_LARGE_HINT,
     detail: { tool: toolName, bytes, held_bytes: heldBytes, budget },
   }));

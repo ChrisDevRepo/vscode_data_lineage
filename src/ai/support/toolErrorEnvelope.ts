@@ -180,7 +180,7 @@ export const ISSUES = {
   [REJECTION_CODES.ctFieldForbiddenInBb]: {
     category: 'value',
     label: '/targetColumns sent with /analysisMode "bb"',
-    correction: 'Omit /targetColumns and resubmit the BB specification.',
+    correction: 'Omit /targetColumns.',
   },
   [REJECTION_CODES.noActiveSession]: {
     category: 'stage',

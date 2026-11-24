@@ -421,8 +421,8 @@ const NEIGHBOR_PAGE = 25;
  */
 const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact object ID.';
 
-/** The `not_found` reason: the ids the loaded model does not hold, as sent. */
-const notInModel = (ids: readonly string[]) => `Not in the loaded model: ${quoteIds(ids)}.`;
+/** The reason of `not_found` and `origin_not_found`: the ids the loaded model does not hold, as sent. */
+export const notInModel = (ids: readonly string[]) => `Not in the loaded model: ${quoteIds(ids)}.`;
 
 /**
  * Full metadata for one object (DDL, columns, neighbors): the primary drill-down tool. Upstream and
@@ -542,7 +542,8 @@ export function getScopeBundle(
   if (direction === 'bidirectional' && upstreamDepth === 0 && downstreamDepth === 0) {
     return makeRejection({
       code: REJECTION_CODES.asymmetricDepthBothZero,
-      hint: 'upstream_depth and downstream_depth are both 0, which would return only the origin node with no neighbors. Set at least one side above 0, or call lineage_get_object_detail for a single object.',
+      reason: '/upstream_depth and /downstream_depth are both 0, which would return only the origin node with no neighbors.',
+      hint: 'Set at least one side above 0, or call lineage_get_object_detail for a single object.',
     });
   }
 
