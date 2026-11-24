@@ -31,7 +31,7 @@ interface DdlMatch {
  * One match in a body script, shaped like a grep result. A body with several matches yields one
  * entry per match; `snippet` adds the context lines around `line`/`text`.
  */
-export interface BodyMatch extends DdlMatch {
+interface BodyMatch extends DdlMatch {
   /** 1-based line number of the match within the body script. */
   line: number;
   /** The matching line, right-trimmed. */
