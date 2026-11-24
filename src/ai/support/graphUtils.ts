@@ -35,13 +35,16 @@ export interface NodeSnapshotStore {
  *
  * @remarks
  * Decoupled from `graphBuilder.ts` so the AI's structural reasoning runs on a clean,
- * performance-oriented model — no layout (Dagre/React Flow) or visual metadata.
+ * performance-oriented model — no layout (Dagre/React Flow) or visual metadata. Nodes carry the
+ * model node's own fields exactly as `buildGraphologyGraph` does (same references, no copy of
+ * column or body text), so `runAnalysis` reads the same `name` and `external*` attributes on
+ * both graphs.
  */
 export function buildBareGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
 
   for (const node of model.nodes) {
-    graph.addNode(node.id, { type: node.type, schema: node.schema });
+    graph.addNode(node.id, { ...node });
   }
 
   for (const edge of model.edges) {
