@@ -1,6 +1,6 @@
 /**
  * Local MCP server: Streamable HTTP on 127.0.0.1 inside the extension host, for AI clients on the
- * same machine. It is live only while `ai.enabled` and `mcp.enabled` are on; every request passes
+ * same machine. It is live only while `mcp.enabled` is on; every request passes
  * the SDK's Host and Origin checks (DNS rebinding) and a bearer token held in SecretStorage.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -322,7 +322,7 @@ function clientConfig(endpoint: { url: string; token: string }): string {
 
 /**
  * Wires the service to the editor: the `mcp.*` settings, the VS Code server definition provider and
- * the two commands. Call only when AI is enabled.
+ * the three commands. The server follows `mcp.enabled` alone.
  */
 export function registerMcp(context: vscode.ExtensionContext, tools: McpToolSource): void {
   const logger = Logger.create(tools.outputChannel, 'AI');
@@ -352,9 +352,14 @@ export function registerMcp(context: vscode.ExtensionContext, tools: McpToolSour
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('dataLineageViz.mcp')) void refresh();
     }),
+    vscode.commands.registerCommand('dataLineageViz.mcp.enable', async () => {
+      await vscode.workspace.getConfiguration('dataLineageViz.mcp').update('enabled', true, vscode.ConfigurationTarget.Global);
+      const pick = await vscode.window.showInformationMessage('Data Lineage: MCP server enabled.', 'Show servers');
+      if (pick === 'Show servers') await vscode.commands.executeCommand('workbench.mcp.listServer');
+    }),
     vscode.commands.registerCommand('dataLineageViz.mcp.rotateToken', async () => {
       if (!service.endpoint) {
-        void vscode.window.showInformationMessage('Data Lineage: turn on dataLineageViz.mcp.enabled first.');
+        void vscode.window.showInformationMessage('Data Lineage: run "Data Lineage: Enable MCP Server" first.');
         return;
       }
       await service.rotateToken();
@@ -363,7 +368,7 @@ export function registerMcp(context: vscode.ExtensionContext, tools: McpToolSour
     vscode.commands.registerCommand('dataLineageViz.mcp.copyConfig', async () => {
       const endpoint = service.endpoint;
       if (!endpoint) {
-        void vscode.window.showInformationMessage('Data Lineage: turn on dataLineageViz.mcp.enabled first.');
+        void vscode.window.showInformationMessage('Data Lineage: run "Data Lineage: Enable MCP Server" first.');
         return;
       }
       const pick = await vscode.window.showWarningMessage(
@@ -378,15 +383,12 @@ export function registerMcp(context: vscode.ExtensionContext, tools: McpToolSour
 
   context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider(PROVIDER_ID, {
     onDidChangeMcpServerDefinitions: changed.event,
+    // Complete here: forwarding a definition to Copilot may skip `resolveMcpServerDefinition`.
     provideMcpServerDefinitions: () => {
       const endpoint = service.endpoint;
-      return endpoint ? [new vscode.McpHttpServerDefinition(SERVER_LABEL, vscode.Uri.parse(endpoint.url))] : [];
-    },
-    resolveMcpServerDefinition: (server) => {
-      const endpoint = service.endpoint;
-      if (!endpoint || !(server instanceof vscode.McpHttpServerDefinition)) return undefined;
-      server.headers = { Authorization: `Bearer ${endpoint.token}` };
-      return server;
+      return endpoint
+        ? [new vscode.McpHttpServerDefinition(SERVER_LABEL, vscode.Uri.parse(endpoint.url), { Authorization: `Bearer ${endpoint.token}` })]
+        : [];
     },
   }));
 

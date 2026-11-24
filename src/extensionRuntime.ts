@@ -112,42 +112,36 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     .getConfiguration('dataLineageViz.ai')
     .get<boolean>('enabled', DEFAULT_AI_ENABLED);
 
-  const missingAiApis = [
-    typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function' ? '' : 'MCP server definitions (vscode.lm)',
-  ].filter(Boolean);
+  const runStoreLogger = Logger.create(outputChannel, 'AI');
+  const aiToolHost = {
+    getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
+  };
+
+  // The MCP server follows `mcp.enabled` alone, not `ai.enabled`.
+  if (typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function') {
+    registerMcp(context, { getSession, outputChannel, getPanel: getActivePanel, host: aiToolHost });
+  } else {
+    logger.info('MCP server unavailable — this editor does not provide vscode.lm MCP server definitions.');
+  }
 
   let lineageRuntime: LineageRuntime | undefined;
 
   try {
-    if (aiEnabled && missingAiApis.length > 0) {
-      logger.info(
-        `AI surface unavailable — this editor does not provide ${missingAiApis.join(' or ')}. `
-        + 'Lineage visualisation, parsing and the graph are unaffected.',
-      );
-    } else if (aiEnabled) {
-    const runStoreLogger = Logger.create(outputChannel, 'AI');
-    const aiToolHost = {
-      getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
-    };
-    const aiLogger = Logger.create(outputChannel, 'AI');
-    lineageRuntime = new LineageRuntime({
-      getSession,
-      createRegistry: (lease, model) =>
-        buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, { ...aiToolHost, model, signal: lease.signal, budget: model.budget }),
-      logger: aiLogger,
-      traceWriter,
-      clearPreview: () => {
-        const panel = getActivePanel();
-        if (panel) void postToWebview(panel, { type: 'ai-view-clear' }, aiLogger);
-      },
-    });
-
-    registerMcp(context, { getSession, outputChannel, getPanel: getActivePanel, host: aiToolHost });
+    if (aiEnabled) {
+      const aiLogger = Logger.create(outputChannel, 'AI');
+      lineageRuntime = new LineageRuntime({
+        getSession,
+        createRegistry: (lease, model) =>
+          buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, { ...aiToolHost, model, signal: lease.signal, budget: model.budget }),
+        logger: aiLogger,
+        traceWriter,
+        clearPreview: () => {
+          const panel = getActivePanel();
+          if (panel) void postToWebview(panel, { type: 'ai-view-clear' }, aiLogger);
+        },
+      });
     } else {
-      logger.info(
-        'AI surface disabled — dataLineageViz.ai.enabled is false; the MCP server and ' +
-        'the AI runtime were not loaded.',
-      );
+      logger.info('AI surface disabled — dataLineageViz.ai.enabled is false; the AI runtime was not loaded.');
     }
   } catch (err) {
     lineageRuntime = undefined;

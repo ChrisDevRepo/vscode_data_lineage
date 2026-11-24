@@ -173,6 +173,10 @@
         "category": "Data Lineage"
       },
       {
+        "command": "dataLineageViz.mcp.enable",
+        "title": "Data Lineage: Enable MCP Server"
+      },
+      {
         "command": "dataLineageViz.mcp.copyConfig",
         "title": "Data Lineage: Copy MCP Config"
       },
@@ -192,12 +196,16 @@
       ],
       "commandPalette": [
         {
+          "command": "dataLineageViz.mcp.enable",
+          "when": "!config.dataLineageViz.mcp.enabled"
+        },
+        {
           "command": "dataLineageViz.mcp.copyConfig",
-          "when": "config.dataLineageViz.ai.enabled && config.dataLineageViz.mcp.enabled"
+          "when": "config.dataLineageViz.mcp.enabled"
         },
         {
           "command": "dataLineageViz.mcp.rotateToken",
-          "when": "config.dataLineageViz.ai.enabled && config.dataLineageViz.mcp.enabled"
+          "when": "config.dataLineageViz.mcp.enabled"
         }
       ]
     },
@@ -556,7 +564,7 @@
           "dataLineageViz.ai.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Turn the AI tools on or off. Reload the window after changing."
+            "description": "Turn the AI chat panel and its tools on or off (the MCP server follows dataLineageViz.mcp.enabled). Reload the window after changing."
           },
           "dataLineageViz.ai.maxRounds": {
             "type": "integer",
@@ -625,7 +633,7 @@
             "type": "boolean",
             "default": false,
             "scope": "application",
-            "markdownDescription": "Serve the read-only lineage tools to local AI clients (VS Code Copilot, Claude Code, Cursor, Codex CLI) over a local MCP server on 127.0.0.1. Has an effect only while `dataLineageViz.ai.enabled` is on. Use **Data Lineage: Copy MCP Config** for clients outside VS Code."
+            "markdownDescription": "Serve the read-only lineage tools to local AI clients (VS Code Copilot, Claude Code, Cursor, Codex CLI) over a local MCP server on 127.0.0.1. Independent of `dataLineageViz.ai.enabled`. Run **Data Lineage: Enable MCP Server** to turn it on, or **Data Lineage: Copy MCP Config** for clients outside VS Code."
           },
           "dataLineageViz.mcp.port": {
             "type": "integer",

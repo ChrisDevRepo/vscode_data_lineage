@@ -48,7 +48,7 @@ What ships now is the model setup it will run on, and the read-only lineage tool
 - **`dataLineageViz.ai.models`** lists OpenAI-compatible endpoints (Chat Completions or Responses; an Azure `/openai/v1/` base URL or Anthropic's `/v1/` chat-completions URL works like any other).
   An invalid entry is named and not offered; `dataLineageViz.ai.defaultModel` names the one to use.
 - **Data Lineage: Set API key** stores the key of one entry in VS Code's secret storage. A key is never written to settings, logs or the webview.
-- **Lineage tools over MCP** — set `dataLineageViz.mcp.enabled` to serve the read-only lineage tools to local MCP clients such as Copilot, Claude Code, Cursor or Codex CLI.
+- **Lineage tools over MCP** — run **Data Lineage: Enable MCP Server** (or set `dataLineageViz.mcp.enabled`) to serve the read-only lineage tools to local MCP clients such as Copilot, Claude Code, Cursor or Codex CLI.
 
 The visual graph, search, trace, SQL preview, demo data, profiling, and export features work without any of this.
 
