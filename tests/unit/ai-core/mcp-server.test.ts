@@ -61,7 +61,14 @@ function post(url: string, headers: Record<string, string>, body = INITIALIZE, s
   });
 }
 
-function harness(session = new AiSession()) {
+/** The graph panel as the preview tool sees it: every message it is sent lands in `posted`. */
+function panelStub() {
+  const posted: unknown[] = [];
+  return { posted, reveal: () => undefined, webview: { postMessage: async (message: unknown) => { posted.push(message); return true; } } };
+}
+type PanelStub = ReturnType<typeof panelStub>;
+
+function harness(session = new AiSession(), panel?: PanelStub) {
   const lines: string[] = [];
   const errors: string[] = [];
   const log = (message: string) => { lines.push(message); };
@@ -78,7 +85,7 @@ function harness(session = new AiSession()) {
     version: '0.0.0-test',
     onPortInUse: (port) => portInUse.push(port),
     onChange: () => undefined,
-    tools: { getSession: () => session, outputChannel: channel as never, getPanel: () => undefined, host: TOOL_HOST },
+    tools: { getSession: () => session, outputChannel: channel as never, getPanel: () => panel as never, host: TOOL_HOST },
   });
   return { lines, errors, store, portInUse, service, session, channel: channel as unknown as VSCode.LogOutputChannel };
 }
@@ -90,8 +97,8 @@ afterEach(async () => {
   await Promise.all(live.splice(0).map(({ service }) => service.dispose()));
 });
 
-async function started(session?: AiSession) {
-  const h = harness(session);
+async function started(session?: AiSession, panel?: PanelStub) {
+  const h = harness(session, panel);
   live.push(h);
   const port = await freePort();
   await h.service.apply(true, port);
@@ -176,8 +183,8 @@ const CALLS: Record<string, Record<string, unknown>> = {
 };
 
 /** Starts the server on `session` and connects an SDK client; `call` gives the answer. */
-async function connected(session: AiSession) {
-  const s = await started(session);
+async function connected(session: AiSession, panel?: PanelStub) {
+  const s = await started(session, panel);
   const client = new Client({ name: 'mcp-test', version: '0.0.0' });
   await client.connect(new StreamableHTTPClientTransport(new URL(s.url), { requestInit: { headers: { Authorization: `Bearer ${s.token}` } } }));
   clients.push(client);
@@ -228,10 +235,49 @@ describe('lineage tools over MCP', () => {
     expect(answers['lineage_search_ddl']!['by_object'][0]).toMatchObject({ id: '[sales].[vsalespersonsalesbyfiscalyears]', type: 'view' });
   });
 
-  it('answers every refusal as isError with the registry envelope, not a protocol error', async () => {
-    const loaded = await connected((await fixture()).session);
+  it('answers every refusal as isError with the registry envelope, not a protocol error (ack or reject: nothing committed, no retry state, a corrected call succeeds)', async () => {
+    const { session } = await fixture();
+    const panel = panelStub();
+    const loaded = await connected(session, panel);
     expect(await loaded.call('lineage_search_objects', { query: 'x', bogus: 1 })).toMatchObject({ isError: true, rejection: { code: 'invalid_input', issuePaths: ['bogus'] } });
     expect(await (await connected(new AiSession())).call('lineage_get_context', {})).toMatchObject({ isError: true, rejection: { code: 'no_project_loaded' } });
+
+    const empty = await connected(new AiSession());
+    const noPanel = await connected((await fixture()).session);
+    const [order, missing, trace] = ['[Sales].[SalesOrderHeader]', '[dbo].[NoSuchObject]', { upstream_levels: 1, downstream_levels: 1, include_dml: false }] as const;
+    const preview = { name: 'Orders', ids: [order] };
+    const rows = [
+      [loaded, 'lineage_get_object_detail', { id: missing }, 'not_found'],
+      [loaded, 'lineage_get_trace', { ...trace, origin: missing }, 'not_found'],
+      [loaded, 'lineage_get_path', { start: order, end: missing, include_dml: false }, 'not_found'],
+      [loaded, 'lineage_create_graph_preview', { ...preview, ids: [order, missing] }, 'not_found'],
+      [loaded, 'lineage_get_path', { start: order, include_dml: false }, 'invalid_input', ['end']],
+      [loaded, 'lineage_get_object_detail', { id: 5 }, 'invalid_input', ['id']],
+      [empty, 'lineage_get_trace', { ...trace, origin: order }, 'no_project_loaded'],
+      [empty, 'lineage_get_path', { start: order, end: order, include_dml: false }, 'no_project_loaded'],
+      [empty, 'lineage_create_graph_preview', preview, 'no_project_loaded'],
+      [noPanel, 'lineage_create_graph_preview', preview, 'no_project_loaded'],
+    ] as const;
+    for (const [{ call }, tool, args, code, paths] of rows) {
+      const first = await call(tool, args);
+      expect(first, tool).toMatchObject({ isError: true, rejection: { code, ...(paths && { issuePaths: paths }) } });
+      expect(first.rejection!.issuePaths?.length || first.rejection!.hint || code === 'no_project_loaded', first.text).toBeTruthy();
+      // No retry counter or limit: the same call again answers the same text, and nothing is posted.
+      expect((await call(tool, args)).text, tool).toBe(first.text);
+      expect((await call(tool, args)).text, tool).toBe(first.text);
+      expect(panel.posted, tool).toEqual([]);
+    }
+
+    // A client retries: the wrong id is refused and nothing is posted, the searched id succeeds as in a fresh session.
+    expect(await loaded.call('lineage_create_graph_preview', { ...preview, ids: ['SalesOrderHeader'] })).toMatchObject({ rejection: { code: 'not_found' } });
+    const [id] = JSON.parse((await loaded.call('lineage_search_objects', { query: 'SalesOrderHeader' })).text).name_match.ids as string[];
+    const freshPanel = panelStub();
+    const fresh = await (await connected((await fixture()).session, freshPanel)).call('lineage_create_graph_preview', { ...preview, ids: [id] });
+    const retried = await loaded.call('lineage_create_graph_preview', { ...preview, ids: [id] });
+    expect(retried).toMatchObject({ isError: false, text: fresh.text });
+    const untimed = (posted: unknown[]) => posted.map((message: any) => ({ ...message, aiMetadata: { ...message.aiMetadata, createdAt: undefined } }));
+    expect(panel.posted).toHaveLength(1);
+    expect(untimed(panel.posted)).toEqual(untimed(freshPanel.posted));
   });
 
   it('keeps the external-call behaviour during a running turn: the phase guard refuses a read with off_policy', async () => {
