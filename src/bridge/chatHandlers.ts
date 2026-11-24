@@ -10,7 +10,7 @@ import { ModelPortError, type ModelPort } from '../ai/model/modelPort';
 import { isClearCommand } from '../ai/agent/slashCommands';
 import { expandNextQuestionSuggestions } from '../ai/prompting/followupSuggestions';
 import { renderFullPlanMd, renderScopeCardMd } from '../ai/prompting/scopeSummaryRenderer';
-import { NEXT_QUESTIONS_TRIGGER, RUN_TRACE_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER, expandRunTracePrompt } from '../ai/prompting/prompts';
+import { NEXT_QUESTIONS_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER, expandRunTracePrompt } from '../ai/prompting/prompts';
 import type { ProviderModelPortOptions } from '../ai/model/providerModelPort';
 import type { AiTraceWriter } from '../ai/observability/aiTraceWriter';
 import { parseModelEntries, type ModelEntry } from '../ai/providers/modelEntries';
@@ -22,6 +22,7 @@ import { sanitizeDescriptionForChat } from '../ai/support/text';
 import { calibrateTurnBudget } from '../ai/support/tokenBudget';
 import { Logger, OUTPUT_POINTER } from '../utils/log';
 import { notifyError, notifyWarningOnce } from '../utils/notifications';
+import { followupButtons, type FollowupButton } from './followupButtons';
 
 /** Window in which streamed text deltas are merged into one frame. */
 const TEXT_BATCH_MS = 75;
@@ -345,15 +346,9 @@ export class ChatController {
     return entry?.supportsReasoningEffort?.includes(this.selectedEffort ?? '') ? this.selectedEffort : undefined;
   }
 
-  /** The follow-up buttons for the session as it stands; none while a turn runs or a gate is pending. */
-  private followups(): { label: string; prompt: string }[] {
-    const session = this.deps.getSession();
-    if (this.turn || session.phase.kind === 'awaiting_gate') return [];
-    return [
-      ...(session.phase.kind === 'completed' ? [{ label: 'Next questions and related objects', prompt: NEXT_QUESTIONS_TRIGGER }] : []),
-      ...(session.lastPresentResultDescription ? [{ label: 'Show full description', prompt: SHOW_FULL_DESCRIPTION_TRIGGER }] : []),
-      ...(session.smOfferAvailable() ? [{ label: 'Start deeper hop-by-hop analysis', prompt: RUN_TRACE_TRIGGER }] : []),
-    ];
+  /** The follow-up buttons for the session as it stands; none while a turn runs. */
+  private followups(): FollowupButton[] {
+    return this.turn ? [] : followupButtons(this.deps.getSession());
   }
 
   private stateMsg(): ChatToWebviewMsg {

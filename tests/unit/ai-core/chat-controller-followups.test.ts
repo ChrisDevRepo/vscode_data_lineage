@@ -13,6 +13,7 @@ import { AiSession } from '../../../src/ai/session/session';
 import { ToolRegistry } from '../../../src/ai/tools/registry';
 import type { PresentationArtifact } from '../../../src/ai/session/types';
 import { ChatController } from '../../../src/bridge/chatHandlers';
+import { followupButtons } from '../../../src/bridge/followupButtons';
 import type { ChatToWebviewMsg } from '../../../src/engine/shared/chatContract';
 import { Logger } from '../../../src/utils/log';
 
@@ -135,6 +136,17 @@ describe('chat.state followups', () => {
     await send('Where does dbo.Orders come from?');
     expect(states().find((state) => state.busy)?.followups).toEqual([]);
     expect(followups()).toEqual([DEEPER_ANALYSIS]);
+  });
+});
+
+describe('followupButtons', () => {
+  it('is what the controller sends: a completed analysis with an open walk offers only next questions', async () => {
+    const session = walkedSession();
+    session.phase = { kind: 'completed' };
+    const { controller, followups } = setup(session);
+    await controller.receive({ type: 'chat.ready' });
+    expect(followupButtons(session)).toEqual([NEXT_QUESTIONS]);
+    expect(followups()).toEqual(followupButtons(session));
   });
 });
 
