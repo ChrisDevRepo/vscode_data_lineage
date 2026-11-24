@@ -44,7 +44,6 @@ flowchart LR
 flowchart LR
     Q([User request]) --> D[Discovery]
     D -->|direct answer| END(((End)))
-    D -->|answer offers a preview| P[Graph preview] --> END
     D -->|over budget or deeper-analysis follow-up| G[/Approval/]
     G -->|change scope| G
     G -->|cancel| END
@@ -53,8 +52,7 @@ flowchart LR
 ```
 
 - **Discovery.** A question is first answered in chat from read tools over the
-  loaded model; `/search` pins this path. **Show graph preview** opens a
-  bounded, transient preview in the graph view. A request above
+  loaded model; `/search` pins this path. A request above
   `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget`
   is offered as a deep analysis instead.
 - **Approval.** `/trace`, the **Start deeper hop-by-hop

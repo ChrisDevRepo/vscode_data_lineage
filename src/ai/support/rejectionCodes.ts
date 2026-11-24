@@ -162,10 +162,7 @@ export const REJECTION_CODES = {
   extraCallNotEvaluated: 'extra_call_not_evaluated',
   /** A `supplement` lead id names no unresolved pending lead of the completed exploration. */
   invalidPendingLead: 'invalid_pending_lead',
-  /**
-   * `lineage_present_result` ran with no presentation source: no loaded scope and no completed
-   * exploration (`handlers/presentResult.ts`).
-   */
+  /** `lineage_present_result` ran with no completed exploration (`handlers/presentResult.ts`). */
   missingResultGraph: 'missing_result_graph',
   /** A refine proposal identical to the reviewed pending proposal (`startExploration.ts`). */
   noOpRefine: 'no_op_refine',
@@ -180,8 +177,6 @@ export const REJECTION_CODES = {
   parallelCallForbidden: 'parallel_call_forbidden',
   /** A sibling call not executed because an earlier call of the same batch closed the phase. */
   phaseClosed: 'phase_closed',
-  /** A graph preview requested with no discovery narrative or scope behind it. */
-  previewSourceUnavailable: 'preview_source_unavailable',
   /** A substring-mode search query of punctuation only, which no object name contains. */
   queryNotAName: 'query_not_a_name',
   /** A search query too short to be a name fragment (`tools.ts`). */

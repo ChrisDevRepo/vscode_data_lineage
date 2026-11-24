@@ -31,7 +31,7 @@ import type { AiSession } from '../session/session';
 import { PendingGateSchema, type PendingGate } from '../session/sessionPhase';
 import { buildAgentGraph, turnRecursionLimit } from '../agent/graph';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
-import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
+import { TRACE_REQUEST_MARKER } from '../prompting/prompts';
 import type { AgentStateUpdate, AgentErrorCode, GateDecision } from '../agent/state';
 
 export { type GateDecision } from '../agent/state';
@@ -166,9 +166,7 @@ export class AgentRuntime {
   public async run(prompt: string): Promise<TurnOutcome> {
     const session = this.getSession();
     session.currentRoundId += 1;
-    session.currentTurnPrompt = prompt.startsWith(PREVIEW_REQUEST_MARKER) || prompt.startsWith(TRACE_REQUEST_MARKER)
-      ? null
-      : prompt;
+    session.currentTurnPrompt = prompt.startsWith(TRACE_REQUEST_MARKER) ? null : prompt;
     try {
       let input: AgentStateUpdate | Command = this.priorMessages.length > 0
         ? { prompt, messages: [...this.priorMessages, modelUserMessage(prompt)] }

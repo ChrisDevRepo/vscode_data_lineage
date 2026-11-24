@@ -336,7 +336,7 @@ export class AiSession {
 
   /**
    * Verbatim prompt of the current turn, set at run start by the agent runtime. Host-seeded marker
-   * prompts (preview/trace re-entry) are not stored; those flows use {@link lastDiscoveryQuestion}.
+   * prompts (trace re-entry) are not stored; those flows use {@link lastDiscoveryQuestion}.
    * Read by `start_exploration` to anchor the canonical question to user-authored text for direct
    * free-text entry, not the model's paraphrase.
    */
@@ -557,7 +557,7 @@ export class AiSession {
    * walked this turn, else a detail walk of 2+ objects, becomes the recorded discovery seeding the
    * "Start deeper hop-by-hop analysis" offer and `lineage_start_exploration`. A turn that read the
    * catalog without walking a scope answered about something the stored scope does not show, so
-   * that scope and its "Show graph preview" offer are dropped. A direct answer (nothing read)
+   * that scope is dropped. A direct answer (nothing read)
    * changes neither. Cleared in {@link resetExploration}.
    *
    * @param detailWalk - The turn's multi-object detail walk, or `null`.
@@ -596,13 +596,6 @@ export class AiSession {
     return this.phase.kind === 'idle'
       && Boolean(this.lastDiscoveryOrigin)
       && this.lastDiscoveryWalkCount >= 2;
-  }
-
-  /** Whether a completed bounded BFS chat answer can offer a visual-preview action. */
-  public previewOfferAvailable(): boolean {
-    return this.smOfferAvailable()
-      && this.discoveryScopeArtifact !== null
-      && !this.presentResultCalledThisTurn;
   }
 
   /**

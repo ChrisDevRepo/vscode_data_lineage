@@ -1080,7 +1080,7 @@ export const GetPathInputSchema = z.object({
 
 export type GetPathInput = z.infer<typeof GetPathInputSchema>;
 
-/** `lineage_create_graph_preview` input (MCP only): the discovery card's graph preview. */
+/** `lineage_create_graph_preview` input (MCP only): the AI graph preview of the given objects. */
 export const CreateGraphPreviewInputSchema = z.object({
   ids: z.array(z.string()).min(1).max(DEFAULT_DISCOVERY_NODE_CAP).describe('Canonical object IDs the preview shows.'),
   title: z.string().max(PRESENT_RESULT_NAME_MAX, overLength(PRESENT_RESULT_NAME_MAX)).trim().min(1).describe('Preview name shown in the graph banner.'),
@@ -1208,59 +1208,6 @@ const PresentResultSectionPatchSchema = z.union([
   PresentResultSectionDeletionSchema,
 ]);
 
-/** Memoized per block count: a fresh schema per request defeats `toModelJsonSchema`'s cache. */
-const previewSchemaCache = new Map<number, ReturnType<typeof buildPreviewSchemas>>();
-
-/**
- * Preview stage schemas for an answer of `blockCount` served blocks. A section is the
- * {@link PresentResultSectionSchema} keys with the body given as the served id
- * `B1`..`B<blockCount>` it starts at, so an id outside the answer cannot be sent; the engine ends
- * each section before the next start. The patch form lets `node_ids` and `start` be omitted to keep
- * the held value. Preview reuses the discovery prose for `summary`/`title`; the model authors
- * `name`.
- */
-function buildPreviewSchemas(blockCount: number) {
-  const [first, ...rest] = Array.from({ length: Math.max(blockCount, 1) }, (_, index) => `B${index + 1}`);
-  const start = z.enum([first, ...rest]).describe('First block of `answer_blocks` this section presents, e.g. "B3"; it runs to the block before the next section\'s start, the last section to the end. The first section starts at B1; starts ascend strictly.');
-  const section = z.object({
-    label: PresentResultSectionSchema.shape.label,
-    node_ids: PresentResultSectionSchema.shape.node_ids,
-    start,
-  }, {
-    error: (issue) => issue.code === 'unrecognized_keys'
-      ? 'A section holds only label, node_ids and start. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
-      : undefined,
-  }).strict();
-  const patch = z.union([
-    section.extend({ node_ids: PresentResultSectionSchema.shape.node_ids.optional(), start: start.optional() }),
-    PresentResultSectionDeletionSchema,
-  ]);
-  const model = PresentResultModelSchema.omit({
-    summary: true,
-    title: true,
-    intro: true,
-    closing: true,
-    prune_node_ids: true,
-    add_node_ids: true,
-    is_update: true,
-  }).extend({
-    sections: sectionList(section).describe(
-      'Required report sections, at least one. Each names the block of the served `answer_blocks` it starts at; every node analysed and captured is linked into a section\'s node_ids.',
-    ),
-  }).strict();
-  const patchSections = sectionList(patch).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
-  return { model, patchSections };
-}
-
-function previewSchemas(blockCount: number) {
-  let schemas = previewSchemaCache.get(blockCount);
-  if (!schemas) {
-    schemas = buildPreviewSchemas(blockCount);
-    previewSchemaCache.set(blockCount, schemas);
-  }
-  return schemas;
-}
-
 /** Schema defining the shape of the final generated presentation result. */
 export const PresentResultModelSchema = z.object({
   name: z.string().max(PRESENT_RESULT_NAME_MAX, overLength(PRESENT_RESULT_NAME_MAX)).trim().min(1, 'name is required').describe('Short name for the generated lineage view — aim for ~60 chars.'),
@@ -1312,15 +1259,12 @@ function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T)
 
 /**
  * Selects the model-facing `present_result` schema from the phase and held-draft authorization.
- * Preview omits AI-authored wrapper prose; synthesis uses the full new-render contract; either
- * phase projects the strict patch schema while a repairable draft is held. An unrecognized key
- * rejects through `.strict()`, naming key and path. `retainable` is a live session fact: a render
- * amends a committed report only while the run that authored it is still rendering; preview never
- * amends.
+ * Synthesis uses the full new-render contract; either phase projects the strict patch schema while
+ * a repairable draft is held. An unrecognized key rejects through `.strict()`, naming key and path.
+ * `retainable` is a live session fact: a render amends a committed report only while the run that
+ * authored it is still rendering.
  *
  * @param repairFields - Fields a held draft authorizes for repair, when one is held.
- * @param previewBlockCount - Served `answer_blocks` count; preview block ids are exactly
- *   `B1`..`B<count>`.
  * @param highlightLabelIndexes - Held highlight entries whose labels alone may be replaced.
  * @param sectionTextLeaves - Held section indexes and text leaves that alone may be replaced.
  */
@@ -1328,12 +1272,10 @@ export function presentResultSchemaForPhase(
   phase?: string,
   repairFields: readonly PresentResultRepairField[] | null = null,
   retainable = false,
-  previewBlockCount = 0,
   highlightLabelIndexes?: readonly number[],
   sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
 ): z.ZodType {
-  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionTextLeaves, retainable);
-  if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
+  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, highlightLabelIndexes, sectionTextLeaves, retainable);
   const synthesis = phase === 'synthesis';
   const schema = retainable
     ? (synthesis ? PresentResultRetainingSynthesisModelSchema : PresentResultRetainingModelSchema)
@@ -1438,14 +1380,13 @@ function indexedLeafList<T extends z.ZodType<{ index: number }>>(entries: readon
 }
 
 /**
- * Builds the strict provider/runtime patch schema for a held-draft repair. Outside the visual
- * preview every presentation field stays sendable and replaces the held value, so extra fields are
- * merged, not refused; the authorized fields are those the patch owes. A graph-edit field is
- * sendable only when authorized; a preview repair accepts only authorized fields. A sole authorized
- * field is `required`; with several, a `superRefine` rejects a patch naming none (only `is_update`,
- * or nothing) with one issue per authorized field, so `issuePaths` names the whole set. The
- * presentation handler admits raw arguments against this live schema; ports only decode transport
- * arguments.
+ * Builds the strict provider/runtime patch schema for a held-draft repair. Every presentation
+ * field stays sendable and replaces the held value, so extra fields are merged, not refused; the
+ * authorized fields are those the patch owes. A graph-edit field is sendable only when authorized.
+ * A sole authorized field is `required`; with several, a `superRefine` rejects a patch naming none
+ * (only `is_update`, or nothing) with one issue per authorized field, so `issuePaths` names the
+ * whole set. The presentation handler admits raw arguments against this live schema; ports only
+ * decode transport arguments.
  *
  * @param fields - Held presentation fields authorized by the rejection.
  * @param highlightLabelIndexes - Highlight entries restricted to `{index, label}` leaf repair.
@@ -1455,28 +1396,23 @@ function indexedLeafList<T extends z.ZodType<{ index: number }>>(entries: readon
  */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],
-  phase?: string,
-  previewBlockCount = 0,
   highlightLabelIndexes?: readonly number[],
   sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
   retainable = false,
 ): z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>> {
   const keys = [...new Set<PresentResultRepairField>(fields)].sort();
-  const preview = phase === 'visual_preview';
   const labelIndexes = highlightLabelIndexes ? [...new Set(highlightLabelIndexes)].sort((left, right) => left - right) : undefined;
   const sectionLeaves = sectionTextLeaves?.map(leaf => ({ index: leaf.index, fields: [...new Set(leaf.fields)].sort() }))
     .sort((left, right) => left.index - right.index);
-  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${retainable ? 'retain:' : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionLeaves ? `:sectionText=${sectionLeaves.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
+  const cacheKey = `${retainable ? 'retain:' : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionLeaves ? `:sectionText=${sectionLeaves.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
-  const sendable = preview ? keys : [...PRESENT_RESULT_REPAIR_FIELDS, ...keys];
+  const sendable = [...PRESENT_RESULT_REPAIR_FIELDS, ...keys];
   const mask = Object.fromEntries([...sendable, 'is_update'].map(key => [key, true]));
   const picked = PresentResultAuthorizableRepairSchema.pick(
     mask as Partial<Record<keyof typeof PresentResultAuthorizableRepairSchema.shape, true>>,
   );
-  let staged = (preview && keys.includes('sections')
-    ? picked.extend({ sections: previewSchemas(previewBlockCount).patchSections })
-    : picked) as z.ZodObject<z.ZodRawShape>;
+  let staged = picked as z.ZodObject<z.ZodRawShape>;
   if (labelIndexes) {
     const entrySchemas = labelIndexes.map(index => z.object({
       index: z.literal(index).describe('Zero-based index of the held highlight group named by the rejection.'),

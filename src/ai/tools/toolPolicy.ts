@@ -3,7 +3,6 @@
  * names without the `lineage_` prefix):
  * - `discover`: get_context, get_screen_state, search_objects, get_scope_bundle, search_ddl,
  *   get_object_detail, detect_graph_patterns.
- * - `visual_preview`: present_result (restructures the cached discovery answer).
  * - `sm_entry`: get_screen_state, search_objects, get_object_detail (resolves all columns for a CT
  *   start), start_exploration (resolves the origin and opens the consent gate).
  * - `active` (sm_bb): submit_findings. `active` (sm_ct): submit_findings, get_neighbor_columns.
@@ -21,8 +20,6 @@ export type ActiveMode = 'sm_bb' | 'sm_ct';
 export type LmStage =
   /** Idle / ad-hoc question answering. No state machine active. */
   | { kind: 'discover' }
-  /** Bounded discovery rendering through the shared presentation commit path. */
-  | { kind: 'visual_preview' }
   /**
    * SM entry: resolve the origin and open the consent gate (`get_screen_state`, `search_objects`,
    * `get_object_detail`, `start_exploration`).
@@ -44,11 +41,6 @@ const DISCOVERY_TOOLS: readonly string[] = [
   'lineage_search_ddl',
   'lineage_get_object_detail',
   'lineage_detect_graph_patterns',
-];
-
-/** Tools visible while resolving and rendering one bounded discovery scope. */
-const VISUAL_PREVIEW_TOOLS: readonly string[] = [
-  'lineage_present_result',
 ];
 
 /**
@@ -94,8 +86,6 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
   switch (stage.kind) {
     case 'discover':
       return new Set(DISCOVERY_TOOLS);
-    case 'visual_preview':
-      return new Set(VISUAL_PREVIEW_TOOLS);
     case 'sm_entry':
       return new Set(SM_ENTRY_TOOLS);
     case 'synthesis':

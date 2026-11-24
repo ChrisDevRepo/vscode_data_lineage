@@ -2,7 +2,7 @@
 import type { AgentExecutionTrigger } from './state';
 
 /** Initial agent stage derived from semantic intent and physical UI/command triggers. */
-export type InitialAgentStage = 'discover' | 'visual_preview' | 'sm_entry';
+export type InitialAgentStage = 'discover' | 'sm_entry';
 
 /**
  * Derives the first tool stage from the turn's mechanical execution trigger. Only a mechanical
@@ -12,7 +12,6 @@ export type InitialAgentStage = 'discover' | 'visual_preview' | 'sm_entry';
  * SM only if the guard trips there.
  */
 export function selectInitialAgentStage(trigger: AgentExecutionTrigger): InitialAgentStage {
-  if (trigger === 'preview_button') return 'visual_preview';
   if (trigger === 'slash_trace' || trigger === 'run_trace' || trigger === 'discovery_budget') return 'sm_entry';
   return 'discover';
 }

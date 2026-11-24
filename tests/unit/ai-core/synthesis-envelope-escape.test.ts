@@ -1,6 +1,5 @@
 /**
- * The synthesis envelope reaches the model as a bannered, delimited, escaped block — the same
- * untrusted-JSON treatment `visualPreviewNode` gives `<discovery_preview_source>`.
+ * The synthesis envelope reaches the model as a bannered, delimited, escaped untrusted-JSON block.
  *
  * @remarks
  * `synthesisNode` (`src/ai/agent/graph.ts`) calls `buildSynthesisEnvelopeMessage`, a pure wrapper

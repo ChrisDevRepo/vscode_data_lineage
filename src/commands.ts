@@ -106,7 +106,7 @@ export function registerCommands(
         notifyWarning(
           aiLogger,
           'Dump SM state',
-          'Data Lineage: No active state machine to dump. A bounded graph preview runs in one pass; use its AI NDJSON trace for diagnostics.',
+          'Data Lineage: No active state machine to dump.',
           { command: 'dataLineageViz.dumpSmState', hasPresentation: sess.presentationArtifact !== null },
         );
         return;

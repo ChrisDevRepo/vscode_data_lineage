@@ -88,9 +88,7 @@ export function buildHostStageSystemPrompt(
 
 /**
  * System prompt for the code-driven **entry detector** (one structured pre-loop call). Classifies
- * semantic intent only: `visual_render` enters discovery like any free-text request; the host-owned
- * preview action stays a separate RuntimeFrame fact for the bounded preview route reached
- * afterward.
+ * semantic intent only: `visual_render` enters discovery like any free-text request.
  */
 export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string {
   return [
@@ -102,14 +100,6 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
     `Context: platform ${ctx.dbPlatform}; ${ctx.totalSchemaCount} schemas; ${ctx.visibleNodes} of ${ctx.totalNodes} objects visible.`,
     ...(ctx.screen ? buildScreenStateSlot(ctx.screen) : []),
   ].join('\n');
-}
-
-/**
- * System prompt for one bounded discovery preview call, composed like every other stage via
- * {@link buildHostStageSystemPrompt}, so it stays under the shared presentation contract.
- */
-export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string {
-  return buildHostStageSystemPrompt('visual_preview', ctx);
 }
 
 /**

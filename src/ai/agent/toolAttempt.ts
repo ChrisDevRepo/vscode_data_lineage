@@ -302,10 +302,10 @@ const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
 
 /**
  * The held `lineage_present_result` repair draft as the model sees it on a present_result
- * rejection: the labels a resend keys on, each with its first block for a preview section.
+ * rejection: the labels a resend keys on.
  */
 interface HeldDraftRepairContent {
-  readonly sections: ReadonlyArray<{ readonly label: string; readonly start?: string }>;
+  readonly sections: ReadonlyArray<{ readonly label: string }>;
 }
 
 /** Provider-neutral ingredients for one graph- or smoke-owned generation and dispatch batch. */
@@ -819,7 +819,7 @@ function rejectionText(rejection: ToolRejection, call: RejectedCall, priorState?
   const failed = call.schema ? fieldsToCorrect(rejection.issuePaths ?? [], call.schema, unsent) : [];
   // A held report draft states its own keyed resend rule for its lists.
   const wholeList = !held && failed.some(pointer => isServedList(call.schema!, pointer.slice(1)));
-  const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
+  const heldLabels = held?.sections.map(({ label }) => `"${label}"`).join(', ');
   const faults = [rejection.reason, ...renderFaults(rejection, call.schema)];
   const after = [...(heldLabels ? [`Held sections: ${heldLabels}.`] : []), ...resendRule(failed, rejection.held ?? [], held !== undefined, wholeList)];
   const hint = rejection.hint ? [rejection.hint] : [];
