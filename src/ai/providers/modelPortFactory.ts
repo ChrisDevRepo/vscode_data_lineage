@@ -8,7 +8,7 @@ import type { ProviderModelPort, ProviderModelPortOptions } from '../model/provi
 import { apiKeySecretName, parseModelEntries } from './modelEntries';
 import { createProviderModelPort } from './openAiTransport';
 
-/** Where the entry list, the default entry and the keys live; `vscode` satisfies it structurally. */
+/** Where the entry list, the default entry and the keys live; the VS Code API fits it. */
 export interface ModelPortSources {
   /** The raw `dataLineageViz.ai.models` value. */
   readonly models: unknown;
@@ -39,7 +39,10 @@ export async function createConfiguredModelPort(
   }
   const apiKey = (await sources.secrets.get(apiKeySecretName(entry.id)))?.trim();
   if (!apiKey) {
-    throw new ModelPortError('no_permission', `No API key is stored for model entry "${entry.id}"; run Data Lineage: Set API key.`);
+    throw new ModelPortError(
+      'no_permission',
+      `No API key is stored for model entry "${entry.id}"; run Data Lineage: Set API key.`,
+    );
   }
   return createProviderModelPort(entry, apiKey, portOptions);
 }

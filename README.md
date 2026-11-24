@@ -42,7 +42,7 @@ Once your model loads, the visual graph is ready to use:
 
 ## AI model endpoints
 
-The AI assistant is being rebuilt on its own panel; the VS Code chat participant `@lineage` is removed.
+The AI assistant is being rebuilt on its own panel.
 What ships now is the model setup it will run on, and the read-only lineage tools:
 
 - **`dataLineageViz.ai.models`** lists OpenAI-compatible endpoints (Chat Completions or Responses; an Azure `/openai/v1/` base URL or Anthropic's `/v1/` chat-completions URL works like any other).

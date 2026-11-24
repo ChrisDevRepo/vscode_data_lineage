@@ -199,8 +199,8 @@ What the AI may and may not do:
 Prompts and templates: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 Tool names, descriptions and input schemas are defined once in
-`src/ai/tools/toolDefs.ts`. The `@lineage` participant and the local MCP server
-([`src/ai/mcp/mcpServer.ts`](../src/ai/mcp/mcpServer.ts)) both serve them from there.
+`src/ai/tools/toolDefs.ts`. The local MCP server
+([`src/ai/mcp/mcpServer.ts`](../src/ai/mcp/mcpServer.ts)) serves them from there.
 
 ## Test
 
@@ -229,7 +229,6 @@ Optional checks run only when you start them:
 | Command | Needs |
 |---------|-------|
 | `npm run test:edh` | A real VS Code host, downloaded on first run (needs network and a display). Runs the `bare-environment` and `kill-switch` lanes. `npm run test:bare-environment` runs one lane. |
-| `npm run test:ai:smoke` | The VS Code host plus a model provider configured in `.env`. |
 | `npm run test:ai:headless` | A model provider configured in `.env`. |
 | `npm run test:db:smoke` | A disposable database configured in `.env`. |
 | `npm run test:gui:host`, `npm run test:gui:smoke` | Playwright against an isolated VS Code window. |

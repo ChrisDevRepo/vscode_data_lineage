@@ -60,7 +60,7 @@ When a loaded graph has more objects than `dataLineageViz.overview.threshold` (c
 
 `dataLineageViz.maxNodes` limits the objects (including virtual external-reference nodes) loaded. A selection above it is refused: nothing is loaded, the prior view stays, and an error names the count, the limit and the setting.
 
-`dataLineageViz.renderLimit` limits the nodes drawn at once. When a selection would draw more, the graph shows a *Render limit reached* notice instead. A trace, path, analysis or AI preview counts only its own nodes; in Schema View each collapsed schema counts as one. Search, DDL and `@lineage` use the whole loaded model.
+`dataLineageViz.renderLimit` limits the nodes drawn at once. When a selection would draw more, the graph shows a *Render limit reached* notice instead. A trace, path, analysis or AI preview counts only its own nodes; in Schema View each collapsed schema counts as one. Search, DDL and the AI tools use the whole loaded model.
 
 ---
 
@@ -193,7 +193,7 @@ Tables above `tableStatistics.sampleThreshold` rows are sampled instead of fully
 
 ## AI
 
-The assistant is being rebuilt as its own panel; the VS Code chat participant `@lineage` is removed. The model setup and the lineage tools are in place:
+The assistant is being rebuilt as its own panel. The model setup and the lineage tools are in place:
 
 - **Models.** `dataLineageViz.ai.models` lists OpenAI-compatible endpoints (Chat Completions or Responses). `dataLineageViz.ai.defaultModel` names the entry to use. An invalid entry is named in a warning and not offered.
 - **API keys.** **Data Lineage: Set API key** stores the key of one entry in VS Code's secret storage. A key is never in settings, logs or the webview.

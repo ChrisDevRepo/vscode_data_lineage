@@ -12,7 +12,6 @@ import { buildAiToolRegistry } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
 import { registerMcp } from './ai/mcp/mcpServer';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
-import { createConfiguredModelPort } from './ai/providers/modelPortFactory';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules } from './engine/sqlBodyParser';
@@ -250,14 +249,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     getSession,
     getActivePanel,
     lineageRuntime,
-    /** The model port of an `ai.models` entry (the default entry when none is named). */
-    createModelPort: (options?: Parameters<typeof createConfiguredModelPort>[1]) => {
-      const config = vscode.workspace.getConfiguration('dataLineageViz.ai');
-      return createConfiguredModelPort(
-        { models: config.get('models'), defaultModel: config.get<string>('defaultModel'), secrets: context.secrets },
-        options,
-      );
-    },
   };
 }
 

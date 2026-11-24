@@ -6,7 +6,7 @@
  * retry or timeout is injected. The key reaches only the client's `Authorization` header.
  */
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from '@langchain/core/messages';
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatOpenAI, messageToOpenAIRole } from '@langchain/openai';
 import { Tiktoken } from 'js-tiktoken/lite';
 import o200kBase from 'js-tiktoken/ranks/o200k_base';
 import type { ModelEntry } from './modelEntries';
@@ -141,7 +141,7 @@ function toWireMessage(message: BaseMessage): WireMessage {
     return { role: 'tool', parts: [{ type: 'tool-result', callId: message.tool_call_id, content: content.map(toWirePart) }] };
   }
   return {
-    role: message.getType(),
+    role: messageToOpenAIRole(message),
     parts: [
       ...content.filter((part) => part !== '').map(toWirePart),
       ...(AIMessage.isInstance(message) ? message.tool_calls ?? [] : []).map((call) => (
