@@ -23,7 +23,7 @@ import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session
 import { CLASSIFICATION_KEPT_ANGLES, sectionField, type ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
-import { isRecord } from '../model/modelPort';
+import { isRecord } from '../../utils/isRecord';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnEdge, ColumnFlowEntry, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, NavigationInitParams, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmResult, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import type { ProposedScope } from '../support/tokenBudget';

@@ -14,7 +14,6 @@ import {
   cancelledToolTurnResult,
   errorToolTurnResult,
   isPortCancellation,
-  isRecord,
   messageContentToText,
   messageProviderParts,
 } from './modelPort';
@@ -28,6 +27,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { coerceStringifiedArguments, parseJson } from '../support/inputNormalization';
 import { toolCallNotationFault } from '../support/toolCallNotation';
+import { isRecord } from '../../utils/isRecord';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
