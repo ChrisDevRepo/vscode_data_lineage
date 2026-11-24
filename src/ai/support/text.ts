@@ -13,8 +13,6 @@ const PROVIDER_ERROR_CAUSE_DEPTH = 3;
 
 /** Sanitized allowlisted fields retained from one provider exception or nested cause. */
 export interface ProviderErrorCauseDiagnostic {
-  /** A provider reply part arrived before failure, even if the phase buffered it. */
-  readonly replyReceived?: true;
   /** Sanitized exception name, reduced to diagnostic-safe characters. */
   readonly name: string;
   /** Redacted, length-capped error message. */
@@ -121,10 +119,9 @@ export function sanitizeProviderErrorDiagnostic(error: unknown, phase: string): 
     const rawCode = stringCode
       ?? chromiumNetworkCode(rawMessage)
       ?? (typeof record?.code === 'number' ? record.code : undefined);
-    const diagnostic: { name: string; message: string; replyReceived?: true; code?: string; cause?: ProviderErrorCauseDiagnostic } = {
+    const diagnostic: { name: string; message: string; code?: string; cause?: ProviderErrorCauseDiagnostic } = {
       name: safeDiagnosticToken(rawName, 'Error'),
       message: sanitizeProviderError(rawMessage),
-      ...(record?.replyReceived === true ? { replyReceived: true as const } : {}),
     };
     if (typeof rawCode === 'string' || typeof rawCode === 'number') {
       diagnostic.code = safeDiagnosticToken(String(rawCode), 'unknown');
