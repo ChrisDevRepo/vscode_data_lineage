@@ -2,23 +2,15 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const ENV_FILE = resolve('.env');
-const REQUIRED_AI_KEYS = ['AI_TEST_ENDPOINT', 'AI_TEST_API_KEY', 'AI_TEST_MODEL'];
-const PROVIDER_PROFILES = {
-  azure: ['AZURE_URI', 'AZURE_API', 'AZURE_MODEL'],
-  fireworks: ['FIREWORKS_URL', 'FIREWORKS_API', 'FIREWORKS_MODEL'],
-  openrouter: ['OPENROUTER_URL', 'OPENROUTER_API', 'OPENROUTER_MODEL'],
-  'openai-compatible': [
-    'AI_TEST_OPENAI_COMPATIBLE_ENDPOINT',
-    'AI_TEST_OPENAI_COMPATIBLE_API_KEY',
-    'AI_TEST_OPENAI_COMPATIBLE_MODEL',
-  ],
-};
+const REQUIRED_AI_KEYS = [
+  'AI_TEST_ENDPOINT', 'AI_TEST_API_KEY', 'AI_TEST_MODEL', 'AI_TEST_API_TYPE', 'AI_TEST_MAX_INPUT_TOKENS', 'AI_TEST_MAX_OUTPUT_TOKENS',
+];
 
 /**
- * Loads optional test environment values and resolves a selected AI provider profile.
+ * Loads optional test environment values and, when `requireAiProvider` is set, checks the AI model entry.
  *
- * Existing non-empty process values take precedence over `.env`; provider-specific aliases fill
- * only missing canonical `AI_TEST_*` values. Secrets are never returned or logged.
+ * Existing non-empty process values take precedence over `.env`. The entry is the AI_TEST_* variables of
+ * tests/harness/cli.ts (aiTestEntry); the key comes from the environment only. Secrets are never returned or logged.
  */
 export function loadTestEnv({ env = process.env, envFile = ENV_FILE, requireAiProvider = false } = {}) {
   let source;
@@ -36,7 +28,7 @@ export function loadTestEnv({ env = process.env, envFile = ENV_FILE, requireAiPr
     }
   }
 
-  return applyProviderProfile(env, requireAiProvider);
+  return checkAiEntry(env, requireAiProvider);
 }
 
 function parseEnv(source) {
@@ -64,47 +56,20 @@ function hasValue(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function applyProviderProfile(env, required) {
-  const provider = env.AI_TEST_PROVIDER?.trim().toLowerCase();
-  if (!provider) {
-    if (required) throw new Error('Set AI_TEST_PROVIDER before running npm run test:ai:headless.');
-    return undefined;
-  }
-
-  const aliases = PROVIDER_PROFILES[provider];
-  if (!aliases) {
-    if (!required) return undefined;
-    throw new Error(
-      `Unsupported AI_TEST_PROVIDER "${provider}". Use ${Object.keys(PROVIDER_PROFILES).join(', ')}.`,
-    );
-  }
-
-  env.AI_TEST_PROVIDER = provider;
-  for (const [index, key] of REQUIRED_AI_KEYS.entries()) {
-    if (!hasValue(env[key]) && hasValue(env[aliases[index]])) env[key] = env[aliases[index]].trim();
-  }
-
-  if (!required) {
-    return hasValue(env.AI_TEST_MODEL) ? { provider, model: env.AI_TEST_MODEL.trim() } : undefined;
-  }
+function checkAiEntry(env, required) {
+  if (!required) return hasValue(env.AI_TEST_MODEL) ? { model: env.AI_TEST_MODEL.trim() } : undefined;
 
   const missing = REQUIRED_AI_KEYS.filter((key) => !hasValue(env[key]));
-  if (missing.length > 0) {
-    throw new Error(`Provider profile "${provider}" is missing ${missing.join(', ')}.`);
-  }
+  if (missing.length > 0) throw new Error(`The AI test entry is missing ${missing.join(', ')}.`);
 
   let endpoint;
   try {
     endpoint = new URL(env.AI_TEST_ENDPOINT);
   } catch {
-    throw new Error(`AI_TEST_ENDPOINT for provider "${provider}" must be an absolute HTTP(S) URL.`);
+    throw new Error('AI_TEST_ENDPOINT must be an absolute HTTP(S) URL.');
   }
-  if (!['http:', 'https:'].includes(endpoint.protocol)) {
-    throw new Error(`AI_TEST_ENDPOINT for provider "${provider}" must use HTTP or HTTPS.`);
-  }
+  if (!['http:', 'https:'].includes(endpoint.protocol)) throw new Error('AI_TEST_ENDPOINT must use HTTP or HTTPS.');
 
-  env.AI_TEST_ENDPOINT = env.AI_TEST_ENDPOINT.trim();
-  env.AI_TEST_API_KEY = env.AI_TEST_API_KEY.trim();
-  env.AI_TEST_MODEL = env.AI_TEST_MODEL.trim();
-  return { provider, model: env.AI_TEST_MODEL };
+  for (const key of REQUIRED_AI_KEYS) env[key] = env[key].trim();
+  return { model: env.AI_TEST_MODEL };
 }

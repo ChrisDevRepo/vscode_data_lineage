@@ -191,7 +191,6 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       traceWriter = new AiTraceWriter();
       const tracePath = await traceWriter.enable(runDir, { origin: 'headless-harness', verbose: options.verbose });
       const { session, budget } = await createHarnessSession({ dacpacPath: options.dacpac, contextWindow: Infinity });
-      result.provider = process.env.AI_TEST_PROVIDER?.trim() || undefined;
       result.model = entry!.model;
       result.apiType = entry!.apiType;
       const turns: Array<{ outcome: string; modelCalls: number }> = [];
