@@ -12,7 +12,14 @@ import type { NavigationEngine } from '../../src/ai/sm/smBase';
 import { buildAiToolRegistry } from '../../src/ai/tools/toolProvider';
 import { DEFAULT_CONFIG } from '../../src/engine/types';
 import { Logger } from '../../src/utils/log';
-import { answerExpectation, gateRound, type GateExpectationReceipt, type GateRoundPolicy } from './gatePolicy';
+import {
+  answerExpectation,
+  approvalWorkload,
+  gateRound,
+  type ApprovalWorkload,
+  type GateExpectationReceipt,
+  type GateRoundPolicy,
+} from './gatePolicy';
 import type { HeadlessLogChannel } from './headlessLogger';
 
 /**
@@ -92,6 +99,11 @@ interface HarnessGateDecision extends Pick<GateExpectationReceipt, 'expectation'
   readonly decision: GateRoundPolicy['kind'];
   /** The refine instruction sent, present only when `decision` is `'refine'`. */
   readonly instruction?: string;
+  /**
+   * The workload of the card the round answered, as shown before the decision: the revised card
+   * when `mismatch` is set, otherwise the card a `refine` or `deny` round turned down.
+   */
+  readonly approval: { readonly actual: ApprovalWorkload };
 }
 
 /** Terminal outcome plus everything observable about the turn that produced it. */
@@ -205,6 +217,8 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
       return;
     }
     let gateId = event.gateId;
+    // Read before the first await: the round's decision may replace the pending card.
+    const shown = options.session.pendingExploration;
     const answered = await answerExpectation(round, () => options.session, async (instruction) => {
       const revised = new Promise<GateEvent | null>((resolve) => { revisedCard = resolve; });
       options.logger.info(`[harness] gate ${event.gate} expectation missed — sending the onMismatch Change: ${instruction}`);
@@ -213,6 +227,8 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
       revisedCard = null;
       if (card) gateId = card.gateId;
     });
+    const card = (answered.mismatch && options.session.pendingExploration) || shown;
+    if (!card) throw new Error(`gate ${event.gate} raised with no pending proposal`);
     const decision = answered.decision ?? round.kind;
     const instruction = answered.answer ?? (round.kind === 'refine' ? round.instruction : undefined);
     gates.push({
@@ -223,6 +239,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
       ...(instruction !== undefined ? { instruction } : {}),
       ...(answered.expectation ? { expectation: answered.expectation } : {}),
       ...(answered.mismatch ? { mismatch: answered.mismatch } : {}),
+      approval: { actual: approvalWorkload(card) },
     });
     options.logger.info(
       `[harness] gate ${event.gate} round ${policyIndex + 1} → ${decision}${instruction !== undefined ? `: ${instruction}` : ''}`
