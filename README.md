@@ -56,7 +56,7 @@ model.
 ```
 
 Use it to ask dependency questions, preview graph scopes, save useful previews as
-bookmarks, ask about what is on screen (*"explain this trace"*, or `#lineageView`),
+bookmarks, ask about what is on screen (*"explain this trace"*),
 recall what an earlier analysis found from its saved AI bookmark, and — where the
 metadata allows — follow column mappings or explain SQL logic.
 

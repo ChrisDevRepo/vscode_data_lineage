@@ -34,12 +34,4 @@ export default defineConfig([
     // as a real user reaches it — settings on disk before activation, not flipped at runtime.
     launchArgs: ['--disable-extensions', `--user-data-dir=${killSwitchUserData}`],
   },
-  {
-    ...shared,
-    label: 'tools',
-    files: 'out/test/tests/integration/tools-invoke.test.js',
-    // No provider fixture: a model in the host would make this result unattributable to
-    // `vscode.lm.invokeTool`.
-    launchArgs: ['--disable-extensions'],
-  },
 ]);

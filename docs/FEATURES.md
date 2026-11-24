@@ -203,7 +203,7 @@ How to use it:
 - Deep analysis (`/trace`, the **Start deeper hop-by-hop analysis** follow-up, or a question over the discovery budget) shows a plan first. A hop is one procedure, view or function read in one step. The plan lists depth, scope (estimated hops and nodes), schemas, objects in scope, exclusions, the tracing type (object or column trace) and the analysis type (business, technical or both, which sets the sections of the written result). Choose **Approve & Proceed**, **Change scope** or **Cancel**, or reply in words. After approval, chat shows a hop counter and a short finding per hop.
 - The plan shows upstream and downstream depth separately; `0` turns a direction off. A level count you give is the limit; if you give none, the assistant picks a starting depth. The trace-level settings do not affect AI depth.
 - A deep analysis must fit `dataLineageViz.ai.maxRounds` and, for column traces, `dataLineageViz.ai.maxTraceColumns`. Otherwise chat names the setting so you can narrow the scope or raise the limit. Discovery answers are limited by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; larger requests are offered as a deep analysis. See the [settings reference](#settings-reference).
-- The assistant sees the trace, analysis or bookmark on screen. Type `#lineageView` in the chat input to attach it explicitly, then ask *"explain this"*.
+- The assistant sees the trace, analysis or bookmark on screen. Ask *"explain this"*.
 - **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml), which controls the summary, badges and notes. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 Requirements: a VS Code Language Model Chat provider, such as

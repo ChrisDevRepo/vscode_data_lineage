@@ -3,6 +3,7 @@
 ## [1.2.7] - Unreleased
 
 ### Changed
+- Copilot tools moved to the MCP server: enable `dataLineageViz.mcp.enabled`.
 - Column traces show join and filter columns as indirect sources.
 - AI follow-ups that name a border table bring in its next-level objects.
 - AI chat: an error that ends a request is one line naming its source (model provider, network or Data Lineage) with the provider's own message.

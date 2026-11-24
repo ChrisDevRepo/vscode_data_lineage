@@ -49,22 +49,10 @@ suite('Real provider smoke', () => {
     const readyBy = Math.min(testDeadline - 130_000, Date.now() + 45_000);
     let demoLoaded = false;
     while (Date.now() < readyBy && !demoLoaded) {
-      const probe = await vscode.lm.invokeTool('lineage_search_objects', {
-        input: { query: 'Sales' },
-        toolInvocationToken: undefined,
-      });
-      const resultText = probe.content
-        .map((part) => (part as { value?: unknown }).value ?? '')
-        .join('');
-      try {
-        const result = JSON.parse(resultText) as { results?: unknown[] };
-        demoLoaded = Array.isArray(result.results) && result.results.length > 0;
-      } catch {
-        demoLoaded = false;
-      }
+      demoLoaded = (exports.getSession().model?.nodes.length ?? 0) > 0;
       if (!demoLoaded) await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    assert.ok(demoLoaded, 'the public demo DACPAC must be searchable before the provider turn starts');
+    assert.ok(demoLoaded, 'the public demo DACPAC must be loaded before the provider turn starts');
 
     const { stream, markdown } = recordingStream();
     const cancellation = new vscode.CancellationTokenSource();

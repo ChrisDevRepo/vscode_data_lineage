@@ -10,7 +10,10 @@ import {
   OAuthError,
   OAuthErrorCode,
   McpServer,
+  type JsonSchemaValidatorResult,
+  type jsonSchemaValidator,
   createMcpHandler,
+  fromJsonSchema,
   hostHeaderValidationResponse,
   localhostAllowedHostnames,
   localhostAllowedOrigins,
@@ -20,6 +23,13 @@ import {
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { Logger } from '../../utils/log';
 import { notifyWarning } from '../../utils/notifications';
+import { readToolError } from '../support/toolErrorEnvelope';
+import { toModelJsonSchema } from '../tools/jsonSchema';
+import { filterRegistry } from '../tools/registry';
+import { TOOL_DEFS } from '../tools/toolDefs';
+import { MCP_TOOL_NAMES, buildAiToolRegistry } from '../tools/toolProvider';
+import type { StoredRunReader } from '../session/runStore';
+import type { AiSession } from '../session/session';
 
 export const DEFAULT_MCP_ENABLED = false;
 export const DEFAULT_MCP_PORT = 47633;
@@ -45,14 +55,57 @@ async function loadToken(secrets: SecretsLike, rotate: boolean): Promise<string>
   return token;
 }
 
-/** One stateless MCP server per request; the lineage tools are registered on it. */
-function createLineageMcpServer(version: string): McpServer {
-  return new McpServer({ name: SERVER_SLUG, title: SERVER_LABEL, version });
+/** What the lineage tools read: the live session, log channel, graph panel and run store. */
+export interface McpToolSource {
+  getSession: () => AiSession;
+  outputChannel: vscode.LogOutputChannel;
+  getPanel: () => vscode.WebviewPanel | undefined;
+  host?: { getStoredRun?: StoredRunReader };
+}
+
+/** Every served tool reads the loaded project: it changes nothing and touches nothing outside. */
+const READ_ONLY_ANNOTATIONS = {
+  readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+} as const;
+
+/**
+ * The SDK's validator seam, accepting every argument object as is. No SDK parse: the tool's own
+ * Zod check is the only one, so raw `arguments` reach it unchanged and its rejection is the answer.
+ */
+const acceptAll: jsonSchemaValidator = {
+  getValidator<T>() {
+    return (input: unknown): JsonSchemaValidatorResult<T> => ({ valid: true, data: input as T, errorMessage: undefined });
+  },
+};
+
+/**
+ * One stateless MCP server per request; the read-only lineage tools are registered on it. Each call
+ * builds its own registry bound to the request's abort signal, so a cancel or a closed connection
+ * stops that call's handler.
+ */
+function createLineageMcpServer(version: string, tools: McpToolSource): McpServer {
+  const server = new McpServer({ name: SERVER_SLUG, title: SERVER_LABEL, version });
+  for (const def of TOOL_DEFS.filter(candidate => MCP_TOOL_NAMES.has(candidate.name))) {
+    server.registerTool(def.name, {
+      title: 'title' in def ? def.title : undefined,
+      description: def.modelDescription,
+      inputSchema: fromJsonSchema(toModelJsonSchema(def.inputSchema), acceptAll),
+      annotations: READ_ONLY_ANNOTATIONS,
+    }, async (args, ctx) => {
+      const registry = filterRegistry(
+        buildAiToolRegistry(tools.getSession, tools.outputChannel, tools.getPanel, undefined, { ...tools.host, signal: ctx.mcpReq.signal }),
+        MCP_TOOL_NAMES,
+      );
+      const text = await registry.invoke(def.name, args);
+      return { content: [{ type: 'text', text }], isError: readToolError(JSON.parse(text)) !== null };
+    });
+  }
+  return server;
 }
 
 /** Starts the listener; rejects with the Node error (`EADDRINUSE` when the port is taken). */
-function listen(port: number, getToken: () => string, version: string): Promise<Server> {
-  const mcp = createMcpHandler(() => createLineageMcpServer(version));
+function listen(port: number, getToken: () => string, version: string, tools: McpToolSource): Promise<Server> {
+  const mcp = createMcpHandler(() => createLineageMcpServer(version, tools));
   const gate = requireBearerAuth({
     verifier: {
       async verifyAccessToken(presented) {
@@ -96,6 +149,7 @@ export class McpService {
       version: string;
       onPortInUse: (port: number) => void;
       onChange: () => void;
+      tools: McpToolSource;
     },
   ) {}
 
@@ -134,7 +188,7 @@ export class McpService {
   private async start(port: number): Promise<void> {
     this.token = await loadToken(this.deps.secrets, false);
     try {
-      this.server = await listen(port, () => this.token, this.deps.version);
+      this.server = await listen(port, () => this.token, this.deps.version, this.deps.tools);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
         this.deps.logger.warn(`MCP server not started — port ${port} is in use`);
@@ -178,8 +232,8 @@ function clientConfig(endpoint: { url: string; token: string }): string {
  * Wires the service to the editor: the `mcp.*` settings, the VS Code server definition provider and
  * the two commands. Call only when AI is enabled.
  */
-export function registerMcp(context: vscode.ExtensionContext, outputChannel: vscode.LogOutputChannel): void {
-  const logger = Logger.create(outputChannel, 'AI');
+export function registerMcp(context: vscode.ExtensionContext, tools: McpToolSource): void {
+  const logger = Logger.create(tools.outputChannel, 'AI');
   const changed = new vscode.EventEmitter<void>();
   const service = new McpService({
     secrets: context.secrets,
@@ -192,6 +246,7 @@ export function registerMcp(context: vscode.ExtensionContext, outputChannel: vsc
       + 'Close that window or change dataLineageViz.mcp.port.',
     ),
     onChange: () => changed.fire(),
+    tools,
   });
   const refresh = (): Promise<void> => {
     const cfg = vscode.workspace.getConfiguration('dataLineageViz.mcp');

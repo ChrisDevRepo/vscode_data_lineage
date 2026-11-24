@@ -38,6 +38,5 @@
   // Exports tagged @internal are test seams, not product API.
   "tags": ["-internal"],
   // VS Code supplies this module; @types/vscode provides the build-time API.
-  // @vscode/test-cli resolves @vscode/test-electron at runtime without declaring it.
-  "ignoreDependencies": ["@types/vscode", "@vscode/test-electron"],
+  "ignoreDependencies": ["@types/vscode"],
 }

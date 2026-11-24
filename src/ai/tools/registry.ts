@@ -1,10 +1,9 @@
 /**
  * Shared provider-neutral tool registry and dispatch seam. `IToolRegistry` is the single dispatch
  * surface and authoritative list of the AI tool catalog: the host builds one, binds each entry's
- * `execute` to its handler and registers its tools with VS Code, so no parallel array can drift. VS
- * Code-free and Map-backed, so it is unit-testable and usable from a model transport or a LangGraph
- * node; generic over the result `O` so the host can use `vscode.LanguageModelToolResult` without a
- * VS Code import here.
+ * `execute` to its handler and serves its tools to the agent loop and the MCP server, so no
+ * parallel array can drift. VS Code-free and Map-backed, so it is unit-testable and usable from a
+ * model transport or a LangGraph node; generic over the result `O`.
  */
 import type { z } from 'zod';
 
@@ -14,14 +13,14 @@ import type { z } from 'zod';
  * The executable `RegisteredTool` pairs this shape with a handler at registration.
  */
 export interface ToolDefinition {
-  /** `snake_case` `verb_noun`, `lineage_`-prefixed, ≤64 chars — matches `package.json`. */
+  /** `snake_case` `verb_noun`, `lineage_`-prefixed, ≤64 chars. */
   readonly name: string;
   /** The single Zod source for this tool's model-facing JSON Schema AND runtime validation. */
   readonly inputSchema: z.ZodType;
-  /** Manifest tags (e.g. `lineage-presentation`) — carried for parity assertions. */
+  /** Grouping labels; the model description's fallback when it is empty. */
   readonly tags?: readonly string[];
-  /** Concise description intended for user-facing host surfaces. */
-  readonly userDescription?: string;
+  /** Human-readable name an MCP client shows. */
+  readonly title?: string;
   /** Detailed model-facing selection guidance. */
   readonly modelDescription?: string;
   /**
