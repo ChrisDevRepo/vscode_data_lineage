@@ -5,8 +5,7 @@
  */
 
 import Graph from 'graphology';
-import { bfsFromNode } from 'graphology-traversal';
-import { findShortestPathOrdered } from './graphGuards';
+export { computeShortestPath, traceNodeIdsWithLevels, traceNodeWithLevels } from './shared/lineageTrace';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, LineageNode, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData } from './types';
@@ -68,21 +67,6 @@ const LABEL_BG_PAD: [number, number] = [4, 4];
 const GRID_DEFAULT_COLS = 4;
 /** Padding between nodes in grid layout (px). */
 const GRID_CELL_PADDING = 40;
-
-/**
- * Collects every edge whose endpoints both sit inside the traced node set. Direction governs which
- * nodes a trace admits, not which edges are drawn between admitted nodes: an upstream-only trace
- * holding both `A` and `S` still draws `A → S`.
- */
-function collectTraceEdges(graph: Graph, nodeIds: Set<string>): Set<string> {
-  const edgeIds = new Set<string>();
-
-  graph.forEachEdge((edge, _attrs, source, target) => {
-    if (nodeIds.has(source) && nodeIds.has(target)) edgeIds.add(edge);
-  });
-
-  return edgeIds;
-}
 
 interface GraphResult {
   flowNodes: FlowNode[];
@@ -191,78 +175,6 @@ export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAU
 export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
   const graph = buildGraphologyGraph(model);
   return toFlowResult(model, graph, new Map(), config);
-}
-
-/**
- * Traces a node's lineage with separate upstream and downstream depth caps. BFS runs per direction;
- * a depth of `0` suppresses that direction entirely.
- *
- * @returns The reachable node ids and the edges connecting them.
- */
-export function traceNodeWithLevels(
-  graph: Graph,
-  nodeId: string,
-  upstreamLevels: number,
-  downstreamLevels: number
-): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  const nodeIds = traceNodeIdsWithLevels(graph, nodeId, upstreamLevels, downstreamLevels);
-  return { nodeIds, edgeIds: collectTraceEdges(graph, nodeIds) };
-}
-
-/**
- * The node half of {@link traceNodeWithLevels}: reachable node ids alone, without the O(E) edge
- * collection, for callers that only count or probe a scope.
- */
-export function traceNodeIdsWithLevels(
-  graph: Graph,
-  nodeId: string,
-  upstreamLevels: number,
-  downstreamLevels: number
-): Set<string> {
-  if (!graph.hasNode(nodeId)) return new Set<string>();
-
-  const nodeIds = new Set<string>([nodeId]);
-
-  if (upstreamLevels > 0) {
-    bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      if (depth > upstreamLevels) return true;
-      nodeIds.add(node);
-    }, { mode: 'inbound' });
-  }
-
-  if (downstreamLevels > 0) {
-    bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      if (depth > downstreamLevels) return true;
-      nodeIds.add(node);
-    }, { mode: 'outbound' });
-  }
-
-  return nodeIds;
-}
-
-/**
- * Calculates the shortest directed path between two nodes as node/edge id sets, via the shared
- * {@link findShortestPathOrdered} (bidirectional retry) so "Find Path" has one source of truth.
- *
- * @returns The node and edge ids on the path, or `null` if either endpoint is unknown or no path
- *   exists in either direction.
- */
-export function computeShortestPath(
-  graph: Graph,
-  sourceId: string,
-  targetId: string
-): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
-  const result = findShortestPathOrdered(graph, sourceId, targetId);
-  if (!result) return null;
-
-  const { path } = result;
-  const nodeIds = new Set(path);
-  const edgeIds = new Set<string>();
-  for (let i = 0; i < path.length - 1; i++) {
-    const edge = graph.edge(path[i], path[i + 1]);
-    if (edge) edgeIds.add(edge);
-  }
-  return { nodeIds, edgeIds };
 }
 
 function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<string, { x: number; y: number }> {

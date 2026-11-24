@@ -20,7 +20,9 @@ import { schemaKey } from '../../utils/sql';
 import { sanitizeForLog } from '../../utils/log';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
-import { countVisibleNodes, userFilterAdmits } from '../../engine/shared/modelFilters';
+import { countVisibleNodes, userFilterAdmits, visibleModel } from '../../engine/shared/modelFilters';
+import { computeShortestPath, resolveBfsGraph, traceNodeWithLevels } from '../../engine/shared/lineageTrace';
+import { TRACE_ALL_LEVELS } from '../../engine/shared/bridgeContract';
 import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
 import { executeIsolatedRegexSearch, RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
@@ -30,7 +32,7 @@ import {
   presentNode, presentColumn, presentColumnCompact, presentFkCompact,
   presentSchema, presentNeighbor, presentFilter, presentForeignKeys,
 } from '../support/aiPresenter';
-import { type GetScopeBundleInput } from './toolSchemas';
+import { type GetPathInput, type GetScopeBundleInput, type GetTraceInput } from './toolSchemas';
 
 
 import {
@@ -41,7 +43,7 @@ import {
   type TurnTokenBudget,
 } from '../support/tokenBudget';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
-import { getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
+import { buildBareGraph, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { getModelNodeMap } from './handlers/toolServices';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { cursorOffset, nextCursor } from '../support/text';
@@ -643,6 +645,97 @@ export function getScopeBundle(
   };
 }
 
+
+/** `[source, target, type]` of each graph edge, typed as the other tools type them. */
+function edgeRows(model: DatabaseModel, graph: Graph, edgeIds: Iterable<string>): Array<[string, string, string]> {
+  const types = getModelEdgeTypeMap(model);
+  return [...edgeIds].map(edge => {
+    const [source, target] = [graph.source(edge), graph.target(edge)];
+    return [source, target, types.get(`${source}→${target}`)!];
+  });
+}
+
+/** The model a trace or path walks: every edge, or without the write, delete and exec edges. */
+function walkedModel(model: DatabaseModel, includeDml: boolean): DatabaseModel {
+  if (includeDml) return model;
+  const types = getModelEdgeTypeMap(model);
+  return { ...model, edges: model.edges.filter(e => types.get(`${e.source}→${e.target}`) === 'read') };
+}
+
+/** One object row of the graph tools, marked in or out of the user filter. */
+function graphNodeRows(model: DatabaseModel, activeFilter: SerializedFilterState | null, ids: Iterable<string>, levels?: (id: string) => object) {
+  const nodeMap = getModelNodeMap(model);
+  const admits = activeFilter ? userFilterAdmits(model, activeFilter) : null;
+  return [...ids].map(id => {
+    const node = nodeMap.get(id)!;
+    return { ...presentNode(node, model.neighborIndex), ...levels?.(id), in_user_filter: admits ? admits(node) : true };
+  });
+}
+
+/** Canonical ids of `raw`, or the `not_found` rejection naming the ids the model does not hold. */
+function resolveGraphIds(model: DatabaseModel, raw: readonly string[]): string[] | ToolRejection {
+  const nodeMap = getModelNodeMap(model);
+  const resolved = raw.map(id => resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive));
+  const unknown = raw.filter((_, index) => !resolved[index]);
+  if (unknown.length > 0) return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { ids: unknown } });
+  return resolved as string[];
+}
+
+/**
+ * The graph view's trace by level (`traceNodeWithLevels`) on its inputs: the user-filtered graph,
+ * or the full model when the origin is filtered out (`resolveBfsGraph`). Each node carries the
+ * level it was reached at upstream (`up`) and downstream (`down`); the origin is 0 on each side
+ * walked.
+ */
+export function getTrace(model: DatabaseModel, activeFilter: SerializedFilterState | null, input: GetTraceInput): object {
+  const ids = resolveGraphIds(model, [input.origin]);
+  if (!Array.isArray(ids)) return ids;
+  const [origin] = ids;
+  const levels = (value: number | 'all') => (value === 'all' ? TRACE_ALL_LEVELS : value);
+  const filtered = buildBareGraph(walkedModel(visibleModel(model, activeFilter), input.include_dml));
+  const { bfsGraph } = resolveBfsGraph(origin, false, filtered, buildBareGraph(walkedModel(model, input.include_dml)));
+  const reached = { upstream: new Map<string, number>(), downstream: new Map<string, number>() };
+  const { nodeIds, edgeIds } = traceNodeWithLevels(bfsGraph!, origin, levels(input.upstream_levels), levels(input.downstream_levels), (id, side, level) => reached[side].set(id, level));
+  return {
+    origin,
+    nodes: graphNodeRows(model, activeFilter, nodeIds, id => ({ up: reached.upstream.get(id), down: reached.downstream.get(id) })),
+    edges: edgeRows(model, bfsGraph!, edgeIds),
+  };
+}
+
+/**
+ * The graph view's Find Path (`computeShortestPath`) on the full model, as the view runs it: nodes
+ * in path order, `found: false` with no nodes when neither direction connects them.
+ */
+export function getPath(model: DatabaseModel, activeFilter: SerializedFilterState | null, input: GetPathInput): object {
+  const ids = resolveGraphIds(model, [input.start, input.end]);
+  if (!Array.isArray(ids)) return ids;
+  const [start, end] = ids;
+  const graph = buildBareGraph(walkedModel(model, input.include_dml));
+  const path = computeShortestPath(graph, start, end);
+  return {
+    start,
+    end,
+    found: path !== null,
+    nodes: graphNodeRows(model, activeFilter, path?.nodeIds ?? []),
+    edges: edgeRows(model, graph, path?.edgeIds ?? []),
+  };
+}
+
+/** The objects a graph preview shows and every model edge between them. */
+export function getGraphPreviewScope(model: DatabaseModel, activeFilter: SerializedFilterState | null, raw: readonly string[]) {
+  const ids = resolveGraphIds(model, raw);
+  if (!Array.isArray(ids)) return ids;
+  const inScope = new Set(ids);
+  const types = getModelEdgeTypeMap(model);
+  return {
+    nodeIds: [...inScope],
+    nodes: graphNodeRows(model, activeFilter, inScope),
+    edges: model.edges
+      .filter(e => inScope.has(e.source) && inScope.has(e.target))
+      .map(e => [e.source, e.target, types.get(`${e.source}→${e.target}`)!]),
+  };
+}
 
 /**
  * Structural metadata (columns with type/nullability, foreign keys) for neighbor nodes: the SM

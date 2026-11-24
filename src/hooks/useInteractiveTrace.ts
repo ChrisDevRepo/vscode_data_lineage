@@ -6,6 +6,7 @@ import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGrapho
 import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode, traceRemovalSides, unionConnectingPaths } from '../engine/traceScope';
 import { notifyUser } from '../utils/notify';
 import { directNeighborIds } from '../engine/graphGuards';
+import { resolveBfsGraph } from '../engine/shared/lineageTrace';
 import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
 /** State and control actions returned by `useInteractiveTrace`. */
@@ -96,19 +97,6 @@ function isDirectNeighborOfScope(
   if (visibleNodeIds.has(candidateNodeId)) return false;
   return directNeighborIds(model, candidateNodeId, 'in').some(id => visibleNodeIds.has(id))
     || directNeighborIds(model, candidateNodeId, 'out').some(id => visibleNodeIds.has(id));
-}
-
-/** Pick BFS graph — auto-promotes to fullGraph when node is filtered out. */
-function resolveBfsGraph(
-  nodeId: string,
-  preferFull: boolean,
-  graph: Graph | null,
-  fullGraph: Graph | null,
-): { bfsGraph: Graph | null; autoPromoted: boolean } {
-  const preferred = preferFull ? (fullGraph ?? graph) : graph;
-  if (preferred?.hasNode(nodeId)) return { bfsGraph: preferred, autoPromoted: false };
-  if (!preferFull && fullGraph?.hasNode(nodeId)) return { bfsGraph: fullGraph, autoPromoted: true };
-  return { bfsGraph: preferred, autoPromoted: false };
 }
 
 /**

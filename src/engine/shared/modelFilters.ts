@@ -112,12 +112,12 @@ export function userFilterAdmits(model: DatabaseModel, activeFilter: SerializedF
 }
 
 /**
- * Objects shown over the same schema scope and attributes as {@link userFilterAdmits}
- * ({@link filterBySchemas}), with Hide Isolated applied before the allowlist; every object when
- * no filter is active.
+ * The objects and edges the graph view shows: the same schema scope and attributes as
+ * {@link userFilterAdmits} ({@link filterBySchemas}), with Hide Isolated applied before the
+ * allowlist; the whole model when no filter is active.
  */
-export function countVisibleNodes(model: DatabaseModel, activeFilter?: SerializedFilterState | null): number {
-  if (!activeFilter) return model.nodes.length;
+export function visibleModel(model: DatabaseModel, activeFilter?: SerializedFilterState | null): DatabaseModel {
+  if (!activeFilter) return model;
   const bySchema = activeFilter.schemas?.length ? filterBySchemas(model, new Set(activeFilter.schemas)) : model;
   const scoped = bySchema.nodes.filter(attributeAdmits(activeFilter));
   const scopedIds = new Set(scoped.map(n => n.id));
@@ -127,5 +127,10 @@ export function countVisibleNodes(model: DatabaseModel, activeFilter?: Serialize
     edges: bySchema.edges.filter(e => scopedIds.has(e.source) && scopedIds.has(e.target)),
   };
   const allowlist = activeFilter.allowlistNodeIds && new Set(activeFilter.allowlistNodeIds);
-  return applyAllowlistFilter(applyIsolationFilter(scopedModel, activeFilter.hideIsolated ?? false), allowlist).nodes.length;
+  return applyAllowlistFilter(applyIsolationFilter(scopedModel, activeFilter.hideIsolated ?? false), allowlist);
+}
+
+/** Number of objects {@link visibleModel} shows. */
+export function countVisibleNodes(model: DatabaseModel, activeFilter?: SerializedFilterState | null): number {
+  return visibleModel(model, activeFilter).nodes.length;
 }

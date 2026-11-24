@@ -1,8 +1,8 @@
 /**
  * The local MCP server accepts a client only with the bearer token and a local Host and Origin,
  * exists only while the setting is on, never writes the token to a log or an error body, and serves
- * the six discovery tools: each answer is the registry's own text, each refusal its envelope as
- * `isError`.
+ * the six discovery tools (each answer the registry's own text, each refusal its envelope as
+ * `isError`) and the MCP-only graph tools.
  */
 import { request } from 'node:http';
 import { createServer } from 'node:net';
@@ -166,6 +166,7 @@ const fixture = () => createHarnessSession({ dacpacPath: repoPath('tests/fixture
 
 /** The 6 discovery tools: the read-only catalog minus `lineage_get_neighbor_columns`. */
 const TOOL_NAMES = ['get_context', 'get_screen_state', 'search_objects', 'get_object_detail', 'detect_graph_patterns', 'search_ddl'].map((name) => `lineage_${name}`);
+const MCP_ONLY_NAMES = ['lineage_get_trace', 'lineage_get_path', 'lineage_create_graph_preview'];
 
 /** One call input per tool on the AdventureWorks fixture. */
 const CALLS: Record<string, Record<string, unknown>> = {
@@ -188,12 +189,12 @@ async function connected(session: AiSession) {
 }
 
 describe('lineage tools over MCP', () => {
-  it('initializes and lists exactly the six tools with the registry text, title and read-only annotations', async () => {
+  it('initializes and lists the six tools with the registry text, title and read-only annotations, then the MCP-only ones', async () => {
     const { client } = await connected((await fixture()).session);
     expect(client.getServerCapabilities()).toMatchObject({ tools: expect.anything() });
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
-    for (const tool of tools) {
+    expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES, ...MCP_ONLY_NAMES].sort());
+    for (const tool of tools.filter((listed) => TOOL_NAMES.includes(listed.name))) {
       const def = TOOL_DEFS.find((candidate) => candidate.name === tool.name)!;
       expect(tool.description, tool.name).toBe(def.modelDescription);
       expect(tool.inputSchema, tool.name).toEqual(toModelJsonSchema(def.inputSchema));
