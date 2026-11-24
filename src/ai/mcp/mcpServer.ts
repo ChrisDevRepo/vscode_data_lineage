@@ -24,7 +24,10 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { Logger } from '../../utils/log';
 import { notifyWarning } from '../../utils/notifications';
 import type { z } from 'zod';
-import { NoProjectLoadedError, buildNoProjectLoadedError, buildToolExecutionError, readToolError } from '../support/toolErrorEnvelope';
+import { REJECTION_CODES } from '../support/rejectionCodes';
+import {
+  NoProjectLoadedError, buildNoProjectLoadedError, buildToolExecutionError, makeRejection, readToolError,
+} from '../support/toolErrorEnvelope';
 import { toModelJsonSchema } from '../tools/jsonSchema';
 import { filterRegistry } from '../tools/registry';
 import { TOOL_DEFS } from '../tools/toolDefs';
@@ -71,10 +74,12 @@ const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
 } as const;
 
-/** The graph preview changes only what the graph view shows; the same call shows the same view. */
+/**
+ * The graph preview changes only what the graph view shows; the same call shows the same view.
+ */
 const VIEW_ANNOTATIONS = { ...READ_ONLY_ANNOTATIONS, readOnlyHint: false } as const;
 
-/** One MCP-only tool: `run` gets the parsed input, the loaded model's session and the tool source. */
+/** One MCP-only tool: `run` gets the parsed input, the loaded model's session and tool source. */
 interface McpOnlyTool {
   name: string;
   title: string;
@@ -96,17 +101,17 @@ const mcpOnlyTool = <S extends z.ZodType>(tool: Omit<McpOnlyTool, 'inputSchema' 
 const MCP_ONLY_TOOLS: readonly McpOnlyTool[] = [
   mcpOnlyTool({
     name: 'lineage_get_trace', title: 'Get Trace', inputSchema: GetTraceInputSchema, annotations: READ_ONLY_ANNOTATIONS,
-    description: 'The graph view\'s trace: objects upstream and downstream of one object by level, with the edges between them; each object has its level and `in_user_filter`. Use lineage_get_path for the route between two objects.',
+    description: 'The graph view\'s trace from one object, within the user filter (the whole model when the object is outside it). Each object in `nodes` carries `up`/`down`, the level it was reached at on each side (the origin is 0), and `in_user_filter`; `edges` are positional [source, target, type]. Use lineage_get_path for the route between two objects.',
     run: (input, session) => getTrace(session.model!, session.filter, input),
   }),
   mcpOnlyTool({
     name: 'lineage_get_path', title: 'Get Path', inputSchema: GetPathInputSchema, annotations: READ_ONLY_ANNOTATIONS,
-    description: 'The graph view\'s Find Path: the shortest dependency path between two objects, nodes in path order with their edges; `found: false` when none exists. Use lineage_get_trace for everything around one object.',
+    description: 'The graph view\'s Find Path on the whole model: the shortest directed path between `start` and `end`, tried in both directions. `nodes` in path order with `in_user_filter`, `edges` positional [source, target, type]; `found: false` when neither direction connects them. Use lineage_get_trace for everything around one object.',
     run: (input, session) => getPath(session.model!, session.filter, input),
   }),
   mcpOnlyTool({
     name: 'lineage_create_graph_preview', title: 'Create Graph Preview', inputSchema: CreateGraphPreviewInputSchema, annotations: VIEW_ANNOTATIONS,
-    description: 'Creates the AI graph preview in the graph view: exactly these objects and every edge between them, under the given title and summary. Returns the objects and edges shown. Find the ids with the other lineage tools first.',
+    description: 'Shows the `ids` objects and every edge between them as the AI graph preview in the graph view. Returns the objects and edges shown, `edges` positional [source, target, type]. Use lineage_search_objects for ids.',
     run: async (input, session, tools, logger) => {
       const scope = getGraphPreviewScope(session.model!, session.filter, input.ids);
       if (!('nodeIds' in scope)) return scope;
@@ -117,7 +122,10 @@ const MCP_ONLY_TOOLS: readonly McpOnlyTool[] = [
         aiMetadata: { summary: input.summary, createdAt: new Date().toISOString(), modelName: 'MCP client', highlightGroups: [], badges: [] },
       }, logger);
       if (delivery === 'no_panel') throw new NoProjectLoadedError();
-      if (delivery === 'post_failed') throw new Error('The graph view refused the preview message.');
+      if (delivery === 'post_failed') {
+        logger.warn('AI preview post failed');
+        return makeRejection({ code: REJECTION_CODES.toolExecutionError, reason: 'The graph view refused the preview.' });
+      }
       return { name: input.title, nodes: scope.nodes, edges: scope.edges };
     },
   }),

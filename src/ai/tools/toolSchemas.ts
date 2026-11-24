@@ -1074,7 +1074,7 @@ export type GetTraceInput = z.infer<typeof GetTraceInputSchema>;
 /** `lineage_get_path` input (MCP only): the graph view's Find Path. */
 export const GetPathInputSchema = z.object({
   start: z.string().describe('Canonical object ID at one end of the path.'),
-  end: z.string().describe('Canonical object ID at the other end; the path is searched in both directions.'),
+  end: z.string().describe('Canonical object ID at the other end of the path.'),
   include_dml: IncludeDmlSchema,
 }).strict();
 
@@ -1082,7 +1082,7 @@ export type GetPathInput = z.infer<typeof GetPathInputSchema>;
 
 /** `lineage_create_graph_preview` input (MCP only): the discovery card's graph preview. */
 export const CreateGraphPreviewInputSchema = z.object({
-  ids: z.array(z.string()).min(1).max(DEFAULT_DISCOVERY_NODE_CAP).describe('Canonical object IDs the preview shows; the graph draws every edge between them.'),
+  ids: z.array(z.string()).min(1).max(DEFAULT_DISCOVERY_NODE_CAP).describe('Canonical object IDs the preview shows.'),
   title: z.string().max(PRESENT_RESULT_NAME_MAX, overLength(PRESENT_RESULT_NAME_MAX)).trim().min(1).describe('Preview name shown in the graph banner.'),
   summary: z.string().trim().min(1).optional().describe('One-line summary shown with the preview.'),
 }).strict();
