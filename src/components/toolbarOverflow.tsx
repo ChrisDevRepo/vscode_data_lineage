@@ -19,7 +19,7 @@ const MORE_BUTTON_WIDTH = 36;
 
 /**
  * How many leading items stay in a bar `available` px wide. Each item is `gap` px away from the
- * one before; when not every item fits, the "…" button (`reserve` px) takes the last place.
+ * one before; when not every item fits, the "…" button (`reserve` px) takes the last place. @internal
  */
 export function fitItems(widths: readonly number[], available: number, gap: number, reserve: number): number {
   const all = widths.reduce((sum, width) => sum + gap + width, 0);
