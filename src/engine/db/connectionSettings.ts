@@ -1,15 +1,18 @@
 /**
- * Schema, tolerant read and write helpers for the built-in connections stored in
- * `dataLineageViz.database.connections`. Passwords never live there; they use the secret store.
+ * Schema and helpers for the built-in connections stored in `dataLineageViz.database.connections`.
+ * Passwords never live there; they use the secret store.
  */
 
-import * as vscode from 'vscode';
 import { z } from 'zod';
 import type { Logger } from '../../utils/log';
-import { DATABASE_CONFIG_SECTION } from './dbSession';
+import type { StoredConnectionInfo } from '../shared/bridgeContract';
 
-/** Setting key, relative to {@link DATABASE_CONFIG_SECTION}, of the built-in connection list. */
-const CONNECTIONS_SETTING = 'connections';
+/** The secret-store calls the connections use; `vscode.SecretStorage` satisfies it. */
+export interface SecretStore {
+  get(key: string): PromiseLike<string | undefined>;
+  store(key: string, value: string): PromiseLike<void>;
+  delete(key: string): PromiseLike<void>;
+}
 
 /** Secret-store key prefix; the connection id is appended. */
 const PASSWORD_SECRET_PREFIX = 'dataLineageViz.database.password.';
@@ -37,7 +40,7 @@ export function encodeSavedPassword(connection: PasswordBinding, password: strin
 
 /** Stores the SQL login password of a connection, bound to its server, port and user. */
 export async function savePassword(
-  secrets: Pick<vscode.SecretStorage, 'store'>, connection: PasswordBinding, password: string,
+  secrets: Pick<SecretStore, 'store'>, connection: PasswordBinding, password: string,
 ): Promise<void> {
   await secrets.store(passwordSecretKey(connection.id), encodeSavedPassword(connection, password));
 }
@@ -48,7 +51,7 @@ export async function savePassword(
  * value counts as no saved password, so it is never sent to a host it was not entered for.
  */
 export async function readSavedPassword(
-  secrets: Pick<vscode.SecretStorage, 'get'>, connection: PasswordBinding, logger: Pick<Logger, 'warn'>,
+  secrets: Pick<SecretStore, 'get'>, connection: PasswordBinding, logger: Pick<Logger, 'warn'>,
 ): Promise<string | undefined> {
   const raw = await secrets.get(passwordSecretKey(connection.id));
   if (raw === undefined) return undefined;
@@ -65,7 +68,7 @@ export async function readSavedPassword(
 }
 
 /** Highest valid TCP port. */
-export const MAX_TCP_PORT = 65535;
+const MAX_TCP_PORT = 65535;
 
 /** SQL Server `sysname` length: bounds logins and database names. */
 export const MAX_SYSNAME_LENGTH = 128;
@@ -96,7 +99,7 @@ function unbracket(host: string): string {
 }
 
 /** Removes a leading `tcp:` from a server address, as Azure portal connection strings carry it. */
-export function dropTcpPrefix(server: string): string {
+function dropTcpPrefix(server: string): string {
   return server.trim().replace(TCP_PREFIX, '').trim();
 }
 
@@ -148,83 +151,55 @@ export const AddConnectionArgsSchema = z.object({
   password: z.string().max(MAX_PASSWORD_LENGTH).optional(),
 });
 
-/**
- * Reads the saved built-in connections, tolerantly: an entry that fails validation is skipped with
- * a debug log (`logger`) naming its position and the failing fields, never its values.
- */
-export function readBuiltInConnections(logger?: Pick<Logger, 'debug'>): BuiltInConnection[] {
-  const raw = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<unknown>(CONNECTIONS_SETTING);
-  if (!Array.isArray(raw)) return [];
-  const connections: BuiltInConnection[] = [];
-  raw.forEach((entry, index) => {
-    const parsed = BuiltInConnectionSchema.safeParse(entry);
-    if (!parsed.success) {
-      const fields = [...new Set(parsed.error.issues.map((i) => i.path.join('.') || 'entry'))].join(', ');
-      logger?.debug(`Skipped built-in connection #${index + 1}: invalid ${fields}`);
-      return;
-    }
-    if (entry && typeof entry === 'object') {
-      const ignored = Object.keys(entry).filter((k) => !(k in parsed.data));
-      if (ignored.length > 0) logger?.debug(`Built-in connection "${parsed.data.name}": ignored properties ${ignored.join(', ')}`);
-    }
-    connections.push(parsed.data);
-  });
-  return connections;
-}
-
-/** A copy of the raw setting value, as the user's settings.json holds it. */
-function readRawConnections(): unknown[] {
-  const raw = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<unknown>(CONNECTIONS_SETTING);
-  return Array.isArray(raw) ? [...raw] : [];
-}
-
-function rawId(entry: unknown): unknown {
-  return entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined;
-}
-
-/** Tail of the connection-list rewrites; each read-modify-write starts after the last settles. */
-let rewriteTail: Promise<unknown> = Promise.resolve();
-
-/**
- * Rewrites the connection list in the user (global) settings, one rewrite at a time. The setting is
- * application-scoped, so a workspace can neither hold nor override it. `change` reads the list only
- * after every earlier rewrite has landed, so concurrent saves never drop each other's entries; a
- * failed rewrite rejects its own caller and does not block the next.
- */
-function rewriteConnections(change: (entries: unknown[]) => unknown[]): Promise<void> {
-  const run = async (): Promise<void> => {
-    await vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION)
-      .update(CONNECTIONS_SETTING, change(readRawConnections()), vscode.ConfigurationTarget.Global);
-  };
-  const result = rewriteTail.then(run, run);
-  rewriteTail = result.catch(() => undefined);
-  return result;
-}
-
-/**
- * Adds a connection, or replaces the saved one with the same id. Every other entry is written back
- * as stored, including a hand-edited one that fails validation. Serialized with
- * {@link deleteBuiltInConnection}, so concurrent calls never drop an entry.
- */
-export function upsertBuiltInConnection(connection: BuiltInConnection): Promise<void> {
-  return rewriteConnections((entries) => {
-    const at = entries.findIndex((entry) => rawId(entry) === connection.id);
-    if (at >= 0) entries[at] = connection;
-    else entries.push(connection);
-    return entries;
-  });
-}
-
-/**
- * Removes the saved connection with the given id; every other entry is written back as stored.
- * Serialized with {@link upsertBuiltInConnection}.
- */
-export function deleteBuiltInConnection(id: string): Promise<void> {
-  return rewriteConnections((entries) => entries.filter((entry) => rawId(entry) !== id));
-}
-
 /** Human-readable `server / database` label. */
 export function describeConnection(connection: Pick<BuiltInConnection, 'server' | 'database' | 'port'>): string {
   const host = connection.port ? `${connection.server},${connection.port}` : connection.server;
   return connection.database ? `${host} / ${connection.database}` : host;
+}
+
+/**
+ * Parses the wizard's server field (`host` or `host,port`, optional `tcp:` prefix dropped);
+ * `undefined` when the text is not a valid server.
+ */
+export function parseServerInput(text: string): { server: string; port?: number } | undefined {
+  const [typed, port, ...rest] = text.split(',').map((part) => part.trim());
+  const host = dropTcpPrefix(typed ?? '');
+  if (!host || rest.length > 0) return undefined;
+  if (port === undefined) return { server: host };
+  if (!/^\d+$/.test(port)) return undefined;
+  const value = Number(port);
+  return value >= 1 && value <= MAX_TCP_PORT ? { server: host, port: value } : undefined;
+}
+
+/** Built-in sign-in type a stored record names; the mssql extension's spellings read too. */
+function storedAuthKind(authenticationType: string | undefined): BuiltInConnection['authenticationType'] | undefined {
+  const value = authenticationType?.toLowerCase() ?? '';
+  if (value === 'sqllogin') return 'sqlLogin';
+  return value === 'entraid' || value.startsWith('azure') || value.startsWith('activedirectory') ? 'entraId' : undefined;
+}
+
+/** Port SQL Server listens on when none is given; a named instance has none. */
+const DEFAULT_SQL_PORT = 1433;
+
+/**
+ * Finds the saved built-in connection that reopens a stored project. A saved `connectionId` wins.
+ * Otherwise: same server (`tcp:` prefix ignored) and effective port (a `host,port` string is split
+ * first, an absent port is the default one; a named instance has a dynamic port, so an absent port
+ * matches any) and the same sign-in type and user where both sides name one. Among several matches
+ * the one saved for the project's database is preferred, then the first; the project's own database
+ * is opened either way.
+ */
+export function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnectionInfo): BuiltInConnection | undefined {
+  const byId = stored.connectionId ? connections.find((c) => c.id === stored.connectionId) : undefined;
+  if (byId) return byId;
+  const same = (a?: string, b?: string) => !a || !b || a.toLowerCase() === b.toLowerCase();
+  const kind = storedAuthKind(stored.authenticationType);
+  const host = parseServerInput(stored.server) ?? { server: stored.server };
+  const defaultPort = host.server.includes('\\') ? undefined : DEFAULT_SQL_PORT;
+  const port = stored.port ?? host.port ?? defaultPort;
+  const matches = connections.filter((c) => dropTcpPrefix(c.server).toLowerCase() === host.server.toLowerCase()
+    && (defaultPort === undefined ? !c.port || !port || c.port === port : (c.port ?? defaultPort) === port)
+    && (!kind || c.authenticationType === kind)
+    && same(c.user, stored.user));
+  return matches.find((c) => same(c.database, stored.database) && !!c.database) ?? matches[0];
 }

@@ -2,8 +2,16 @@
  * Structured logging for the extension host: the helpers enforce a consistent `[Category] message`
  * format so entries stay traceable across the extension, bridge and engine.
  */
-import type { LogOutputChannel } from 'vscode';
 import { redactSecrets } from './redact';
+
+/** The channel calls the extension makes; `vscode.LogOutputChannel` satisfies it. */
+export interface LogChannel {
+  info(message: string): void;
+  debug(message: string): void;
+  warn(message: string): void;
+  error(message: string): void;
+  show(preserveFocus?: boolean): void;
+}
 
 /** Name of the extension's output channel, as users see it in the Output view. */
 export const OUTPUT_CHANNEL_NAME = 'Data Lineage Viz';
@@ -49,7 +57,7 @@ function normalizeCategorizedLogMessage(cat: LogCategory, msg: string): string {
  *
  * @param msg - Format: `Operation — key result (timing)`
  */
-function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
+function logInfo(ch: LogChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   ch.info(`[${cat}] ${norm}`);
 }
@@ -60,7 +68,7 @@ function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
  *
  * @param msg - Format: `Detail — context, parameters, timing`
  */
-function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
+function logDebug(ch: LogChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   ch.debug(`[${cat}] ${norm}`);
 }
@@ -71,7 +79,7 @@ function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
  *
  * @param msg - Format: `What happened — what system did → recovery hint`
  */
-function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
+function logWarn(ch: LogChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   ch.warn(`[${cat}] ${norm}`);
 }
@@ -81,12 +89,12 @@ function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
  */
 export class Logger {
   constructor(
-    private readonly ch: LogOutputChannel,
+    private readonly ch: LogChannel,
     private readonly cat: LogCategory
   ) {}
 
   /** Creates a Logger; `cat` is the category prefix (e.g. `'Config'`, `'Bridge'`) of every line. */
-  static create(ch: LogOutputChannel, cat: LogCategory): Logger {
+  static create(ch: LogChannel, cat: LogCategory): Logger {
     return new Logger(ch, cat);
   }
 
@@ -188,7 +196,7 @@ function identifierOrUndefined(value: unknown): string | undefined {
  * line. A plain `{ code, number? }` object is a caller-composed detail: only `code=X number=N`
  * is logged. Any string is prose and goes to debug.
  */
-function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
+function logError(ch: LogChannel, cat: LogCategory, op: string, err: unknown): void {
   const operation = normalizeCategorizedLogMessage(cat, op);
   const code = identifierOrUndefined((err as { code?: unknown } | null | undefined)?.code);
   const detail = code !== undefined && typeof err === 'object' && !(err instanceof Error);

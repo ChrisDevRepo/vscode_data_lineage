@@ -20,13 +20,14 @@ import {
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
 import { checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import {
-  connectDatabase, connectionErrorHooks, releaseSession,
-  loadDmvQueries, createDmvQueryCache, executeDmvQueries, executeDmvQueriesFiltered,
-  executeSimpleQuery, isPhase2Query, type DmvQuery, type DbConnectEnv,
+  executeDmvQueries, executeDmvQueriesFiltered, executeSimpleQuery, isPhase2Query, type DmvQuery,
 } from '../engine/connectionManager';
+import { connectDatabase, connectionErrorHooks, loadDmvQueries, createDmvQueryCache } from '../host/dbHost';
+import { createDbEnv } from '../host/connectionCommands';
+import type { BuiltInEnv } from '../engine/db/builtInProvider';
 import type { DbSession } from '../engine/db/dbSession';
 import { usesMssqlExtension } from '../engine/db/mssqlRetiring';
-import { connectionFailure, isTransientConnectionError, reportConnectionError } from '../engine/db/connectionErrors';
+import { connectionFailure, isTransientConnectionError, reportConnectionError } from '../host/connectionErrors';
 import { redactSecrets } from '../utils/redact';
 import { type SimpleExecuteResult } from '../types/database';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
@@ -264,7 +265,7 @@ export function createMessageHandlers(
 
   let lastConnectionInfo: StoredConnectionInfo | undefined;
   const dmvQueries = createDmvQueryCache(() => loadDmvQueries(outputChannel, context.extensionUri));
-  const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: dmvQueries.get };
+  const dbEnv: BuiltInEnv = createDbEnv(context.secrets, outputChannel, dmvQueries.get);
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
 
@@ -1191,7 +1192,7 @@ async function loadDatabasePlatform(
 
 async function withDbProgressHost(
   host: BridgeHost,
-  env: DbConnectEnv,
+  env: BuiltInEnv,
   title: string,
   connectFn: (
     patch: Partial<StoredConnectionInfo> | undefined,
@@ -1233,7 +1234,7 @@ async function withDbProgressHost(
       }
     } finally {
       if (session) {
-        await releaseSession(session).catch((err: unknown) => {
+        await session.dispose().catch((err: unknown) => {
           host.log('warn', 'DB', 'Disconnect failed');
           host.log('debug', 'DB', `Disconnect failed — ${err instanceof Error ? err.message : String(err)}`);
         });
@@ -1244,7 +1245,7 @@ async function withDbProgressHost(
 
 async function handleTableStatsRequestHost(
   host: BridgeHost,
-  dbEnv: DbConnectEnv,
+  dbEnv: BuiltInEnv,
   storedConnectionInfo: StoredConnectionInfo | undefined,
   panel: vscode.WebviewPanel,
   schema: string,
@@ -1353,7 +1354,7 @@ async function handleTableStatsRequestHost(
     void postToDetail(panel, { type: 'table-stats-error', objectRef, message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
   } finally {
     if (session) {
-      await releaseSession(session).catch((err: unknown) =>
+      await session.dispose().catch((err: unknown) =>
         host.log('warn', 'Stats', `Disconnect failed: ${err instanceof Error ? err.message : String(err)}`));
     }
   }

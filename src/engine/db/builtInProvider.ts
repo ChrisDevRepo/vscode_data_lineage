@@ -3,25 +3,27 @@
  * results as the mssql extension does so the DMV consumers need no provider branch.
  */
 
-import * as vscode from 'vscode';
 import type { Connection } from 'tedious';
 import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/database';
-import { Logger } from '../../utils/log';
-import { DEFAULT_CONFIG } from '../types';
-import { readDeclaredNumericSetting } from '../../configCore';
+import { Logger, type LogChannel } from '../../utils/log';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
-import { readSavedPassword, savePassword, passwordTooLong, describeConnection, resolveServerAddress, AZURE_SQL_HOST, type BuiltInConnection } from './connectionSettings';
+import { readSavedPassword, savePassword, describeConnection, resolveServerAddress, AZURE_SQL_HOST, type BuiltInConnection, type SecretStore } from './connectionSettings';
 import { redactSecrets } from '../../utils/redact';
 import type { DbQueryOptions, DbSession } from './dbSession';
-import { acquireSqlToken } from './entraSignIn';
 import type { DmvQuery } from '../connectionManager';
 
 /** Everything the provider needs from the extension host. */
 export interface BuiltInEnv {
-  secrets: vscode.SecretStorage;
-  outputChannel: vscode.LogOutputChannel;
+  secrets: SecretStore;
+  outputChannel: LogChannel;
   /** Loads the DMV queries YAML; every statement the built-in connection sends comes from it. */
   loadQueries: () => Promise<DmvQuery[]>;
+  /** Seconds a query may run when its caller sets none, read per query. */
+  queryTimeoutSeconds: () => number;
+  /** Asks for a SQL login password once, and whether to keep it; `undefined` when cancelled. */
+  promptPassword: (connection: BuiltInConnection) => Promise<{ password: string; save: boolean } | undefined>;
+  /** Signs in with a Microsoft account and returns the access token for the connection. */
+  acquireSqlToken: (connection: BuiltInConnection, logger: Logger) => Promise<string>;
 }
 
 /** Per-open overrides of a saved connection. */
@@ -31,7 +33,7 @@ export interface BuiltInOpenOptions {
   /** Database to open instead of the saved one. */
   database?: string;
   /** Cancels a connect in progress; the socket is closed and the open resolves `undefined`. */
-  token?: vscode.CancellationToken;
+  token?: { readonly isCancellationRequested: boolean; onCancellationRequested(listener: () => unknown): { dispose(): unknown } };
   /** Told, once the sign-in is done and before the first attempt, what the wait is for. */
   onConnecting?: (label: string) => void;
 }
@@ -203,6 +205,7 @@ class BuiltInSession implements DbSession {
     private readonly label: string,
     private readonly logger: Logger,
     private readonly loadQueries: () => Promise<DmvQuery[]>,
+    private readonly queryTimeoutSeconds: () => number,
   ) {
     connection.on('error', (err: Error) => {
       this.failure = err;
@@ -222,7 +225,7 @@ class BuiltInSession implements DbSession {
   private run(sql: string, options?: DbQueryOptions): Promise<SimpleExecuteResult> {
     if (this.closed) return Promise.reject(new Error(`The connection to ${this.label} is closed.`));
     if (this.failure) return Promise.reject(new Error(`The connection to ${this.label} was lost: ${this.failure.message}`));
-    const timeoutMs = options?.timeoutMs ?? defaultRequestTimeoutMs();
+    const timeoutMs = options?.timeoutMs ?? this.queryTimeoutSeconds() * MS_PER_SECOND;
     const timeoutMessage = options?.timeoutMessage
       ?? `Query timed out after ${timeoutMs / MS_PER_SECOND}s. Increase dataLineageViz.dmvQueryTimeout if needed.`;
 
@@ -286,31 +289,6 @@ class BuiltInSession implements DbSession {
   }
 }
 
-function defaultRequestTimeoutMs(): number {
-  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
-  return readDeclaredNumericSetting(cfg, 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * MS_PER_SECOND;
-}
-
-/** Asks for a SQL login password once, and whether to keep it in the secret store. */
-async function promptForPassword(connection: BuiltInConnection): Promise<{ password: string; save: boolean } | undefined> {
-  const password = await vscode.window.showInputBox({
-    title: `Password for ${connection.user} on ${connection.server}`,
-    prompt: `No saved password for "${connection.name}".`,
-    password: true,
-    ignoreFocusOut: true,
-    validateInput: passwordTooLong,
-  });
-  if (password === undefined) return undefined;
-  const choice = await vscode.window.showQuickPick(
-    [
-      { label: 'Save password', description: 'Keep it in the VS Code secret store', save: true },
-      { label: 'Use once', description: 'Ask again next time', save: false },
-    ],
-    { placeHolder: 'Save this password?', ignoreFocusOut: true },
-  );
-  return { password, save: choice?.save === true };
-}
-
 /** Builds the `tedious` authentication block, or `undefined` when the user cancels a prompt. */
 async function resolveAuthentication(
   connection: BuiltInConnection,
@@ -320,7 +298,7 @@ async function resolveAuthentication(
 ): Promise<{ type: 'default'; options: { userName: string; password: string } }
   | { type: 'azure-active-directory-access-token'; options: { token: string } } | undefined> {
   if (connection.authenticationType === 'entraId') {
-    return { type: 'azure-active-directory-access-token', options: { token: await acquireSqlToken(connection, logger) } };
+    return { type: 'azure-active-directory-access-token', options: { token: await env.acquireSqlToken(connection, logger) } };
   }
 
   if (!connection.user) {
@@ -329,7 +307,7 @@ async function resolveAuthentication(
   let password = passwordOverride ?? await readSavedPassword(env.secrets, connection, logger);
   if (password === undefined) {
     logger.debug(`No saved password for connection ${connection.id} — prompting`);
-    const prompted = await promptForPassword(connection);
+    const prompted = await env.promptPassword(connection);
     if (!prompted) return undefined;
     password = prompted.password;
     if (prompted.save) await savePassword(env.secrets, connection, password);
@@ -340,8 +318,8 @@ async function resolveAuthentication(
 /**
  * Opens a built-in session for a saved connection. SQL login reads the password from the secret
  * store and prompts once when none is saved; Entra ID signs in with VS Code's Microsoft account in
- * the saved directory, or the one {@link acquireSqlToken} chooses. Neither credential is logged or
- * persisted in a settings file. The connection declares `ApplicationIntent=ReadOnly`, so
+ * the saved directory, or the one {@link BuiltInEnv.acquireSqlToken} chooses. Neither credential is
+ * logged or persisted in a settings file. The connection declares `ApplicationIntent=ReadOnly`, so
  * availability-group and read scale-out routing may serve it from a readable secondary. The server
  * may carry a `tcp:` prefix or a `host\instance` name; an explicit port takes precedence over the
  * instance.
@@ -407,7 +385,7 @@ export async function openBuiltInSession(
     provider: 'builtIn',
     connectionId: connection.id,
   });
-  const session = new BuiltInSession(raw, lib, connectionInfo, label, logger, env.loadQueries);
+  const session = new BuiltInSession(raw, lib, connectionInfo, label, logger, env.loadQueries, env.queryTimeoutSeconds);
 
   options.onConnecting?.(AZURE_SQL_HOST.test(address.host) ? WAKING_LABEL : `Connecting to ${address.host}…`);
   logger.info(`Connecting (${connection.authenticationType})`);

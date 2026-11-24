@@ -5,32 +5,20 @@
 
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import { Logger } from '../../utils/log';
-import { openBuiltInSession, type BuiltInEnv } from './builtInProvider';
+import { Logger, type LogChannel } from '../utils/log';
+import { readDeclaredNumericSetting } from '../configCore';
+import { openBuiltInSession, type BuiltInEnv } from '../engine/db/builtInProvider';
 import { builtInTarget, CONNECTION_ERROR_LABELS, describeConnectionError, isSignInCancelled } from './connectionErrors';
-import { defaultTenantId, listTenants, pickAccount } from './entraSignIn';
+import { deleteBuiltInConnection, readBuiltInConnections, upsertBuiltInConnection } from './connectionStore';
+import { acquireSqlToken, defaultTenantId, listTenants, pickAccount } from './entraSignIn';
 import {
-  AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
-  MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_SYSNAME_LENGTH, MAX_TCP_PORT, passwordSecretKey, passwordTooLong, readBuiltInConnections,
-  savePassword, tooLong, upsertBuiltInConnection, type BuiltInConnection,
-} from './connectionSettings';
+  AddConnectionArgsSchema, BuiltInConnectionSchema, describeConnection, parseServerInput,
+  MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_SYSNAME_LENGTH, passwordSecretKey, passwordTooLong,
+  savePassword, tooLong, type BuiltInConnection,
+} from '../engine/db/connectionSettings';
 
 const WIZARD_TITLE = 'Add Database Connection';
 const WIZARD_STEPS = 6;
-
-/**
- * Parses the wizard's server field (`host` or `host,port`, optional `tcp:` prefix dropped);
- * `undefined` when the text is not a valid server.
- */
-export function parseServerInput(text: string): { server: string; port?: number } | undefined {
-  const [typed, port, ...rest] = text.split(',').map((part) => part.trim());
-  const host = dropTcpPrefix(typed ?? '');
-  if (!host || rest.length > 0) return undefined;
-  if (port === undefined) return { server: host };
-  if (!/^\d+$/.test(port)) return undefined;
-  const value = Number(port);
-  return value >= 1 && value <= MAX_TCP_PORT ? { server: host, port: value } : undefined;
-}
 
 const BACK = Symbol('back');
 type Answer<T> = T | typeof BACK | undefined;
@@ -141,7 +129,7 @@ function hostChanged(previous: BuiltInConnection | undefined, next: Pick<BuiltIn
  * it is never sent to a different host or account.
  */
 async function reconcilePassword(
-  secrets: vscode.SecretStorage,
+  secrets: BuiltInEnv['secrets'],
   previous: BuiltInConnection | undefined,
   saved: BuiltInConnection,
   password: string | undefined,
@@ -388,6 +376,32 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: Connectio
   return Promise.resolve(named);
 }
 
+/** Asks for a SQL login password once, and whether to keep it in the secret store. */
+async function promptForPassword(connection: BuiltInConnection): Promise<{ password: string; save: boolean } | undefined> {
+  const password = await vscode.window.showInputBox({
+    title: `Password for ${connection.user} on ${connection.server}`,
+    prompt: `No saved password for "${connection.name}".`,
+    password: true,
+    ignoreFocusOut: true,
+    validateInput: passwordTooLong,
+  });
+  if (password === undefined) return undefined;
+  const choice = await vscode.window.showQuickPick(
+    [
+      { label: 'Save password', description: 'Keep it in the VS Code secret store', save: true },
+      { label: 'Use once', description: 'Ask again next time', save: false },
+    ],
+    { placeHolder: 'Save this password?', ignoreFocusOut: true },
+  );
+  return { password, save: choice?.save === true };
+}
+
+/** The VS Code services the built-in connection uses: secret store, settings, prompts, sign-in. */
+export function createDbEnv(secrets: vscode.SecretStorage, outputChannel: LogChannel, loadQueries: BuiltInEnv['loadQueries']): BuiltInEnv {
+  const queryTimeoutSeconds = () => readDeclaredNumericSetting(vscode.workspace.getConfiguration('dataLineageViz'), 'dmvQueryTimeout');
+  return { secrets, outputChannel, loadQueries, queryTimeoutSeconds, promptPassword: promptForPassword, acquireSqlToken };
+}
+
 /**
  * Registers the four connection commands. `dataLineageViz.addDatabaseConnection` accepts
  * `{ connection, password? }`; with an argument it validates, saves to user settings and the secret
@@ -401,10 +415,10 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: Connectio
  */
 export function registerConnectionCommands(
   context: vscode.ExtensionContext,
-  outputChannel: vscode.LogOutputChannel,
+  outputChannel: LogChannel,
   loadQueries: BuiltInEnv['loadQueries'],
 ): vscode.Disposable[] {
-  const env: BuiltInEnv = { secrets: context.secrets, outputChannel, loadQueries };
+  const env = createDbEnv(context.secrets, outputChannel, loadQueries);
   const logger = Logger.create(outputChannel, 'DB');
 
   return [

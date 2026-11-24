@@ -63,6 +63,7 @@ vi.mock('vscode', async importOriginal => {
 import type * as VSCode from 'vscode';
 import { registerMcp } from '../../../src/ai/mcp/mcpServer';
 import { AiSession } from '../../../src/ai/session/session';
+import { TOOL_HOST } from '../helpers/toolHost';
 
 async function freePort(): Promise<number> {
   const probe = createServer();
@@ -84,7 +85,7 @@ async function registered(): Promise<void> {
     secrets: { get: async (key: string) => store.get(key), store: async (key: string, value: string) => { store.set(key, value); } },
     extension: { packageJSON: { version: '0.0.0-test' } },
   };
-  registerMcp(context as unknown as VSCode.ExtensionContext, { getSession: () => new AiSession(), outputChannel: channel as never, getPanel: () => undefined });
+  registerMcp(context as unknown as VSCode.ExtensionContext, { getSession: () => new AiSession(), outputChannel: channel as never, getPanel: () => undefined, host: TOOL_HOST });
   await vi.waitFor(() => expect(host.provider!.provideMcpServerDefinitions()).toHaveLength(1));
 }
 
@@ -111,7 +112,7 @@ describe('MCP registration', () => {
   it('offers no definition while mcp.enabled is off', async () => {
     host.settings.enabled = false;
     registerMcp({ subscriptions, secrets: { get: async () => undefined, store: async () => undefined }, extension: { packageJSON: { version: '0' } } } as never,
-      { getSession: () => new AiSession(), outputChannel: { info: () => undefined, debug: () => undefined, warn: () => undefined, error: () => undefined, trace: () => undefined } as never, getPanel: () => undefined });
+      { getSession: () => new AiSession(), outputChannel: { info: () => undefined, debug: () => undefined, warn: () => undefined, error: () => undefined, trace: () => undefined } as never, getPanel: () => undefined, host: TOOL_HOST });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(host.provider!.provideMcpServerDefinitions()).toEqual([]);
   });
