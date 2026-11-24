@@ -224,10 +224,15 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
           ...(request.previousResponseId ? { previous_response_id: request.previousResponseId } : {}),
         })) {
           replyReceived = true;
+          // A choice that finished with `error` is the provider's failure, whatever it streamed before.
+          if (chunk.response_metadata?.finish_reason === 'error') {
+            throw new ModelPortError('provider_error', 'Provider ended the generation with finish_reason error.', undefined, true);
+          }
           usage = toUsage(chunk.usage_metadata) ?? usage;
           total = total ? total.concat(chunk) : chunk;
           yield chunk;
         }
+        if (!replyReceived) throw new ModelPortError('unsupported_response', 'Provider reply carried no event stream.');
         wire?.({
           type: 'wire-response',
           text: typeof total?.content === 'string' ? total.content : '',
