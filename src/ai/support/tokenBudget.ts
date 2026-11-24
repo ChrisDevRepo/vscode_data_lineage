@@ -19,8 +19,11 @@ export function estimateTokens(chars: number): number {
 /** The heuristic ratio behind {@link estimateTokens} and the byte ceilings derived from it. */
 const CHARS_PER_TOKEN = 4;
 
+/** What every `over_discovery_budget` rejection states went wrong. */
+const OVER_DISCOVERY_BUDGET_REASON = 'Scope exceeds the discovery budget.';
+
 /** Repair hint every `over_discovery_budget` rejection carries; the fallback when none arrives. */
-export const OVER_DISCOVERY_BUDGET_HINT = 'Scope exceeds the discovery budget. A scope this large is analysed hop by hop through an approved exploration.';
+export const OVER_DISCOVERY_BUDGET_HINT = 'A scope this large is analysed hop by hop through an approved exploration.';
 
 /**
  * Default node cap for discovery-phase catalog requests — overridden via VS Code
@@ -138,6 +141,7 @@ export function checkScopeBudget(
   return {
     ...makeRejection({
       code: REJECTION_CODES.overDiscoveryBudget,
+      reason: OVER_DISCOVERY_BUDGET_REASON,
       hint: OVER_DISCOVERY_BUDGET_HINT,
     }),
     detail: {

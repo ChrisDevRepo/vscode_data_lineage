@@ -790,8 +790,8 @@ interface RecordedToolOutcome {
   readonly artifact?: ToolRejection;
 }
 
-/** The call a rejection answers, as {@link rejectionText} renders it. */
-interface RejectedCall {
+/** The call a rejection answers, as {@link renderRejection} renders it. */
+export interface RejectedCall {
   readonly toolName: string;
   /** The tool's input schema as served when the rejection renders. */
   readonly schema?: () => z.ZodType | undefined;
@@ -800,19 +800,13 @@ interface RejectedCall {
 }
 
 /**
- * The model-facing content of one rejection as plain text: its reason (one line per error of a
- * multi-error validation), its fault lines ({@link renderFaults}), its hint, when a
- * `present_result` repair draft is held its section labels, and the resend rule
- * ({@link resendRule}). The rejection the last budgeted reply answers adds the facts the first one
- * lacked, never a line the first already holds: verified column inventories, the ids a check
- * accepts, the help of the faults ({@link renderLastFeedbackHelp}) and the move of a located fault.
- * Code, issue paths and detail stay on the paired `ToolMessage.artifact`.
+ * The first-level model-facing lines of one rejection: its reason (one line per error of a
+ * multi-error validation) with its fault lines ({@link renderFaults}), its hint, and, after them, when a
+ * `present_result` repair draft is held its section labels and the resend rule ({@link resendRule}).
  *
  * @param unsent - Fields the retry sends beyond the issue paths (see `correction.unsent`).
  */
-function rejectionText(rejection: ToolRejection, call: RejectedCall, priorState?: ToolPhaseAttemptState, unsent: readonly string[] = []): string {
-  const repliesLeft = repliesLeftAfter(priorState);
-  const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
+function rejectionParts(rejection: ToolRejection, call: RejectedCall, unsent: readonly string[]) {
   const held = rejection.detail && typeof rejection.detail === 'object'
     ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
@@ -820,10 +814,33 @@ function rejectionText(rejection: ToolRejection, call: RejectedCall, priorState?
   // A held report draft states its own keyed resend rule for its lists.
   const wholeList = !held && failed.some(pointer => isServedList(call.schema!, pointer.slice(1)));
   const heldLabels = held?.sections.map(({ label }) => `"${label}"`).join(', ');
-  const faults = [rejection.reason, ...renderFaults(rejection, call.schema)];
-  const after = [...(heldLabels ? [`Held sections: ${heldLabels}.`] : []), ...resendRule(failed, rejection.held ?? [], held !== undefined, wholeList)];
-  const hint = rejection.hint ? [rejection.hint] : [];
-  if (!finalRejection) return [...faults, ...hint, ...after].join('\n');
+  return {
+    faults: [rejection.reason, ...renderFaults(rejection, call.schema)],
+    hint: rejection.hint ? [rejection.hint] : [],
+    after: [...(heldLabels ? [`Held sections: ${heldLabels}.`] : []), ...resendRule(failed, rejection.held ?? [], held !== undefined, wholeList)],
+  };
+}
+
+/**
+ * One rejection as the plain text a model reads at its first level: the one renderer of the chat
+ * loop's feedback and of every MCP tool error, which is stateless and so has no later level.
+ */
+export function renderRejection(rejection: ToolRejection, call: RejectedCall, unsent: readonly string[] = []): string {
+  const { faults, hint, after } = rejectionParts(rejection, call, unsent);
+  return [...faults, ...hint, ...after].join('\n');
+}
+
+/**
+ * The model-facing content of one rejection ({@link renderRejection}). The rejection the last
+ * budgeted reply answers adds the facts the first one lacked, never a line the first already
+ * holds: verified column inventories, the ids a check accepts, the help of the faults
+ * ({@link renderLastFeedbackHelp}) and the move of a located fault. Code, issue paths and detail
+ * stay on the paired `ToolMessage.artifact`.
+ */
+function rejectionText(rejection: ToolRejection, call: RejectedCall, priorState?: ToolPhaseAttemptState, unsent: readonly string[] = []): string {
+  const repliesLeft = repliesLeftAfter(priorState);
+  if (repliesLeft === undefined || repliesLeft > 1) return renderRejection(rejection, call, unsent);
+  const { faults, hint, after } = rejectionParts(rejection, call, unsent);
   const stated = [...faults, ...hint, ...after].join('\n');
   const added = (lines: readonly string[]) => lines.filter(line => !stated.includes(line));
   return [

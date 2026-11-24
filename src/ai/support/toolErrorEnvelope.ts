@@ -52,8 +52,9 @@ export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this
 const SECTIONS_EXIT = 'in the section fields; further work on it goes in questions.';
 
 /** Stable message shared by {@link NoProjectLoadedError} and {@link buildNoProjectLoadedError}. */
-const NO_PROJECT_LOADED_MESSAGE =
-  'No project is loaded in the Data Lineage panel (closed or not opened yet); open the project and ask again.';
+const NO_PROJECT_LOADED_REASON = 'No project is loaded in the Data Lineage panel (closed or not opened yet).';
+const NO_PROJECT_LOADED_HINT = 'Open the project and ask again.';
+const NO_PROJECT_LOADED_MESSAGE = `${NO_PROJECT_LOADED_REASON} ${NO_PROJECT_LOADED_HINT}`;
 
 /**
  * Every issue code's fixed category and fault/correction text: each registry code and each schema
@@ -473,7 +474,7 @@ export class NoProjectLoadedError extends Error {
  * @returns JSON rejection carrying {@link REJECTION_CODES.noProjectLoaded} and the stable hint.
  */
 export function buildNoProjectLoadedError(): string {
-  return JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, hint: NO_PROJECT_LOADED_MESSAGE }));
+  return JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, reason: NO_PROJECT_LOADED_REASON, hint: NO_PROJECT_LOADED_HINT }));
 }
 
 /**

@@ -191,6 +191,19 @@ Tables above `tableStatistics.sampleThreshold` rows are sampled instead of fully
 
 ---
 
+## MCP server
+
+A local MCP server lets other AI clients call the lineage tools. It covers the discovery phase: lookup tools (context, screen state, object search, object detail, graph patterns, DDL search) plus trace, path and graph preview. The client's own model does the reasoning and writes the answer; the server returns each result or an error result. Everything after discovery is in the chat panel, which uses your configured model (see [AI](#ai)). The six lookup tools run the same code as in the chat panel.
+
+- **Tools.** `lineage_get_context`, `lineage_get_screen_state`, `lineage_search_objects`, `lineage_get_object_detail`, `lineage_detect_graph_patterns`, `lineage_search_ddl`, `lineage_get_trace`, `lineage_get_path` and `lineage_create_graph_preview`. They read the loaded model and are inactive when none is loaded. Nothing connects to the database. The graph preview opens its view in the graph panel.
+- **Failed calls.** A call that is refused returns an error result with a corrective message and a structured error. The server keeps no state, retries nothing and sets no call limit; the client decides whether to retry.
+- **Turn on or off.** Run **Data Lineage: Enable MCP Server** (it offers "Show servers") or set `dataLineageViz.mcp.enabled`; set it to `false` to stop the server. `dataLineageViz.ai.enabled` has no effect on it.
+- **Clients.** Claude Code CLI and GitHub Copilot agent mode are verified; any client that supports MCP over HTTP can connect, including clients that do not use sessions. VS Code clients such as Copilot get the server definition from the extension. For other clients run **Data Lineage: Copy MCP Config**.
+- **Access.** The server listens on 127.0.0.1 only and needs a bearer token; a request with a foreign `Host` or `Origin` gets 403. The copied config contains the token, so the client writes it into its own config file. For its own MCP clients, VS Code also keeps the server definition with the token in plaintext in the VS Code user profile (sometimes in workspace state). The token works only on 127.0.0.1 while the server runs. To revoke it, run **Data Lineage: Rotate MCP Token**: old configs stop working and VS Code clients pick up the new definition; update copied configs of other clients.
+- **Data.** What a tool returns (object metadata and SQL) goes to the client and to the model endpoint that client uses.
+
+---
+
 ## AI
 
 The assistant is being rebuilt as its own panel. The model setup and the lineage tools are in place:
@@ -289,5 +302,5 @@ Database import only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 | `ai.outputTemplateFile` | empty | Custom output templates YAML; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |
 | `ai.models` | empty list | OpenAI-compatible endpoints (Chat Completions or Responses), one entry each: `id`, `name`, `url`, `model`, `apiType`, `maxInputTokens`, `maxOutputTokens`, optional `supportsReasoningEffort`, `reasoningEffort`, `forcedToolChoice`, `requestBody` (extra parameters, sent unchanged) and `requestHeaders`. An invalid entry is named and not offered. Keys are never settings: run **Data Lineage: Set API key** per entry. |
 | `ai.defaultModel` | empty | The `id` of the `ai.models` entry used by default. |
-| `mcp.enabled` | off | Serves the lineage tools to local AI clients over MCP on 127.0.0.1; independent of `ai.enabled`. Run **Data Lineage: Enable MCP Server** to turn it on (it offers "Show servers"). Run **Data Lineage: Copy MCP Config** for clients outside VS Code: the config contains the access token, so the client writes it into its own config file. For its own MCP clients (such as Copilot), VS Code also keeps the server definition with the token in plaintext in the VS Code user profile (sometimes in workspace state). The token only works on 127.0.0.1 while the server runs. To revoke it, run **Data Lineage: Rotate MCP Token**: old configs stop working and VS Code clients pick up the new definition; update copied configs of other clients. |
+| `mcp.enabled` | off | Runs the [MCP server](#mcp-server); independent of `ai.enabled`. **Data Lineage: Enable MCP Server** sets it. |
 | `mcp.port` | 47633 (1024–65535) | Port of the local MCP server. The first VS Code window takes it; other windows report that it is in use. |
