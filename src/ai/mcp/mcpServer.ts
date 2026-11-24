@@ -39,7 +39,7 @@ const MCP_HOST = '127.0.0.1';
 const MCP_PATH = '/mcp';
 const PROVIDER_ID = 'dataLineageViz.mcp';
 /** Server name in the protocol and the client config key; the label is its human title. */
-const SERVER_SLUG = 'data-lineage';
+const SERVER_SLUG = 'data-lineage-mcp-server';
 const SERVER_LABEL = 'Data Lineage';
 
 type SecretsLike = Pick<vscode.SecretStorage, 'get' | 'store'>;
