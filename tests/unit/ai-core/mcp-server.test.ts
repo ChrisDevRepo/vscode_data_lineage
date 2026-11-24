@@ -295,9 +295,8 @@ describe('lineage tools over MCP', () => {
     expect(await call('lineage_create_graph_preview', preview)).toMatchObject({ isError: false });
     expect(panel.posted).toMatchObject([{ aiMetadata: { modelName: 'MCP client' } }]);
 
-    // The chat stage does not offer the preview yet; `served` replaces the stage policy as it does for the MCP server.
     const chatPanel = panelStub();
-    const chat = buildAiToolRegistry(() => session, channel, () => chatPanel as never, undefined, { ...TOOL_HOST, served: new Set(['lineage_create_graph_preview']), authorName: 'Chat Model' });
+    const chat = buildAiToolRegistry(() => session, channel, () => chatPanel as never, undefined, { ...TOOL_HOST, authorName: 'Chat Model' });
     expect(JSON.parse(await chat.invoke('lineage_create_graph_preview', preview))).toMatchObject({ name: 'Orders' });
     expect(chatPanel.posted).toMatchObject([{ aiMetadata: { modelName: 'Chat Model' } }]);
   });

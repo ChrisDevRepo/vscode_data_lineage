@@ -17,7 +17,7 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
   start table statistics.
 - Model tools go through one local registry. The chat panel and the MCP server
   share the data tools' definitions, schemas, handlers, registry and rejection
-  text; the chat panel does not serve trace, path and graph preview yet. The MCP
+  text; the chat panel serves them by stage (`toolPolicy.ts`). The MCP
   server is a plain server for external clients (loopback only, bearer token),
   with no chat stage or turn budget: approval and hop-by-hop analysis belong to
   the chat panel.
