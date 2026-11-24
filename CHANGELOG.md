@@ -7,6 +7,7 @@
 - MCP: a local MCP server lets Claude Code, Copilot agent mode and other MCP clients call the lineage tools on the loaded project; run **Data Lineage: Enable MCP Server** or set `dataLineageViz.mcp.enabled`. It is separate from the chat panel and does not need `dataLineageViz.ai.enabled`.
 - Column traces show join and filter columns as indirect sources.
 - AI follow-ups that name a border table bring in its next-level objects.
+- AI: a model entry can be a VS Code language model (`apiType` `vscode-lm`, with a `selector`), added with the source **VS Code language model** in **Add AI Model**; the chat lists the models VS Code provides and, with `dataLineageViz.ai.defaultModel` empty, starts on a Copilot model, so an upgraded 1.2.7 user needs no setup.
 
 ### Fixed
 - Database connect waits for an idle Azure SQL database to resume, with progress, retry and cancel.

@@ -8,7 +8,7 @@
  */
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { ChatOpenAI, messageToOpenAIRole } from '@langchain/openai';
-import type { ModelEntry } from './modelEntries';
+import type { OpenAiModelEntry } from './modelEntries';
 import {
   parseStreamedArguments,
   ProviderModelPort,
@@ -23,7 +23,7 @@ import { sanitizeProviderError } from '../support/text';
 import { countTokens } from '../support/tokenCount';
 
 /** Request fields the entry's own settings produce, below `requestBody`. */
-function entryBody(entry: ModelEntry, effort: string | undefined): Record<string, unknown> {
+function entryBody(entry: OpenAiModelEntry, effort: string | undefined): Record<string, unknown> {
   if (entry.apiType === 'responses') {
     return {
       store: true,
@@ -44,7 +44,7 @@ function entryBody(entry: ModelEntry, effort: string | undefined): Record<string
  * go to its own fields; a named cap goes there only when the key the client writes is the key
  * `requestBody` names, so `requestBody` reaches the wire unchanged and never as two keys.
  */
-function createChatModel(entry: ModelEntry, apiKey: string, effort: string | undefined): ChatOpenAI {
+function createChatModel(entry: OpenAiModelEntry, apiKey: string, effort: string | undefined): ChatOpenAI {
   const responses = entry.apiType === 'responses';
   const body = entry.requestBody ?? {};
   const build = (maxTokens?: number): ChatOpenAI => new ChatOpenAI({
@@ -100,7 +100,7 @@ function responseMetadata(message: BaseMessage): Record<string, unknown> {
   return message.response_metadata as Record<string, unknown>;
 }
 
-function isOwnTurn(message: BaseMessage, entry: ModelEntry): boolean {
+function isOwnTurn(message: BaseMessage, entry: OpenAiModelEntry): boolean {
   return responseMetadata(message)[ENTRY_KEY] === entry.id;
 }
 
@@ -112,7 +112,7 @@ function isOwnTurn(message: BaseMessage, entry: ModelEntry): boolean {
  */
 function projectMessages(
   messages: readonly BaseMessage[],
-  entry: ModelEntry,
+  entry: OpenAiModelEntry,
 ): { readonly messages: BaseMessage[]; readonly previousResponseId?: string } {
   const projected = messages.map((message) => (
     AIMessage.isInstance(message) && !isOwnTurn(message, entry)
@@ -181,7 +181,7 @@ type WireToolChoice = NonNullable<Parameters<ChatOpenAI['bindTools']>[1]>['tool_
  * The choice as the entry's API takes it. The Responses client drops a string choice, so a required
  * call over several tools goes as the API's `allowed_tools` object; Chat Completions takes `'any'`.
  */
-function wireToolChoice(entry: ModelEntry, choice: string | undefined, tools: readonly TransportTool[]): WireToolChoice {
+function wireToolChoice(entry: OpenAiModelEntry, choice: string | undefined, tools: readonly TransportTool[]): WireToolChoice {
   if (choice !== 'any' || entry.apiType !== 'responses') return choice;
   return {
     type: 'allowed_tools',
@@ -192,7 +192,7 @@ function wireToolChoice(entry: ModelEntry, choice: string | undefined, tools: re
 /**
  * `entry` as a transport; `effort` overrides the entry's own `reasoningEffort` for its requests.
  */
-function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry.reasoningEffort): ModelTransport {
+function createOpenAiTransport(entry: OpenAiModelEntry, apiKey: string, effort = entry.reasoningEffort): ModelTransport {
   const chat = createChatModel(entry, apiKey, effort);
   return {
     id: `provider:${entry.id}`,
@@ -268,7 +268,7 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
 
 /** The model port over one entry: the connection a turn runs on once the user picked the entry. */
 export function createProviderModelPort(
-  entry: ModelEntry,
+  entry: OpenAiModelEntry,
   apiKey: string,
   options: ProviderModelPortOptions & { readonly effort?: string } = {},
 ): ProviderModelPort {

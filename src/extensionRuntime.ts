@@ -14,6 +14,8 @@ import { buildAiToolRegistry } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
 import { registerMcp } from './ai/mcp/mcpServer';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
+import { parseModelEntries, type VscodeLmModelEntry } from './ai/providers/modelEntries';
+import { findLmModel, loadLmCatalog, onLmModelsChanged, type LmCatalog } from './ai/providers/vscodeLmTransport';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules } from './engine/sqlBodyParser';
@@ -22,6 +24,9 @@ import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import { buildExtensionConfig } from './bridge/messageHandlers';
 
 declare const __BUILD_TIMESTAMP__: string;
+
+/** globalState key of the model the user picked last in the chat panel. */
+const LAST_MODEL_KEY = 'dataLineageViz.ai.lastModel';
 
 let outputChannel: vscode.LogOutputChannel;
 let activeTraceWriter: AiTraceWriter | undefined;
@@ -92,6 +97,21 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
   let lineageRuntime: LineageRuntime | undefined;
   let chat: ChatController | undefined;
+  let lmCatalog: LmCatalog | undefined;
+  let lmLoads = 0;
+  /** Re-reads the live language models and each `vscode-lm` entry's match, then re-sends the composer state; the latest load wins. */
+  const reloadLmCatalog = (): void => {
+    if (!chat) return;
+    const load = ++lmLoads;
+    const { entries } = parseModelEntries(vscode.workspace.getConfiguration('dataLineageViz.ai').get('models'));
+    loadLmCatalog(entries.filter((entry): entry is VscodeLmModelEntry => entry.apiType === 'vscode-lm'))
+      .then((catalog) => {
+        if (load !== lmLoads) return;
+        lmCatalog = catalog;
+        chat?.refresh();
+      })
+      .catch((error: unknown) => runStoreLogger.error('Load VS Code language models', error));
+  };
 
   try {
     if (aiEnabled) {
@@ -112,7 +132,12 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         getSession,
         modelSources: () => {
           const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
-          return { models: cfg.get('models'), defaultModel: cfg.get<string>('defaultModel'), secrets: context.secrets };
+          return { models: cfg.get('models'), defaultModel: cfg.get<string>('defaultModel'), secrets: context.secrets, lmModel: (id) => findLmModel(lmCatalog, id) };
+        },
+        lmCatalog: () => lmCatalog,
+        lastPick: {
+          get: () => context.globalState.get<string>(LAST_MODEL_KEY),
+          update: (id) => context.globalState.update(LAST_MODEL_KEY, id),
         },
         turnSettings: () => {
           const cfg = vscode.workspace.getConfiguration('dataLineageViz');
@@ -130,7 +155,8 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         traceWriter,
       });
       chat = controller;
-      context.subscriptions.push({ dispose: () => controller.dispose() });
+      context.subscriptions.push({ dispose: () => controller.dispose() }, onLmModelsChanged(reloadLmCatalog));
+      reloadLmCatalog();
     } else {
       logger.info('AI surface disabled — dataLineageViz.ai.enabled is false; the AI runtime was not loaded.');
     }
@@ -223,9 +249,10 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         }
       }
 
-      if (e.affectsConfiguration('dataLineageViz.ai.models') || e.affectsConfiguration('dataLineageViz.ai.defaultModel')) {
+      if (e.affectsConfiguration('dataLineageViz.ai.models')) {
         chat?.refresh();
-      }
+        reloadLmCatalog();
+      } else if (e.affectsConfiguration('dataLineageViz.ai.defaultModel')) chat?.refresh();
 
       if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {
         const t = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
