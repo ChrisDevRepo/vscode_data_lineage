@@ -1539,15 +1539,18 @@ export const SubmitFindingsModelSchema = z.object({
  * listing every violated field with the received value.
  *
  * @param schema - The tool's input schema (e.g. {@link SearchObjectsInputSchema}).
+ * @param served - The schema the model was served, when it is narrower than `schema`: the
+ *   rejection names the fields of this one.
  * @returns Parsed data, or the rejection naming every offending field.
  */
 export function parseToolInput<T extends z.ZodType>(
   schema: T,
   input: unknown,
+  served: z.ZodType = schema,
 ):
   | { readonly ok: true; readonly data: z.output<T> }
   | { readonly ok: false; readonly error: ToolRejection } {
   const parsed = schema.safeParse(input);
   if (parsed.success) return { ok: true, data: parsed.data };
-  return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
+  return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema: served }) };
 }
