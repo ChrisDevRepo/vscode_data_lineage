@@ -108,7 +108,7 @@ export const REJECTION_CODES = {
   columnOutOfScope: 'column_out_of_scope',
   /**
    * The provider emitted the synthetic structured-output/terminal tool call with empty required
-   * arguments (`structuredOutput.ts`, `vscodeModelPort.ts`, `graph.ts`).
+   * arguments (`structuredOutput.ts`, `providerModelPort.ts`, `graph.ts`).
    */
   emptyStructuredOutput: 'empty_structured_output',
   /** The provider generated text or nothing instead of the phase's required terminal tool call. */
@@ -146,7 +146,7 @@ export const REJECTION_CODES = {
    */
   toolCallNotation: 'tool_call_notation',
   /**
-   * A provider tool call named a tool the phase does not expose (`vscodeModelPort.ts`,
+   * A provider tool call named a tool the phase does not expose (`providerModelPort.ts`,
    * `toolAttempt.ts`).
    */
   unknownTool: 'unknown_tool',

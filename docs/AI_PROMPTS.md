@@ -1,6 +1,6 @@
 # AI Prompting And Templates
 
-`@lineage` writes its answers from instructions stored in a YAML file,
+The AI writes its answers from instructions stored in a YAML file,
 [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). This
 document explains how to create a copy of that file, what can be changed in it
 and how to keep a copy working after an upgrade.
@@ -129,10 +129,10 @@ built-in text of each release.
 
 ## What is sent to the model
 
-`@lineage` uses the model selected in VS Code. For a request, the model
+The AI uses the model entry named by `dataLineageViz.ai.defaultModel`. For a request, the model
 receives:
 
-- the user's prompt and the native `@lineage` chat history as text;
+- the user's prompt and the conversation history as text;
 - the lineage metadata and SQL definitions returned by the read tools run on
   the loaded model.
 

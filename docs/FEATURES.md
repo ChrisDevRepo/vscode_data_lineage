@@ -77,7 +77,7 @@ When a loaded graph has more objects than `dataLineageViz.overview.threshold` (c
 
 Save the current filter state as a named bookmark. Bookmarks keep schema, object-type, isolation, external-reference, focus, and exclusion choices; trace, analysis, and AI views can also be saved. Restore them from the toolbar dropdown. Bookmarks are saved per project.
 
-A bookmark saved from an AI view also keeps that run's findings. With that bookmark applied, `@lineage` can recall them instead of repeating the work. Findings on objects whose DDL changed since are flagged as stale. Older bookmarks may have no saved run. Deleting a bookmark or its project deletes its run record.
+A bookmark saved from an AI view also keeps that run's findings. With that bookmark applied, the assistant can recall them instead of repeating the work. Findings on objects whose DDL changed since are flagged as stale. Older bookmarks may have no saved run. Deleting a bookmark or its project deletes its run record.
 
 ---
 
@@ -191,26 +191,16 @@ Tables above `tableStatistics.sampleThreshold` rows are sampled instead of fully
 
 ---
 
-## `@lineage` AI
+## AI
 
-`@lineage` is an optional VS Code Chat participant. It uses the model selected in VS Code for the chat request, reads the loaded model and the SQL definitions in it, and records column mappings for the question asked. It does not connect to the database. The answers are the model's reading of that material: best-effort and not complete.
+The assistant is being rebuilt as its own panel; the VS Code chat participant `@lineage` is removed. The model setup and the lineage tools are in place:
 
-How to use it:
+- **Models.** `dataLineageViz.ai.models` lists OpenAI-compatible endpoints (Chat Completions or Responses). `dataLineageViz.ai.defaultModel` names the entry to use. An invalid entry is named in a warning and not offered.
+- **API keys.** **Data Lineage: Set API key** stores the key of one entry in VS Code's secret storage. A key is never in settings, logs or the webview.
+- **Tools.** The read-only lineage tools over the loaded model stay available to AI clients in VS Code, for example Copilot agent mode. Nothing connects to the database.
+- **Output templates.** **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml), which controls the summary, badges and notes. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
-- Load a graph, then type `@lineage` in VS Code Chat and ask a question, for example *"what does spProcA do?"* or *"what reads from the Employee table?"*. The answer appears in chat.
-- `/search` looks up objects by name. `/trace` starts a deeper analysis of an object or column.
-- **Show graph preview** opens a temporary **AI Preview** in the graph view. **Save as Bookmark** keeps it; **Data Lineage: Show AI Trace in Graph** reopens the session's current AI view. When a run records column findings, the preview offers an **Objects / Detail** switch that shows traced columns and their connections.
-- Deep analysis (`/trace`, the **Start deeper hop-by-hop analysis** follow-up, or a question over the discovery budget) shows a plan first. A hop is one procedure, view or function read in one step. The plan lists depth, scope (estimated hops and nodes), schemas, objects in scope, exclusions, the tracing type (object or column trace) and the analysis type (business, technical or both, which sets the sections of the written result). Choose **Approve & Proceed**, **Change scope** or **Cancel**, or reply in words. After approval, chat shows a hop counter and a short finding per hop.
-- The plan shows upstream and downstream depth separately; `0` turns a direction off. A level count you give is the limit; if you give none, the assistant picks a starting depth. The trace-level settings do not affect AI depth.
-- A deep analysis must fit `dataLineageViz.ai.maxRounds` and, for column traces, `dataLineageViz.ai.maxTraceColumns`. Otherwise chat names the setting so you can narrow the scope or raise the limit. Discovery answers are limited by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; larger requests are offered as a deep analysis. See the [settings reference](#settings-reference).
-- The assistant sees the trace, analysis or bookmark on screen. Type `#lineageView` in the chat input to attach it explicitly, then ask *"explain this"*.
-- **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml), which controls the summary, badges and notes. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
-
-Requirements: a VS Code Language Model Chat provider, such as
-[GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
-or a compatible BYOK provider. Your question, recent `@lineage` chat and the SQL or metadata the tools read are passed to that model, including for a local DACPAC.
-
-To turn `@lineage` off, set `dataLineageViz.ai.enabled` to `false` and reload the window. The participant and the AI tools are then not registered.
+What a model reads (the SQL and metadata the tools return) is sent to the endpoint of the entry used, including for a local DACPAC. To turn the AI tools off, set `dataLineageViz.ai.enabled` to `false` and reload the window.
 
 ---
 
@@ -287,13 +277,15 @@ Database import only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 | `analysis.islandMaxSize` | 500 (2–1000) | Largest connected group reported as an island; lower it to list only small isolated groups. |
 | `analysis.longestPathMinNodes` | 5 (2–50) | Objects a chain needs to appear in longest-path analysis. |
 
-#### `@lineage`
+#### AI
 
 | Setting | Default | Detail |
 |---|---|---|
-| `ai.enabled` | on | Registers the `@lineage` participant and the AI tools. Reload the window after changing it. |
+| `ai.enabled` | on | Registers the AI tools. Reload the window after changing it. |
 | `ai.maxRounds` | 50 (5–100) | Rounds per deep analysis, one for each procedure, view or function it reads. An analysis that needs more is not started. |
 | `ai.maxTraceColumns` | 10 (min 1) | Starting columns one column trace may follow. A trace that selects more is not started. |
 | `ai.discoveryNodeCap` | 10 (1–30) | Scope nodes a discovery answer may pull in one request before it is offered as a deep analysis for approval. |
 | `ai.discoveryTokenBudget` | 10000 (1000–32000) | Estimated DDL tokens for one discovery request, capped at one eighth of the selected model's input window. Exceeding it or the node cap offers a deep analysis for approval. |
 | `ai.outputTemplateFile` | empty | Custom output templates YAML; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |
+| `ai.models` | empty list | OpenAI-compatible endpoints (Chat Completions or Responses), one entry each: `id`, `name`, `url`, `model`, `apiType`, `maxInputTokens`, `maxOutputTokens`, optional `supportsReasoningEffort`, `reasoningEffort`, `forcedToolChoice`, `requestBody` (extra parameters, sent unchanged) and `requestHeaders`. An invalid entry is named and not offered. Keys are never settings: run **Data Lineage: Set API key** per entry. |
+| `ai.defaultModel` | empty | The `id` of the `ai.models` entry used by default. |

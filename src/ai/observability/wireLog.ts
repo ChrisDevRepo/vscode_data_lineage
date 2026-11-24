@@ -3,7 +3,7 @@
  * diagnostics for requests that fail before a response exists. Every record carries schema, table
  * and column names and SQL, so the sink exists only after the user enables AI trace logging for the
  * current extension-host session. Free of `vscode` imports so every model port emits the same
- * records; the VS Code projection is [`vscodeWireLog.ts`](./vscodeWireLog.ts).
+ * records.
  */
 import { createHash } from 'node:crypto';
 import type { ProviderErrorDiagnostic } from '../support/text';
@@ -27,8 +27,8 @@ export type WirePart =
 
 /** One converted message as handed to the provider. */
 export interface WireMessage {
-  /** The role exactly as the lane spells it: the `vscode.lm` role integer or the wire string. */
-  readonly role: number | string;
+  /** The role exactly as the wire spells it. */
+  readonly role: string;
   /** Message content parts, shaped exactly as they sit on the wire. */
   readonly parts: readonly WirePart[];
 }
@@ -54,7 +54,7 @@ export type WireEvent =
       readonly messages: readonly WireMessage[];
       /** Tools offered on the request; the description rides as its {@link systemPromptHash}. */
       readonly tools: ReadonlyArray<{ readonly name: string; readonly descriptionHash: string; readonly inputSchema: unknown }>;
-      /** `LanguageModelChatToolMode` integer, absent when the request carries no tools. */
+      /** 1 when the request offers tools, 2 when it forces a call; absent when it carries no tools. */
       readonly toolMode?: number;
       /** The verbatim system instruction, captured only while the trace runs verbose. */
       readonly system?: string;

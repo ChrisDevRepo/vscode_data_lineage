@@ -1,25 +1,14 @@
 /**
- * Pure markdown renderers for the `confirm_sm_start` gate: the full plan with its scope tree, and
- * the compact card the approval shows first. No `vscode` import, so unit tests run without the VS
- * Code module surface; the single source of truth for the native gate markdown.
+ * Pure markdown renderer of the scope summary the `confirm_sm_start` gate shows. No `vscode`
+ * import, so unit tests run without the VS Code module surface.
  */
 
-import type { ScopeExclusionGroup, ScopeSummary } from '../sm/smTypes';
-import type { PendingExplorationProposal } from '../session/session';
+import type { ScopeSummary } from '../sm/smTypes';
 import { CLASSIFICATION_LABEL, type ClassificationValue } from '../session/classification';
 import { escapeMarkdownText, pluralize } from '../support/text';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { normalizeName } from '../../engine/shared/sqlIdentifier';
-import { quoteIdentifier, schemaKey } from '../../utils/sql';
-
-/** Object names the card lists per type before folding the rest into `+N more`. */
-const NAMES_PER_TYPE = 10;
-
-/** Object names the full plan lists per type before folding the rest into `+N more`. */
-const PLAN_NAMES_PER_TYPE = 20;
-
-/** Schema names the card lists before stating the selection as a count. */
-const CARD_SCHEMA_NAMES = 10;
+import { quoteIdentifier } from '../../utils/sql';
 
 /** Formats a count with its noun; the suffix rule itself lives in the shared `pluralize`. */
 function plural(n: number, noun: string): string {
@@ -60,34 +49,6 @@ function code(value: string): string {
   return `${fence}${pad}${value}${pad}${fence}`;
 }
 
-/**
- * Lists the first `cap` names as code spans and folds the rest into `+N more`; `alreadyOmitted`
- * counts names the producer dropped before this list was built.
- */
-function cappedNames(names: readonly string[], cap: number, alreadyOmitted = 0): string {
-  const more = Math.max(0, names.length - cap) + alreadyOmitted;
-  const shown = names.slice(0, cap).map(code).join(', ');
-  return more > 0 ? `${shown} _+${more} more_` : shown;
-}
-
-/**
- * An object's name as the card shows it: schema-qualified when the loaded model holds more than one
- * object of that type by that name ({@link ScopeSummary.ambiguousObjectNames}), bare otherwise.
- */
-function objectDisplayName(summary: ScopeSummary, type: string, schema: string, name: string): string {
-  return summary.ambiguousObjectNames?.[type]?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? `${schema}.${name}` : name;
-}
-
-/** One `Types (N): names` line per object type of an excluded group, largest type first. */
-function exclusionTypeLines(summary: ScopeSummary, group: ScopeExclusionGroup, cap: number, indent: string): string[] {
-  return Object.entries(group.byType)
-    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
-    .map(([type, objects]) => {
-      const names = objects.map(object => objectDisplayName(summary, type, object.schema, object.name));
-      return `${indent}- ${typeLabel(type, objects.length)} (${objects.length}): ${cappedNames(names, cap)}`;
-    });
-}
-
 /** Collapses whitespace so model-authored prose renders as one markdown paragraph. */
 function oneParagraph(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
@@ -101,53 +62,6 @@ function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary[
     const scopeDifference = b[1].scope - a[1].scope;
     return scopeDifference !== 0 ? scopeDifference : a[0].localeCompare(b[0]);
   });
-}
-
-/**
- * States the schema selection from its shorter side: `All` when nothing is excluded,
- * `All except x, y` when fewer are excluded than selected, otherwise the selected list
- * ({@link ScopeSummary.selectedSchemas}, `activeFilters.schemas`).
- *
- * @param nameCap - Names listed before the line states `N of M selected` instead.
- */
-function schemasLine(summary: ScopeSummary, nameCap = Number.POSITIVE_INFINITY): string {
-  const selected = summary.selectedSchemas ?? schemasInPlanOrder(summary).map(([schema]) => schema);
-  const excluded = summary.activeFilters.schemas;
-  if (excluded.length === 0) return 'All';
-  const exceptExcluded = excluded.length < selected.length;
-  const names = exceptExcluded ? excluded : selected;
-  if (names.length > nameCap) return `${selected.length} of ${selected.length + excluded.length} selected`;
-  return `${exceptExcluded ? 'All except ' : ''}${names.map(code).join(', ')}`;
-}
-
-/** One in-scope object type's names and node count, summed across every schema. */
-interface CardObjectGroup {
-  readonly type: string;
-  readonly scope: number;
-  readonly names: string[];
-  readonly omitted: number;
-}
-
-/**
- * Rolls up `bySchema` into one entry per object type, dropping schema grouping, except that a name
- * recurring in more than one schema of the loaded model ({@link ScopeSummary.ambiguousObjectNames})
- * is schema-qualified so it stays traceable to one object.
- */
-function objectsByType(summary: ScopeSummary): CardObjectGroup[] {
-  const groups = new Map<string, CardObjectGroup>();
-  for (const [schema, schemaEntry] of Object.entries(summary.bySchema)) {
-    for (const [type, leaf] of Object.entries(schemaEntry.byType)) {
-      const group = groups.get(type) ?? { type, scope: 0, names: [], omitted: 0 };
-      const names = leaf.nodeNames.map(name => objectDisplayName(summary, type, schema, name));
-      groups.set(type, {
-        type,
-        scope: group.scope + leaf.scope,
-        names: [...group.names, ...names],
-        omitted: group.omitted + leaf.omitted,
-      });
-    }
-  }
-  return [...groups.values()].sort((a, b) => b.scope - a.scope || a.type.localeCompare(b.type));
 }
 
 /** The plan's heading, stamped with the revision from the second round on. */
@@ -184,37 +98,6 @@ export function renderScopeSummaryMd(
     readAs.push(`- Types excluded: ${filters.types.map(code).join(', ')}`);
   }
   return renderPlanMd(summary, readAs, revision, classification);
-}
-
-/**
- * The `Read as` lines of the user-facing full plan: the same active filters as
- * {@link renderScopeSummaryMd}, excluded objects grouped by excluding rule with each type capped at
- * {@link PLAN_NAMES_PER_TYPE} names, and the schema filter from its shorter side with every name
- * ({@link schemasLine}).
- */
-function fullPlanReadAs(summary: ScopeSummary): string[] {
-  const readAs: string[] = [`- Schemas: ${schemasLine(summary)}`];
-  const filters = summary.activeFilters;
-  const exclusions = summary.exclusions;
-  if (exclusions) {
-    for (const rule of exclusions.rules) {
-      readAs.push(`- Excluded by rule ${code(rule.pattern)} — ${plural(rule.count, 'object')}`);
-      readAs.push(...exclusionTypeLines(summary, rule, PLAN_NAMES_PER_TYPE, '  '));
-    }
-    if (exclusions.named.count > 0) {
-      readAs.push(`- Excluded by name — ${plural(exclusions.named.count, 'object')}`);
-      readAs.push(...exclusionTypeLines(summary, exclusions.named, PLAN_NAMES_PER_TYPE, '  '));
-    }
-  } else if (filters.nodeIds.length > 0) {
-    readAs.push(`- Exclude: ${cappedNames(filters.nodeIds, PLAN_NAMES_PER_TYPE)} — removed from the graph`);
-  }
-  if (filters.passNodeIds.length > 0) {
-    readAs.push(`- Keep but skip: ${filters.passNodeIds.map(code).join(', ')} — stays in the graph, not analysed`);
-  }
-  if (filters.types.length > 0) {
-    readAs.push(`- Types excluded: ${filters.types.map(code).join(', ')}`);
-  }
-  return readAs;
 }
 
 /**
@@ -302,106 +185,6 @@ function renderPlanMd(
   }
 
   return lines.join('\n');
-}
-
-/**
- * Renders the compact approval card: fact lines only, with a **Show full plan** follow-up carrying
- * the model-authored prose (goal, discovery summary, noted constraints) and every in-scope object.
- *
- * No AI-authored text reaches the card: `mission_brief`, the discovery summary and `scopeNotes` are
- * full-plan-only. There is no separate direction line: the depth line names the side(s) it covers,
- * and the scope line carries only estimated counts. Schemas are stated from the shorter side
- * (`schemasLine`), as a count past {@link CARD_SCHEMA_NAMES} names, so `Excluded` never repeats
- * them. In-scope objects group by type across every schema, names capped at
- * {@link NAMES_PER_TYPE}; `Excluded` carries counts and the full plan names them. Keep-but-skip
- * renders in full. A name recurring in more than one schema is schema-qualified (`objectsByType`)
- * so two distinct objects never read as one bare name.
- */
-export function renderScopeCardMd(
-  proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary'>,
-): string {
-  const { summary } = proposal;
-  const lines: string[] = [planHeading(proposal.revision), ''];
-
-  const { upstream, downstream } = summary.depthIntent;
-  const sidesEqual = upstream.levels === downstream.levels && upstream.exactness === downstream.exactness;
-  const depth = summary.direction === 'bidirectional' && sidesEqual
-    ? `${depthValue(upstream.levels, upstream.exactness === 'exact')} each way`
-    : (summary.direction === 'bidirectional' ? ['upstream', 'downstream'] as const : [summary.direction])
-      .map(side => `${depthValue(summary.depthIntent[side].levels, summary.depthIntent[side].exactness === 'exact')} ${side}`)
-      .join(' · ');
-  const shown = summary.direction === 'bidirectional' ? [upstream, downstream] : [summary.depthIntent[summary.direction]];
-  const approximate = shown.some(side => side.exactness === 'approximate' && typeof side.levels === 'number' && side.levels > 0);
-  lines.push(`- **Depth:** ${depth}${approximate ? ' (≈ is not a limit)' : ''}`);
-  lines.push(`- **Scope:** ≈${plural(summary.hopCount, 'hop')} · ≈${plural(summary.scopeCount, 'node')}`);
-  lines.push(`- **Schemas:** ${schemasLine(summary, CARD_SCHEMA_NAMES)}`);
-  const columns = summary.analysisMode === 'ct' && summary.targetColumns?.length
-    ? ` — columns: ${summary.targetColumns.map(code).join(', ')}`
-    : '';
-  lines.push(`- **Tracing:** ${summary.analysisMode === 'ct' ? 'Column-Trace' : 'Blackboard'}${columns}`);
-  lines.push(`- **Analysis:** ${CLASSIFICATION_LABEL[proposal.classification]}`);
-
-  const objectGroups = objectsByType(summary);
-  if (objectGroups.length > 0) {
-    lines.push('- **Objects:**');
-    for (const group of objectGroups) {
-      lines.push(`  - ${typeLabel(group.type, group.scope)} (${group.scope}): ${cappedNames(group.names, NAMES_PER_TYPE, group.omitted)}`);
-    }
-  }
-
-  const filters = summary.activeFilters;
-  const exclusions = summary.exclusions;
-  const namedExcluded = exclusions ? exclusions.named.count : filters.nodeIds.length;
-  const excluded = [
-    exclusions && exclusions.rules.length > 0 ? plural(exclusions.rules.length, 'filter rule') : '',
-    filters.types.length > 0 ? `types ${filters.types.map(code).join(', ')}` : '',
-    namedExcluded > 0 ? `${plural(namedExcluded, 'object')} by name` : '',
-  ].filter(Boolean);
-  if (excluded.length > 0) lines.push(`- **Excluded:** ${excluded.join('; ')}`);
-  if (filters.passNodeIds.length > 0) lines.push(`- **Keep but skip:** ${filters.passNodeIds.map(code).join(', ')}`);
-  return lines.join('\n');
-}
-
-/**
- * Renders the **Show full plan** reply: the discovery summary (when present) ahead of the plan,
- * every in-scope object the stored proposal carries, and the excluded objects grouped by cause
- * ({@link fullPlanReadAs}). Built from the held proposal, not the gate's stored `detail`, which is
- * the model-facing tool-response copy (discovery summary trailing) and stays as the backend built
- * it.
- */
-export function renderFullPlanMd(
-  proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary' | 'discoverySummary'>,
-): string {
-  const plan = renderPlanMd(proposal.summary, fullPlanReadAs(proposal.summary), proposal.revision, proposal.classification, PLAN_NAMES_PER_TYPE);
-  return proposal.discoverySummary ? `${proposal.discoverySummary}\n\n${plan}` : plan;
-}
-
-/**
- * Interactive frame the native chat host renders around {@link renderScopeCardMd}'s output. Single
- * source of truth: `lineageParticipant.ts` writes it straight to the chat stream (never through a
- * model call) and `chatHistoryAdapter.ts` matches the same constant to neutralize it before
- * replaying history, since a UI-only frame is not a message either side of the model produced.
- */
-export const GATE_CARD_HEADER = '\n\n---\n**Confirm exploration**\n\n';
-
-/**
- * Closing line of a pending approval card, written ahead of the buttons. The turn must close for VS
- * Code to release the chat input, so this line states that the buttons and a chat reply both still
- * act on the proposal. Part of the card, not a trailer: VS Code folds every part before a completed
- * response's last markdown into a collapsed disclosure, so text after the buttons would hide the
- * card. Matched by name in `chatHistoryAdapter.ts`, as {@link GATE_CARD_HEADER}.
- */
-export const HOLD_GATE_NOTICE =
-  '\n\nApprove, change or cancel with the buttons below, or reply here.';
-
-/** Card line while a completed analysis is shown: approving replaces it (fresh exploration). */
-export const REPLACE_ANALYSIS_NOTICE =
-  '\n\nThis question goes beyond the current analysis. Approving starts a new one and clears the current preview and its findings.';
-
-/** The pending approval card as the chat shows it, ahead of its buttons. */
-export function gateCardMd(card: string, replacesAnalysis: boolean): string {
-  const notice = replacesAnalysis ? REPLACE_ANALYSIS_NOTICE : '';
-  return `${GATE_CARD_HEADER}${card}${notice}${HOLD_GATE_NOTICE}\n\n`;
 }
 
 /** Chat line for a typed gate reply whose reading failed: no action is taken for the user. */

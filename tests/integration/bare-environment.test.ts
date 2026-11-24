@@ -6,18 +6,15 @@ import { announceLaneTier } from './laneTier';
  * Proves the extension survives a host with NO optional integrations present.
  *
  * @remarks
- * The demo DACPAC → graph flow must keep working when optional chat and database integrations are
+ * The demo DACPAC → graph flow must keep working when optional model and database integrations are
  * unavailable. An activation failure would also prevent core commands and views from registering.
  *
  * This lane launches with extensions disabled and supplies no language-model fixture. Its
- * assertions verify the absent integrations instead of assuming they are absent.
- *
- * What this can and cannot cover: it proves activation completes and the core surface is live in a
- * bare host. It does not simulate `vscode.chat` being absent outright (a VS Code fork, or chat
- * disabled by enterprise policy) — that is not reachable from inside a real VS Code host, and the
- * containment for it is the `try/catch` around the AI block in `src/extension.ts`.
+ * assertions verify the absent integrations instead of assuming they are absent. It proves
+ * activation completes and the core surface is live in a bare host; the containment for a failing
+ * AI block is the `try/catch` around it in `src/extension.ts`.
  */
-suite('Bare environment — no chat model or database extension', () => {
+suite('Bare environment — no model entry or database extension', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
   suiteSetup(() => { announceLaneTier(
@@ -74,11 +71,9 @@ suite('Bare environment — no chat model or database extension', () => {
       'the session-scoped AI trace command must be registered without a model provider',
     );
 
-    // `dataLineageViz.ai.enabled` defaults to true, so the AI surface does register here; a throw
-    // would have rejected the earlier `activate()`.
     assert.ok(
-      commands.includes('dataLineageViz.aiResumeNativeGate'),
-      'the participant registers even with no chat model present',
+      commands.includes('dataLineageViz.setApiKey'),
+      'the API key command must be registered without a model entry or key',
     );
   });
 });

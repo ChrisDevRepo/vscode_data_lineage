@@ -163,6 +163,11 @@
         "command": "dataLineageViz.updateDatabasePassword",
         "title": "Update Database Password",
         "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.setApiKey",
+        "title": "Set API key",
+        "category": "Data Lineage"
       }
     ],
     "keybindings": [],
@@ -530,74 +535,72 @@
           "dataLineageViz.ai.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Turn the @lineage chat participant and its AI tools on or off. Reload the window after changing."
+            "description": "Turn the AI tools on or off. Reload the window after changing."
           },
           "dataLineageViz.ai.maxRounds": {
             "type": "integer",
             "default": 50,
             "minimum": 5,
             "maximum": 100,
-            "markdownDescription": "Maximum rounds per `@lineage` deep analysis; each procedure, view or function it reads takes one round."
+            "markdownDescription": "Maximum rounds per AI deep analysis; each procedure, view or function it reads takes one round."
           },
           "dataLineageViz.ai.maxTraceColumns": {
             "type": "integer",
             "default": 10,
             "minimum": 1,
-            "markdownDescription": "Maximum starting columns one `@lineage` column trace may follow."
+            "markdownDescription": "Maximum starting columns one AI column trace may follow."
           },
           "dataLineageViz.ai.discoveryNodeCap": {
             "type": "integer",
             "default": 10,
             "minimum": 1,
             "maximum": 30,
-            "markdownDescription": "Maximum scope objects in one `@lineage` catalog request; above it, a deep analysis is offered for your approval."
+            "markdownDescription": "Maximum scope objects in one AI catalog request; above it, a deep analysis is offered for your approval."
           },
           "dataLineageViz.ai.discoveryTokenBudget": {
             "type": "integer",
             "default": 10000,
             "minimum": 1000,
             "maximum": 32000,
-            "markdownDescription": "Estimated DDL token limit for one `@lineage` catalog request, capped at one eighth of the model's input window; above it, a deep analysis is offered for your approval. [Details](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)"
+            "markdownDescription": "Estimated DDL token limit for one AI catalog request, capped at one eighth of the model's input window; above it, a deep analysis is offered for your approval. [Details](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)"
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
             "default": "",
             "markdownDescription": "Path to a custom AI output templates YAML file; empty uses the built-in templates. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md)"
+          },
+          "dataLineageViz.ai.models": {
+            "type": "array",
+            "default": [],
+            "scope": "application",
+            "markdownDescription": "OpenAI-compatible model endpoints the assistant can use (Chat Completions or Responses). Keys never belong here: run [Set API key](command:dataLineageViz.setApiKey) per entry. An invalid entry is named and not offered.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "name", "url", "model", "apiType", "maxInputTokens", "maxOutputTokens"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1, "markdownDescription": "Stable identifier; also names the secret-store entry of the key." },
+                "name": { "type": "string", "minLength": 1, "description": "Display name." },
+                "url": { "type": "string", "markdownDescription": "Base URL of the API, e.g. `https://host/openai/v1/`; https, or http on 127.0.0.1, localhost or [::1]. No query string." },
+                "model": { "type": "string", "minLength": 1, "description": "Model name sent in the request." },
+                "apiType": { "type": "string", "enum": ["chat-completions", "responses"], "description": "Wire format of the endpoint." },
+                "maxInputTokens": { "type": "integer", "minimum": 1, "description": "Input window of the model in tokens." },
+                "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit of the model in tokens; sent as `max_output_tokens` on Responses only." },
+                "supportsReasoningEffort": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Reasoning efforts the model accepts." },
+                "reasoningEffort": { "type": "string", "description": "Reasoning effort sent with each request." },
+                "forcedToolChoice": { "type": "boolean", "default": true, "description": "Whether the endpoint accepts a forced tool choice; when off, `auto` is sent." },
+                "requestBody": { "type": "object", "markdownDescription": "Extra request parameters, sent unchanged. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream` and `stream_options` are owned by the extension." },
+                "requestHeaders": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Extra request headers. Never a key." }
+              }
+            }
+          },
+          "dataLineageViz.ai.defaultModel": {
+            "type": "string",
+            "default": "",
+            "scope": "application",
+            "markdownDescription": "The `id` of the `ai.models` entry used by default."
           }
         }
-      }
-    ],
-    "chatParticipants": [
-      {
-        "id": "dataLineageViz.lineage",
-        "name": "lineage",
-        "fullName": "Data Lineage Assistant",
-        "when": "config.dataLineageViz.ai.enabled",
-        "description": "Ask questions about your loaded lineage graph — tables, procedures, dependencies, data flow.",
-        "isSticky": true,
-        "commands": [
-          {
-            "name": "trace",
-            "description": "Trace data lineage for an object or column"
-          },
-          {
-            "name": "search",
-            "description": "Search for database objects by name or schema"
-          }
-        ],
-        "disambiguation": [
-          {
-            "category": "lineage",
-            "description": "Questions about database dependencies, data flow, stored procedures, table lineage, SQL object relationships, where data comes from or goes to",
-            "examples": [
-              "Where does revenue come from",
-              "Trace the data flow for orders",
-              "What tables does this procedure read from",
-              "Show me the lineage for the sales schema",
-              "What are the upstream sources of this table"
-            ]
-          }
-        ]
       }
     ],
     "languageModelTools": [
@@ -896,7 +899,6 @@
     "test:edh": "vscode-test",
     "test:bare-environment": "vscode-test --label bare-environment",
     "test:tools": "vscode-test --label tools",
-    "test:ai:smoke": "npm run pretest:integration && vscode-test --config .vscode-test.ai.mjs",
     "test:gui:host": "node tests/tools/gui-test-host.mjs",
     "test:gui:smoke": "node tests/tools/playwright-smoke.mjs",
     "package": "vsce package --no-dependencies",
@@ -911,6 +913,7 @@
     "@floating-ui/react": "0.27.20",
     "@langchain/core": "1.5.0",
     "@langchain/langgraph": "1.7.5",
+    "@langchain/openai": "1.8.5",
     "@microsoft/vscode-azext-azureauth": "5.1.1",
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "13.0.2",
@@ -921,6 +924,7 @@
     "graphology-components": "1.5.4",
     "graphology-shortest-path": "2.1.0",
     "graphology-traversal": "0.3.1",
+    "js-tiktoken": "1.0.21",
     "js-yaml": "5.5.0",
     "jszip": "3.10.2",
     "katex": "0.19.1",

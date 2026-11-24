@@ -25,12 +25,12 @@ export function modelAssistantMessage(text: string): AIMessage {
 
 /**
  * `AIMessage.additional_kwargs` key carrying a generation's provider stream parts: every part the
- * bridge does not interpret as text or a tool call (reasoning, thought signatures, provider data),
+ * port does not interpret as text or a tool call (reasoning, thought signatures, provider data),
  * as the original objects in stream order. The array rides exactly one stream chunk:
  * `AIMessageChunk.concat` keeps it untouched, whereas two chunks carrying the key would have their
  * items merged by `id` into plain objects.
  */
-export const PROVIDER_PARTS_KEY = 'providerParts';
+const PROVIDER_PARTS_KEY = 'providerParts';
 
 /** Reads a message's provider stream parts ({@link PROVIDER_PARTS_KEY}); empty if none. */
 export function messageProviderParts(message: BaseMessage): readonly unknown[] {
@@ -171,10 +171,9 @@ export function isPortCancellation(error: unknown): boolean {
 }
 
 /**
- * Error names the VS Code language-model host raises on cancellation: `Canceled` (platform
- * spelling, `vscode.CancellationError`), `Cancelled` (providers using two `l`s) and `AbortError`
- * (fetch-level abort). Declared once because the bridge and the port both classify the raw
- * transport error and a copy of the list drifts silently.
+ * Error names a host raises on cancellation: `Canceled` (platform spelling,
+ * `vscode.CancellationError`), `Cancelled` (two `l`s) and `AbortError` (fetch-level abort). Declared
+ * once so every classifier of a raw transport error shares one list.
  */
 const HOST_CANCELLATION_ERROR_NAMES: ReadonlySet<string> = new Set([
   'AbortError',
@@ -243,7 +242,7 @@ export interface ToolGenerationInput {
   readonly onTextDelta?: (text: string) => void;
 }
 
-/** A registered native tool call ready for argument validation at its execution boundary. @internal */
+/** A registered native tool call ready for argument validation at its execution boundary. */
 export interface ValidGeneratedToolCall {
   readonly valid: true;
   /** Provider call identifier, echoed into the paired tool-result message. */
@@ -254,7 +253,7 @@ export interface ValidGeneratedToolCall {
   readonly input: unknown;
 }
 
-/** A provider tool call rejected before dispatch. @internal */
+/** A provider tool call rejected before dispatch. */
 export interface InvalidGeneratedToolCall {
   readonly valid: false;
   /** Provider call identifier exactly as the provider emitted it. */

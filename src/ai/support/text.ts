@@ -1,6 +1,6 @@
 /**
  * Pure string helpers shared by the VS Code-free AI core, the provider adapters and the host
- * runners (one copy for the core and the `vscode.lm` runner). Secret redaction lives here so every
+ * runners. Secret redaction lives here so every
  * provider-error path sanitizes before logging or emitting.
  */
 
@@ -231,27 +231,23 @@ const STOP_LINE: Readonly<Record<StopSource, { readonly verb: 'failed' | 'stoppe
   model_replies: { verb: 'stopped', label: 'model replies rejected' },
 };
 
-/** Closing sentence of every {@link describeTurnStop} line; replayed history drops such lines. */
-export const TURN_STOP_LINE_END = `Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
+/** Closing sentence of every {@link describeTurnStop} line. */
+const TURN_STOP_LINE_END = `Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
 
 /**
  * The chat block of one committed hop: a bold `Hop n/m` header and the finding summary in italics
- * (`summary` already Markdown-escaped). UI progress, not a model reply; replayed history drops it
- * through {@link HOP_PROGRESS_BLOCK}.
+ * (`summary` already Markdown-escaped). UI progress, not a model reply.
  */
 export function hopProgressBlock(current: number, total: number, label: string, summary: string): string {
   return `\n\n**Hop ${current}/${total} — ${label}**\n\n_${summary}_\n\n`;
 }
-
-/** Matches every {@link hopProgressBlock}; global, for `replace` only. */
-export const HOP_PROGRESS_BLOCK = /\n\n\*\*Hop \d+\/\d+ — [^\n]*\*\*\n\n_[^\n]*_\n\n/g;
 
 /**
  * The external message of a provider or network stop as the chat line quotes it: already redacted
  * and length-capped by {@link sanitizeProviderErrorDiagnostic}, Markdown-escaped, in double quotes.
  * Undefined for any other source, whose text is Data Lineage's own.
  */
-export function quotedExternalMessage(stop: TurnStop): string | undefined {
+function quotedExternalMessage(stop: TurnStop): string | undefined {
   const external = stop.source === 'provider' || stop.source === 'network' ? stop.diagnostic : undefined;
   return external && `"${escapeMarkdownText(external.message)}"`;
 }
@@ -283,7 +279,7 @@ function safeDiagnosticToken(value: string, fallback: string): string {
 
 /**
  * Strips overlay-only `#focus-node:` anchors from a cached AI-preview description before it is
- * replayed into a chat surface, which has no target for them and would render dead links. Every
+ * replayed into a chat transcript, which has no target for them and would render dead links. Every
  * `[label](#focus-node:...)` becomes plain `label`, and the `### Objects` transport line is demoted
  * to `*Objects: …*` so chat never renders a heading-scale object list.
  */

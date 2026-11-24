@@ -54,6 +54,8 @@ const runtimeDefaults: Record<string, unknown> = {
   'dataLineageViz.ai.discoveryNodeCap': DEFAULT_DISCOVERY_NODE_CAP,
   'dataLineageViz.ai.discoveryTokenBudget': DEFAULT_DISCOVERY_TOKEN_BUDGET,
   'dataLineageViz.ai.outputTemplateFile': '',
+  'dataLineageViz.ai.models': [],
+  'dataLineageViz.ai.defaultModel': '',
 };
 
 function manifestSettings(): Record<string, Setting> {

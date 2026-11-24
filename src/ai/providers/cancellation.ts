@@ -1,8 +1,7 @@
 /**
- * Cancellation bridge from VS Code to the provider adapter: `LineageParticipant.handleChatRequest`
- * hands the request's `vscode.CancellationToken` here to obtain a standard `AbortSignal` for the
- * model port. This is the one adapter between the two shapes; there is no separate cancellation
- * channel. VS Code-free (depends only on the structural {@link CancellationTokenLike}), so it is
+ * Cancellation bridge from VS Code to the tool layer: a tool invocation's `vscode.CancellationToken`
+ * is handed here to obtain a standard `AbortSignal`. This is the one adapter between the two
+ * shapes; there is no separate cancellation channel. VS Code-free (depends only on the structural {@link CancellationTokenLike}), so it is
  * unit-testable in the offline `ai` project.
  */
 

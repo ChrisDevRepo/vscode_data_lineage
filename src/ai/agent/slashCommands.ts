@@ -31,7 +31,7 @@ const BRACKET_CHAIN_RE = new RegExp(`(?:${BRACKET_IDENTIFIER}\\.){2,}${BRACKET_I
  * `column_trace` route only when the text names a fully-qualified column; otherwise the neutral
  * discovery verdict, so the command trigger, not a fabricated visual verdict, opens BB SM.
  *
- * @param prompt - The raw user prompt (the participant prepends `/<command> ` for chat commands).
+ * @param prompt - The raw user prompt (the chat host prepends `/<command> ` for chat commands).
  * @returns The pinned route, or `null` when no recognized command leads the prompt (the caller then
  *   runs the LLM entry detector).
  */

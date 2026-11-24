@@ -217,7 +217,7 @@ export class AgentRuntime {
         await this.dispatchSettled();
         return this.close('cancelled');
       }
-      // The error line is the participant's; a thrown text or stack can echo content: debug only.
+      // The error line is the chat host's; a thrown text or stack can echo content: debug only.
       if (!(err instanceof ModelPortError)) this.logger?.debug(`[AI] LangGraph turn failed — ${err instanceof Error ? err.stack : String(err)}`);
       const stop = classifyTurnStop(err, sanitizeProviderErrorDiagnostic(err, 'turn'));
       return this.close('error', err instanceof GraphRecursionError ? { ...stop, code: 'recursion_limit' } : stop);

@@ -24,6 +24,8 @@
     // Imported by external consumers (@ext alias / createRequire), which knip cannot trace.
     "tests/harness/scriptedModelPort.ts",
     "tests/fixtures/lm-provider-extension/live-provider-adapter.js",
+    // The internal in-host lanes (tools/run-vscode.mjs) load the fixture extension; ENG-897 M2.2 removes both.
+    "tests/fixtures/lm-provider-extension/extension.js",
     // extension.js loads it through a conditional require (DLV_CHAT_UI_REAL).
     "tests/fixtures/lm-provider-extension/chat-ui-provider.js",
     // Comment-batch proof tool invoked by CI, not the public gate.
@@ -38,6 +40,5 @@
   // Exports tagged @internal are test seams, not product API.
   "tags": ["-internal"],
   // VS Code supplies this module; @types/vscode provides the build-time API.
-  // @vscode/test-cli resolves @vscode/test-electron at runtime without declaring it.
-  "ignoreDependencies": ["@types/vscode", "@vscode/test-electron"],
+  "ignoreDependencies": ["@types/vscode"],
 }

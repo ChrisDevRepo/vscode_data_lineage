@@ -10,8 +10,8 @@ import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } f
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
 import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
-import { LineageParticipant } from './ai/participant/lineageParticipant';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
+import { createConfiguredModelPort } from './ai/providers/modelPortFactory';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules } from './engine/sqlBodyParser';
@@ -113,12 +113,10 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     .get<boolean>('enabled', DEFAULT_AI_ENABLED);
 
   const missingAiApis = [
-    typeof vscode.chat?.createChatParticipant === 'function' ? '' : 'chat participants (vscode.chat)',
     typeof vscode.lm?.registerTool === 'function' ? '' : 'language-model tools (vscode.lm)',
   ].filter(Boolean);
 
   let lineageRuntime: LineageRuntime | undefined;
-  let participant: LineageParticipant | undefined;
 
   try {
     if (aiEnabled && missingAiApis.length > 0) {
@@ -148,23 +146,14 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       },
     });
 
-    participant = new LineageParticipant(
-      context,
-      getSession,
-      outputChannel,
-      lineageRuntime,
-      traceWriter,
-    );
-    participant.register();
     } else {
       logger.info(
-        'AI surface disabled — dataLineageViz.ai.enabled is false; the @lineage participant, ' +
-        'the language-model tools and the AI runtime were not loaded.',
+        'AI surface disabled — dataLineageViz.ai.enabled is false; the language-model tools and ' +
+        'the AI runtime were not loaded.',
       );
     }
   } catch (err) {
     lineageRuntime = undefined;
-    participant = undefined;
     const detail = err instanceof Error ? err.message : String(err);
     notifyWarning(
       logger,
@@ -262,14 +251,21 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   return {
     getSession,
     getActivePanel,
-    participant,
     lineageRuntime,
+    /** The model port of an `ai.models` entry (the default entry when none is named). */
+    createModelPort: (options?: Parameters<typeof createConfiguredModelPort>[1]) => {
+      const config = vscode.workspace.getConfiguration('dataLineageViz.ai');
+      return createConfiguredModelPort(
+        { models: config.get('models'), defaultModel: config.get<string>('defaultModel'), secrets: context.secrets },
+        options,
+      );
+    },
   };
 }
 
 /**
  * Deactivation needs no cleanup: every disposable from {@link activateRuntime} (output channel,
- * commands, tree provider, chat participant, config listener, AI tools) is on
+ * commands, tree provider, config listener, AI tools) is on
  * `context.subscriptions` and torn down by VS Code. Panel resources such as database connections
  * are released by each panel's own `onDidDispose`.
  */

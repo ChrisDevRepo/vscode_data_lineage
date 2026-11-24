@@ -32,9 +32,9 @@ export interface HarnessSessionOptions {
    * The lane model's input window, in tokens.
    *
    * @remarks
-   * Drives the same calibration `lineageParticipant.ts` performs from `request.model.maxInputTokens`.
+   * Drives the calibration the chat host performs from the model's `maxInputTokens`.
    * A lane that does not know its window passes `Number.POSITIVE_INFINITY`, which leaves both
-   * configured ceilings untouched — the participant's behaviour for a model that reports none.
+   * configured ceilings untouched — the chat host's behaviour for a model that reports none.
    */
   readonly contextWindow: number;
   /**
@@ -65,10 +65,10 @@ async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
 }
 
 /**
- * Builds the participant's per-turn budget calibration for a lane of the given context window.
+ * Builds the chat host's per-turn budget calibration for a lane of the given context window.
  *
  * @remarks
- * Mirrors src/ai/participant/lineageParticipant.ts. The configured ceilings arrive as the shipped
+ * Mirrors the calibration the former chat participant performed. The configured ceilings arrive as the shipped
  * defaults because the headless shim answers `getConfiguration().get(key, default)` with that
  * default verbatim — reading them through the shim would produce the same numbers with more
  * indirection, so the constants are used directly and stay the single source of the ceiling.

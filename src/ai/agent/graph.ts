@@ -279,7 +279,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * `fail` carries the {@link TurnStop} and an error code; which budget ended the turn is a
    * separate enumerated axis, the only one a diagnostic consumer can read since lifecycle trace
    * records hold no failure prose. Routing every stop through here keeps one mapping. The
-   * participant writes the turn's one error line; the last rejection's prose rides the `[Stop]`
+   * chat host writes the turn's one error line; the last rejection's prose rides the `[Stop]`
    * line at `debug`.
    *
    * @param stopped - The stop `attemptStop` selected; `stop`/`errorCode` may be overridden when a
@@ -1119,7 +1119,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     try {
       classification = sess.requireLockedClassification();
     } catch (err) {
-      // The error line is the participant's; the thrown text and stack stay at debug.
+      // The error line is the chat host's; the thrown text and stack stay at debug.
       deps.logger?.debug(`[AI] classification lock missing in active worker — ${err instanceof Error ? err.stack : String(err)}`);
       return fail(classifyTurnStop(err, sanitizeProviderErrorDiagnostic(err, 'active')));
     }
@@ -1279,7 +1279,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     try {
       classification = sess.requireLockedClassification();
     } catch (err) {
-      // The error line is the participant's; the thrown text and stack stay at debug.
+      // The error line is the chat host's; the thrown text and stack stay at debug.
       deps.logger?.debug(`[AI] classification lock missing at synthesis — ${err instanceof Error ? err.stack : String(err)}`);
       return fail(classifyTurnStop(err, sanitizeProviderErrorDiagnostic(err, 'synthesis')));
     }
@@ -1686,7 +1686,7 @@ function presentedChatAnswer(sess: AiSession): string | null {
  * is not ACCEPT / REJECT / NORMALIZE-WITH-LOG). A held draft's intro, sections and closing render
  * through the preview's assembler ({@link orderAndAssemble}) unaltered; either text is followed by
  * one line saying the AI preview could not be rendered. `sess.markSynthesisRenderDegraded` records
- * the cause for the participant's one-shot warning toast.
+ * the cause for the chat host's one-shot warning toast.
  *
  * @param messages - The synthesis attempt's messages; the newest non-blank assistant text is the
  * fallback when no draft is held.
