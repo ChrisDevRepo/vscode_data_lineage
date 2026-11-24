@@ -72,8 +72,8 @@ async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
  * defaults because the headless shim answers `getConfiguration().get(key, default)` with that
  * default verbatim — reading them through the shim would produce the same numbers with more
  * indirection, so the constants are used directly and stay the single source of the ceiling.
- * The harness never learns a model window from its lanes, so `modelWindowTokens` is left unset and
- * resolves to `Infinity` via `createTurnTokenBudget`.
+ * The lane's window is the turn's `modelWindowTokens`, so the window-scaled prompt blocks size from
+ * the model entry; a lane that passes `POSITIVE_INFINITY` runs with no window.
  *
  * @param contextWindow - Model input window in tokens; `POSITIVE_INFINITY` when unknown.
  * @returns The frozen budget the turn's model port carries.
@@ -81,6 +81,7 @@ async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
 function calibrateTokenBudgets(contextWindow: number): TurnTokenBudget {
   const window = contextWindow > 0 ? contextWindow : Number.POSITIVE_INFINITY;
   const settings = {
+    modelWindowTokens: window,
     discoveryNodeCap: DEFAULT_DISCOVERY_NODE_CAP,
     discoveryTokenBudget: Math.min(
       DEFAULT_DISCOVERY_TOKEN_BUDGET,
