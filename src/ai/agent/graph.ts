@@ -42,6 +42,9 @@ import { toEngineLog } from '../support/engineLog';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolProvider';
 import { detectSlashRoute } from './slashCommands';
+import { buildNodeMap } from '../support/graphUtils';
+import { resolveModelNodeId } from '../support/inputNormalization';
+import type { DatabaseModel } from '../../engine/types';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
@@ -232,6 +235,14 @@ export interface AgentGraphDeps {
   readonly clearPreview?: () => void;
 }
 
+
+/** The canonical node id when every object a `/trace` names resolves to the same one node; else `null`. */
+function resolveTraceOrigin(origins: string[], model: DatabaseModel | null): string | null {
+  if (!model) return null;
+  const nodeMap = buildNodeMap(model);
+  const resolved = new Set(origins.map(id => resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive)));
+  return resolved.size === 1 ? [...resolved][0] : null;
+}
 
 /**
  * Builds the production LangGraph runtime for one native-chat turn. Runtime handles are captured in
@@ -608,10 +619,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const marker = state.prompt.startsWith(TRACE_REQUEST_MARKER);
     if (held && (slash || marker)) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
     if (slash) {
-      return { ctx, messages, entry: slash.entry, executionTrigger: slash.trigger, targetColumns: slash.targetColumns, phase: 'detect_entry' };
+      const resolvedOrigin = resolveTraceOrigin(slash.origins, sess.model);
+      return { ctx, messages, entry: slash.entry, executionTrigger: slash.trigger, targetColumns: slash.targetColumns, resolvedOrigin, phase: 'detect_entry' };
     }
     if (marker) {
-      return { ctx, messages, entry: 'discovery', executionTrigger: 'run_trace', targetColumns: null, phase: 'detect_entry' };
+      return { ctx, messages, entry: 'discovery', executionTrigger: 'run_trace', targetColumns: null, resolvedOrigin: null, phase: 'detect_entry' };
     }
 
     const trigger = parseGateTrigger(state.prompt);
@@ -676,7 +688,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
 
     if (sess.phase.kind === 'completed' && sess.resultGraph) {
-      return { ctx, messages, entry: 'discovery', targetColumns: null, phase: 'follow_up' };
+      return { ctx, messages, entry: 'discovery', targetColumns: null, resolvedOrigin: null, phase: 'follow_up' };
     }
 
     const priorAttempt = attemptStateFor(state, 'detect_entry');
@@ -757,6 +769,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       entry: entry.entry,
       executionTrigger: 'free_text',
       targetColumns: entry.targetColumns ?? null,
+      resolvedOrigin: null,
       toolAttempt: null,
       phase: 'detect_entry',
     };
@@ -827,7 +840,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]),
         facts: explorationFacts(targetColumns?.length ? 'ct' : 'bb', targetColumns, { memorySections: ['conversation_history'] }),
         messages,
-        system: buildSmEntrySystemPrompt(getCtx(state), targetColumns, discoveryBudget),
+        system: buildSmEntrySystemPrompt(getCtx(state), targetColumns, discoveryBudget, state.resolvedOrigin),
         sink: deps.sink,
         signal: deps.signal,
         detectGate: detectGateFromToolResult,

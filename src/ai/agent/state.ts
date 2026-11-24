@@ -101,6 +101,8 @@ export const AgentState = Annotation.Root({
   entry: Annotation<AgentEntryRoute | null>({ reducer: lastValue, default: () => null }),
   executionTrigger: Annotation<AgentExecutionTrigger>({ reducer: lastValue, default: () => 'free_text' }),
   targetColumns: Annotation<string[] | null>({ reducer: lastValue, default: () => null }),
+  /** Canonical node id of the one object a `/trace` command names; `null` when none or several resolve. */
+  resolvedOrigin: Annotation<string | null>({ reducer: lastValue, default: () => null }),
   gate: Annotation<PendingGate | null>({ reducer: lastValue, default: () => null }),
   gateDecision: Annotation<GateDecision | null>({ reducer: lastValue, default: () => null }),
   activeHopCount: Annotation<number>({ reducer: lastValue, default: () => 0 }),
