@@ -39,22 +39,45 @@ export function messageProviderParts(message: BaseMessage): readonly unknown[] {
 }
 
 /**
- * The assistant turn to append for one generation: its message unchanged, plus each call it lacks
- * (a call whose input was no JSON object) with empty arguments, so every call keeps the tool result
- * that answers it. The turn keeps `response_metadata`: it names the endpoint and response the
- * transport chains the next request on, and it is the only mark of a turn the endpoint owns.
+ * `AIMessage.additional_kwargs` key carrying, by call ID, the arguments text of each call whose text
+ * is no JSON object, exactly as streamed. LangChain would complete a cut text into `tool_calls` or
+ * file the call apart, and its wire converters would quote the text; the transport that knows its
+ * wire replays the text from this key.
+ */
+const STREAMED_ARGUMENTS_KEY = 'streamedToolArguments';
+
+/** Records the streamed arguments texts of one generation's message ({@link STREAMED_ARGUMENTS_KEY}). */
+export function recordStreamedToolArguments(message: BaseMessage, texts: Readonly<Record<string, string>>): void {
+  if (Object.keys(texts).length === 0) return;
+  message.additional_kwargs = { ...message.additional_kwargs, [STREAMED_ARGUMENTS_KEY]: texts };
+}
+
+/** Reads a message's streamed arguments texts by call ID ({@link STREAMED_ARGUMENTS_KEY}); empty if none. */
+export function messageStreamedToolArguments(message: BaseMessage): Readonly<Record<string, string>> {
+  const texts: unknown = message.additional_kwargs?.[STREAMED_ARGUMENTS_KEY];
+  return Object.fromEntries(Object.entries(isRecord(texts) ? texts : {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+}
+
+/**
+ * The assistant turn to append for one generation: its message with no call replayed as LangChain
+ * repaired it. A call whose streamed text is no JSON object keeps empty arguments here (the text
+ * rides {@link STREAMED_ARGUMENTS_KEY} for the transport), and a call the message lacks gets empty
+ * arguments too, so every call keeps the tool result that answers it. The turn keeps
+ * `response_metadata`: it names the endpoint and response the transport chains the next request on,
+ * and it is the only mark of a turn the endpoint owns.
  */
 export function transcriptTurn(message: AIMessage, calls: readonly GeneratedToolCall[]): AIMessage {
   const kept = message.tool_calls ?? [];
   const keptIds = new Set(kept.map((call) => call.id));
   const missing = calls.filter((call) => !keptIds.has(call.callId));
-  if (missing.length === 0) return message;
+  const streamed = messageStreamedToolArguments(message);
+  if (missing.length === 0 && !kept.some((call) => streamed[call.id ?? ''] !== undefined)) return message;
   return new AIMessage({
     content: message.content,
     additional_kwargs: message.additional_kwargs,
     response_metadata: message.response_metadata,
     tool_calls: [
-      ...kept,
+      ...kept.map((call) => (streamed[call.id ?? ''] === undefined ? call : { ...call, args: {} })),
       ...missing.map((call) => ({ id: call.callId, name: call.toolName, args: {}, type: 'tool_call' as const })),
     ].sort((a, b) => calls.findIndex((call) => call.callId === a.id) - calls.findIndex((call) => call.callId === b.id)),
   });

@@ -18,6 +18,7 @@ import {
   isRecord,
   messageContentToText,
   messageProviderParts,
+  recordStreamedToolArguments,
 } from './modelPort';
 import { systemPromptHash, type TokenUsage, type WireEvent, type WireRecord } from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
@@ -27,7 +28,7 @@ import {
 } from '../support/text';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
-import { coerceStringifiedArguments } from '../support/inputNormalization';
+import { coerceStringifiedArguments, parseJson } from '../support/inputNormalization';
 import { toolCallNotationFault } from '../support/toolCallNotation';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
@@ -397,14 +398,18 @@ export class ProviderModelPort implements ModelPort {
         if (streamedUsage) usage = streamedUsage as TokenUsage;
       }
       if (signal?.aborted) throw cancelledError();
-      // The chunks keep the provider's call order and every call, including one whose input is no
-      // JSON object (LangChain files it apart from `tool_calls`); the receiving boundary rejects
-      // that call by its ID instead of the turn failing.
-      const toolCalls: Array<{ id?: string; name: string; args: unknown }> = (message.tool_call_chunks ?? []).map((chunk) => ({
-        id: chunk.id,
-        name: chunk.name ?? '',
-        args: chunk.args ? JSON.parse(chunk.args) as unknown : {},
-      }));
+      // The chunks keep the provider's call order and every call. LangChain files a call apart from
+      // `tool_calls` when its text cannot be completed to JSON, and completes a cut text into
+      // `tool_calls`; the chunks carry the text as streamed. A text that is no JSON stays that text,
+      // and the receiving boundary rejects the call by its ID instead of the turn failing.
+      const notObjects: Record<string, string> = {};
+      const toolCalls: Array<{ id?: string; name: string; args: unknown }> = (message.tool_call_chunks ?? []).map((chunk) => {
+        const args = chunk.args ? parseStreamedArguments(chunk.args) : {};
+        // A text that is no JSON object cannot ride `tool_calls` as it was sent: the transport replays it from here.
+        if (chunk.id && chunk.args && !isRecord(args)) notObjects[chunk.id] = chunk.args;
+        return { id: chunk.id, name: chunk.name ?? '', args };
+      });
+      recordStreamedToolArguments(message, notObjects);
       if (!toolCalls.every(hasCallId)) {
         throw new ModelPortError(
           'unsupported_response',
@@ -439,6 +444,12 @@ export class ProviderModelPort implements ModelPort {
 function observedFinishReason(streamEnded: boolean, toolCallCount: number): 'tool-calls' | 'stop' | 'unknown' {
   if (!streamEnded) return 'unknown';
   return toolCallCount > 0 ? 'tool-calls' : 'stop';
+}
+
+/** The streamed arguments as JSON, or the text itself when it is not valid JSON. */
+function parseStreamedArguments(text: string): unknown {
+  const parsed = parseJson(text);
+  return parsed === undefined ? text : parsed;
 }
 
 /** A tool call whose provider call ID is present; `args` is the input exactly as streamed. */
