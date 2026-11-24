@@ -1,8 +1,9 @@
 /**
  * The local MCP server accepts a client only with the bearer token and a local Host and Origin,
  * exists only while the setting is on, never writes the token to a log or an error body, and serves
- * the six discovery tools (each answer the registry's own text, each refusal `isError` with the chat's
- * first-level feedback text and its envelope in `structuredContent`) and the MCP-only graph tools.
+ * the nine data tools of the shared catalog (each answer the registry's own text, each refusal `isError`
+ * with the chat's first-level feedback text and its envelope in `structuredContent`), in the 2025-11-25
+ * and the 2026-07-28 revision, whatever stage a chat turn is in.
  */
 import { request } from 'node:http';
 import { createServer } from 'node:net';
@@ -23,6 +24,7 @@ import { AiSession } from '../../../src/ai/session/session';
 import { filterRegistry, ToolRegistry } from '../../../src/ai/tools/registry';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { TOOL_DEFS } from '../../../src/ai/tools/toolDefs';
+import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { Logger } from '../../../src/utils/log';
 import type { DatabaseModel } from '../../../src/engine/types';
@@ -172,9 +174,9 @@ describe('local MCP server', () => {
 
 const fixture = () => createHarnessSession({ dacpacPath: repoPath('tests/fixtures/AdventureWorks2025_AI.dacpac'), contextWindow: Number.POSITIVE_INFINITY });
 
-/** The 6 discovery tools: the read-only catalog minus `lineage_get_neighbor_columns`. */
+/** The 6 discovery tools; the graph tools (trace, path, preview) are served from the same catalog. */
 const TOOL_NAMES = ['get_context', 'get_screen_state', 'search_objects', 'get_object_detail', 'detect_graph_patterns', 'search_ddl'].map((name) => `lineage_${name}`);
-const MCP_ONLY_NAMES = ['lineage_get_trace', 'lineage_get_path', 'lineage_create_graph_preview'];
+const GRAPH_NAMES = ['lineage_get_trace', 'lineage_get_path', 'lineage_create_graph_preview'];
 
 /** One call input per tool on the AdventureWorks fixture. */
 const CALLS: Record<string, Record<string, unknown>> = {
@@ -195,16 +197,16 @@ async function connected(session: AiSession, panel?: PanelStub) {
     // `outputSchema`; a refusal carries its envelope there and its first-level text in `content`.
     return { text, isError: result.isError, rejection: result.structuredContent as ToolRejection | undefined };
   };
-  return { ...s, client, call, registry: () => buildAiToolRegistry(() => session, s.channel, () => undefined, undefined, TOOL_HOST) };
+  return { ...s, client, call, registry: () => buildAiToolRegistry(() => session, s.channel, () => undefined, undefined, { ...TOOL_HOST, budget: null }) };
 }
 
 describe('lineage tools over MCP', () => {
-  it('initializes and lists the six tools with the registry text, title and read-only annotations, then the MCP-only ones', async () => {
+  it('initializes and lists the nine data tools with the catalog text, title and annotations (the graph preview is not read-only)', async () => {
     const { client } = await connected((await fixture()).session);
     expect(client.getServerCapabilities()).toMatchObject({ tools: expect.anything() });
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES, ...MCP_ONLY_NAMES].sort());
-    for (const tool of tools.filter((listed) => TOOL_NAMES.includes(listed.name))) {
+    expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES, ...GRAPH_NAMES].sort());
+    for (const tool of tools) {
       const def = TOOL_DEFS.find((candidate) => candidate.name === tool.name)!;
       expect(tool.description, tool.name).toBe(def.modelDescription);
       expect(tool.inputSchema, tool.name).toEqual(toModelJsonSchema(def.inputSchema));
@@ -212,7 +214,7 @@ describe('lineage tools over MCP', () => {
       const undescribed = Object.entries((tool.inputSchema.properties ?? {}) as Record<string, object>).filter(([, schema]) => !('description' in schema));
       expect(undescribed, tool.name).toEqual([]);
       expect(tool.title, tool.name).toBeTruthy();
-      expect(tool.annotations, tool.name).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+      expect(tool.annotations, tool.name).toEqual({ readOnlyHint: tool.name !== 'lineage_create_graph_preview', destructiveHint: false, idempotentHint: true, openWorldHint: false });
       expect(tool.outputSchema, tool.name).toBeUndefined();
     }
     await expect(client.callTool({ name: 'lineage_start_exploration', arguments: {} }).then((result) => result.isError, () => true)).resolves.toBe(true);
@@ -286,34 +288,85 @@ describe('lineage tools over MCP', () => {
     expect(untimed(panel.posted)).toEqual(untimed(freshPanel.posted));
   });
 
-  it('keeps the external-call behaviour during a running turn: the phase guard refuses a read with off_policy', async () => {
+  it('serves statelessly: a running chat turn gates no tool, its stage changes no answer, and the calls leave session.hopLog unchanged', async () => {
     const { session } = await fixture();
+    const idle = await connected((await fixture()).session);
+    const [order, trace] = ['[Sales].[SalesOrderHeader]', { origin: '[Sales].[SalesOrderHeader]', upstream_levels: 1, downstream_levels: 1, include_dml: false }] as const;
+    const calls: Record<string, Record<string, unknown>> = { ...CALLS, lineage_get_trace: trace, lineage_get_path: { start: order, end: order, include_dml: false } };
     session.activeLmStage = { kind: 'active', mode: 'sm_bb' };
-    const { call, registry } = await connected(session);
-    const answer = await call('lineage_search_objects', CALLS['lineage_search_objects']!);
-    expect(answer).toMatchObject({ isError: true, rejection: { code: 'off_policy' } });
-    expect(answer.rejection).toEqual(JSON.parse(await registry().invoke('lineage_search_objects', CALLS['lineage_search_objects'])));
+    const running = await connected(session);
+    for (const name of [...TOOL_NAMES, 'lineage_get_trace', 'lineage_get_path']) {
+      const answer = await running.call(name, calls[name]!);
+      expect(answer, name).toMatchObject({ isError: false });
+      expect(answer.text, name).toBe((await idle.call(name, calls[name]!)).text);
+    }
+    expect(session.hopLog, 'the hop log is the chat turn\'s record').toEqual([]);
   });
 
-  it('aborts the handler when the connection closes, recording no result and no error', async () => {
+  it('runs under no discovery budget: what the chat refuses or cuts to fit its turn budget is answered whole', async () => {
+    const { session } = await fixture();
+    const { call, channel } = await connected(session);
+    const chat = buildAiToolRegistry(() => session, channel, () => undefined, undefined, { ...TOOL_HOST, budget: createTurnTokenBudget({ discoveryTokenBudget: 1000 }) });
+    const ask = async (name: string, input: Record<string, unknown>) => ({ chat: JSON.parse(await chat.invoke(name, input)), mcp: await call(name, input) });
+
+    const ddl = await ask('lineage_search_ddl', { query: 'a' });
+    expect(ddl.chat).toMatchObject({ code: 'over_discovery_budget' });
+    expect(ddl.mcp.isError).toBe(false);
+    expect(JSON.parse(ddl.mcp.text).by_object.length).toBeGreaterThan(40);
+
+    const hubs = await ask('lineage_detect_graph_patterns', { type: 'hubs', min_degree: 1 });
+    expect(hubs.chat).toMatchObject({ groups_omitted: true, total_groups: 104 });
+    expect(hubs.mcp.isError).toBe(false);
+    expect(JSON.parse(hubs.mcp.text)).toMatchObject({ total_groups: 104, groups: expect.any(Array) });
+    expect(hubs.mcp.text).not.toContain('groups_omitted');
+  });
+
+  it('serves the 2026-07-28 revision: server/discover lists it and a call carries its per-request envelope, a refusal as isError', async () => {
+    const { session } = await fixture();
+    const { url, token } = await started(session);
+    const envelope = {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+      'io.modelcontextprotocol/clientInfo': { name: 'test-client', version: '1' },
+      'io.modelcontextprotocol/clientCapabilities': {},
+    };
+    const rpc = async (method: string, params: Record<string, unknown>, name?: string) => {
+      const answer = await post(url, {
+        authorization: `Bearer ${token}`, 'mcp-protocol-version': '2026-07-28', 'mcp-method': method, ...(name && { 'mcp-name': name }),
+      }, JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { ...params, _meta: envelope } }));
+      return { status: answer.status, body: JSON.parse(answer.body) };
+    };
+    const discovered = await rpc('server/discover', {});
+    expect(discovered.status).toBe(200);
+    expect(discovered.body.result.supportedVersions).toContain('2026-07-28');
+    const listed = await rpc('tools/list', {});
+    expect(listed.body.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual([...TOOL_NAMES, ...GRAPH_NAMES].sort());
+    const called = await rpc('tools/call', { name: 'lineage_get_object_detail', arguments: { id: '[Sales].[SalesOrderHeader]' } }, 'lineage_get_object_detail');
+    expect(called.body.result).toMatchObject({ isError: false });
+    expect(JSON.parse(called.body.result.content[0].text)).toMatchObject({ id: '[sales].[salesorderheader]', type: 'table' });
+    const refused = await rpc('tools/call', { name: 'lineage_get_object_detail', arguments: { id: '[dbo].[NoSuchObject]' } }, 'lineage_get_object_detail');
+    expect(refused.body.result).toMatchObject({ isError: true, structuredContent: { code: 'not_found' } });
+  });
+
+  it('aborts the handler when the connection closes, logging no result and no error', async () => {
     const { session } = await fixture();
     session.model = { ...session.model!, nodes: [...session.model!.nodes, { id: '[dbo].[slow]', name: 'slow', schema: 'dbo', type: 'view', bodyScript: 'a'.repeat(50_000) }] } as DatabaseModel;
-    const { url, token, errors } = await started(session);
+    const { url, token, errors, lines } = await started(session);
+    const resultLogged = () => lines.some((line) => line.includes('Invoking lineage_search_ddl'));
     const headers = { authorization: `Bearer ${token}`, 'mcp-protocol-version': '2025-11-25' };
     const slow = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'lineage_search_ddl', arguments: { query: '(a+)+x' } } });
-    // A 2026-era client cancels by aborting the call's HTTP stream; the server sees a closed socket
+    // A client cancels a stateless call (here 2025-11-25; the 2026-07-28 revision cancels the same way) by aborting its HTTP stream; the server sees a closed socket
     const closing = new AbortController();
     const closed = post(url, headers, slow, closing.signal).catch(() => 'closed');
     await new Promise((resolve) => setTimeout(resolve, 100));
     closing.abort();
     await expect(closed).resolves.toBe('closed');
-    // Past the 1s search deadline: a handler that ignored the close would have recorded its result.
+    // Past the 1s search deadline: a handler that ignored the close would have logged its result.
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    expect(session.hopLog).toHaveLength(0);
+    expect(resultLogged()).toBe(false);
     expect(errors).toEqual([]);
-    // Positive control: the same call left open records its deadline result.
+    // Positive control: the same call left open logs its deadline result.
     expect((await post(url, headers, slow)).status).toBe(200);
-    expect(session.hopLog).toHaveLength(1);
+    expect(resultLogged()).toBe(true);
   });
 
   it('guards the registry names it serves and dispatches the raw input unchanged', async () => {

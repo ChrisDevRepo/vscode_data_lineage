@@ -1061,7 +1061,7 @@ function overLength(limit: number) {
 
 const IncludeDmlSchema = z.boolean().describe('false drops the write, delete and exec edges before the walk; true walks every edge, as the graph view does.');
 
-/** `lineage_get_trace` input (MCP only): the graph view's trace by level. */
+/** `lineage_get_trace` input: the graph view's trace by level. */
 export const GetTraceInputSchema = z.object({
   origin: z.string().describe('Canonical object ID the trace starts from.'),
   upstream_levels: ScopeDepthSchema.describe('Levels toward the sources: an integer, "all" for the whole chain, or 0 for none.'),
@@ -1071,7 +1071,7 @@ export const GetTraceInputSchema = z.object({
 
 export type GetTraceInput = z.infer<typeof GetTraceInputSchema>;
 
-/** `lineage_get_path` input (MCP only): the graph view's Find Path. */
+/** `lineage_get_path` input: the graph view's Find Path. */
 export const GetPathInputSchema = z.object({
   start: z.string().describe('Canonical object ID at one end of the path.'),
   end: z.string().describe('Canonical object ID at the other end of the path.'),
@@ -1231,7 +1231,7 @@ export const PresentResultModelSchema = z.object({
 }).strict();
 
 /**
- * `lineage_create_graph_preview` input (MCP only): the view fields of `present_result` on the
+ * `lineage_create_graph_preview` input: the view fields of `present_result` on the
  * objects the caller names, with no walk. The fields keep the `present_result` shapes and bounds
  * (colors, label lengths, unique section labels, one caption per node); the descriptions are the
  * preview's own, as the chat text names the output template and the exploration stage. The
