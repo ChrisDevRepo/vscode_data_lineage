@@ -1080,13 +1080,6 @@ export const GetPathInputSchema = z.object({
 
 export type GetPathInput = z.infer<typeof GetPathInputSchema>;
 
-/** `lineage_create_graph_preview` input (MCP only): the AI graph preview of the given objects. */
-export const CreateGraphPreviewInputSchema = z.object({
-  ids: z.array(z.string()).min(1).max(DEFAULT_DISCOVERY_NODE_CAP).describe('Canonical object IDs the preview shows.'),
-  title: z.string().max(PRESENT_RESULT_NAME_MAX, overLength(PRESENT_RESULT_NAME_MAX)).trim().min(1).describe('Preview name shown in the graph banner.'),
-  summary: z.string().trim().min(1).optional().describe('One-line summary shown with the preview.'),
-}).strict();
-
 /**
  * A refinement that also runs when the value already carries shape issues, so one parse reports
  * every defect of a call instead of hiding the cross-field ones behind the first shape failure.
@@ -1096,28 +1089,34 @@ function superRefineAll<T>(fn: (value: T, ctx: z.core.$RefinementCtx<T>) => void
   return z.superRefine<T>(fn, { when: () => true });
 }
 
-/** Refinement for a `sections` list: each final label maps to exactly one section text. */
-function rejectDuplicateSectionLabels(sections: ReadonlyArray<{ label: string }>, ctx: z.core.$RefinementCtx): void {
-  if (!Array.isArray(sections)) return;
-  const seen = new Set<string>();
-  for (const [index, { label }] of sections.entries()) {
-    if (typeof label !== 'string') continue;
-    const key = normalizePresentSectionLabel(label);
-    if (seen.has(key)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: [index, 'label'],
-        message: `Duplicate section label "${label}" — each final label must map to exactly one section text`,
-        params: { hint: 'Send one entry per section label. To correct a held section, resend its label with corrected content and omit remove; use remove: true only to delete that section.' },
-      });
-    } else {
-      seen.add(key);
+/** Refinement for a `sections` list: each final label maps to exactly one section text; `hint` is the repair. */
+function rejectDuplicateSectionLabels(hint: string) {
+  return (sections: ReadonlyArray<{ label: string }>, ctx: z.core.$RefinementCtx): void => {
+    if (!Array.isArray(sections)) return;
+    const seen = new Set<string>();
+    for (const [index, { label }] of sections.entries()) {
+      if (typeof label !== 'string') continue;
+      const key = normalizePresentSectionLabel(label);
+      if (seen.has(key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [index, 'label'],
+          message: `Duplicate section label "${label}" — each final label must map to exactly one section text`,
+          params: { hint },
+        });
+      } else {
+        seen.add(key);
+      }
     }
-  }
+  };
 }
-/** A non-empty `sections` list with unique labels: the one bound every stage's array shares. */
+/** A non-empty `sections` list with unique labels; a duplicate is rejected with `hint`. */
+function sectionListWithHint<T extends z.ZodType<{ label: string }>>(item: T, hint: string) {
+  return z.array(item).min(1).check(superRefineAll(rejectDuplicateSectionLabels(hint)));
+}
+/** The `sections` list of every `present_result` stage: the one bound they share. */
 function sectionList<T extends z.ZodType<{ label: string }>>(item: T) {
-  return z.array(item).min(1).check(superRefineAll(rejectDuplicateSectionLabels));
+  return sectionListWithHint(item, 'Send one entry per section label. To correct a held section, resend its label with corrected content and omit remove; use remove: true only to delete that section.');
 }
 
 /** The merged held-draft `sections` field, held to the same bound as the served section arrays. */
@@ -1156,8 +1155,8 @@ const NoteSchema = z.object({
  * reads, so a held draft re-validates unchanged. A node ID given two different captions rejects,
  * since one of them would otherwise be lost; an identical repeat is harmless.
  */
-const NotesModelSchema = z.array(NoteSchema)
-  .superRefine((notes, ctx) => {
+function notesList<T extends z.ZodType<{ node_id: string; caption: string }>>(item: T) {
+  return z.array(item).superRefine((notes, ctx) => {
     const captionByNode = new Map<string, string>();
     for (const [index, note] of notes.entries()) {
       const first = captionByNode.get(note.node_id);
@@ -1170,8 +1169,9 @@ const NotesModelSchema = z.array(NoteSchema)
         });
       }
     }
-  })
-  .describe('Below-node captions, one per node.');
+  });
+}
+const NotesModelSchema = notesList(NoteSchema).describe('Below-node captions, one per node.');
 
 /** Schema for a visual highlight group, grouping nodes by a shared role or status. */
 const HighlightGroupSchema = z.object({
@@ -1229,6 +1229,35 @@ export const PresentResultModelSchema = z.object({
   notes: NotesModelSchema.optional(),
   is_update: z.boolean().optional().describe('True only when updating an existing presentation.'),
 }).strict();
+
+/**
+ * `lineage_create_graph_preview` input (MCP only): the view fields of `present_result` on the
+ * objects the caller names, with no walk. The fields keep the `present_result` shapes and bounds
+ * (colors, label lengths, unique section labels, one caption per node); the descriptions are the
+ * preview's own, as the chat text names the output template and the exploration stage. The
+ * report-only fields (heading, intro, closing, graph edits) are not offered. The node ids of the
+ * highlight groups, sections and notes are held to `ids` by `getGraphPreviewScope`.
+ */
+const PreviewHighlightGroupSchema = HighlightGroupSchema.extend({
+  label: HighlightGroupSchema.shape.label.describe('Short legend label describing the shared role or status.'),
+  color: HighlightSchemeSchema.describe('Flow role or status. `source`: origins whose data feeds the others. `target`: where the data lands. `transform`: nodes that create or change the values. `good` / `warn` / `fail`: diagnostic status.'),
+});
+const PreviewSectionSchema = PresentResultSectionSchema.extend({
+  label: PresentResultSectionSchema.shape.label.describe('What the section\'s nodes share, as heading and badge. No object names.'),
+});
+const PreviewNoteSchema = NoteSchema.extend({ caption: NoteSchema.shape.caption.describe('One-sentence caption.') });
+
+export const CreateGraphPreviewInputSchema = PresentResultModelSchema.pick({
+  name: true, summary: true, layout_direction: true,
+}).partial({ summary: true }).extend({
+  ids: z.array(z.string()).min(1).max(DEFAULT_DISCOVERY_NODE_CAP).describe('Canonical object IDs the preview shows; highlight_groups, sections and notes reference only these.'),
+  highlight_groups: z.array(PreviewHighlightGroupSchema).min(1).optional().describe('Color groups: each colors its nodes by role or status.'),
+  sections: sectionListWithHint(PreviewSectionSchema, 'Send one entry per section label.').optional()
+    .describe('Labelled sections: each label is a numbered badge on its nodes and a heading in the preview summary window.'),
+  notes: notesList(PreviewNoteSchema).optional().describe('Below-node captions, one per node.'),
+}).strict();
+
+export type CreateGraphPreviewInput = z.infer<typeof CreateGraphPreviewInputSchema>;
 
 /**
  * One section of a report that is already committed: `text` and `node_ids` may each be omitted to
