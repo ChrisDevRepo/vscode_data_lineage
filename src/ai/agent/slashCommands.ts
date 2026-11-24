@@ -19,11 +19,22 @@ interface SlashRoute {
 }
 
 const SLASH_RE = /^\s*\/(trace|search)\b[ \t]*/i;
+/** `/clear` and its alias `/new`, as the whole message. */
+const CLEAR_RE = /^\s*\/(?:clear|new)\s*$/i;
 /** One bracketed identifier; `]]` inside is an escaped `]`. */
 const BRACKET_IDENTIFIER = String.raw`\[(?:[^\]]|\]\])+\]`;
 const BRACKET_TOKEN_RE = new RegExp(BRACKET_IDENTIFIER, 'g');
 /** One contiguous dot-joined bracket chain of 3+ parts, e.g. `[schema].[table].[column]`. */
 const BRACKET_CHAIN_RE = new RegExp(`(?:${BRACKET_IDENTIFIER}\\.){2,}${BRACKET_IDENTIFIER}`, 'g');
+
+/**
+ * Whether the message is the host command `/clear` (alias `/new`): the chat host starts a new chat
+ * for it and makes no model call, so the command never reaches {@link detectSlashRoute}. Only the
+ * whole message counts; `/clear` followed by text is a prompt.
+ */
+export function isClearCommand(prompt: string): boolean {
+  return CLEAR_RE.test(prompt);
+}
 
 /**
  * Pins an entry route for a leading `/trace` or `/search` command, skipping the entry-detector

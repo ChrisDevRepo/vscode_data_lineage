@@ -104,10 +104,8 @@ export function openPanel(
     detailPanel?.dispose();
     while (panelDisposables.length > 0) panelDisposables.pop()?.dispose();
 
+    // The chat controller owns the exploration state (its view dispose above resets the session).
     const sess = getSession();
-    if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed') {
-      sess.resetExploration();
-    }
     sess.model = null;
     sess.graph = null;
     sess.columnStore.clear();

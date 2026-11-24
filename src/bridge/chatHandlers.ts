@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { NO_MODEL_MESSAGE, type ChatToExtensionMsg, type ChatToWebviewMsg, type TurnEvent } from '../engine/shared/chatContract';
 import { ModelPortError, type ModelPort } from '../ai/model/modelPort';
+import { isClearCommand } from '../ai/agent/slashCommands';
 import { expandNextQuestionSuggestions } from '../ai/prompting/followupSuggestions';
 import { NEXT_QUESTIONS_TRIGGER, RUN_TRACE_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER, expandRunTracePrompt } from '../ai/prompting/prompts';
 import type { ProviderModelPortOptions } from '../ai/model/providerModelPort';
@@ -81,7 +82,10 @@ export class ChatController {
 
   public constructor(private readonly deps: ChatHostDeps) {}
 
-  /** Attaches the view; disposing the handle detaches it and aborts the turn it was showing. */
+  /**
+   * Attaches the view; disposing the handle detaches it and ends the chat it showed: the turn is
+   * aborted and the session reset, so a held approval proposal never outlives its card.
+   */
   public attachView(view: ChatView): { dispose(): void } {
     this.view = view;
     this.ready = false;
@@ -90,9 +94,8 @@ export class ChatController {
         if (this.view !== view) return;
         this.view = undefined;
         this.ready = false;
-        if (!this.turn) return;
-        this.deps.logger.debug(`[Chat] view closed — aborting turn ${this.turn.turnId}`);
-        this.turn.abort.abort();
+        this.deps.logger.debug(`[Chat] view closed — ending the chat${this.turn ? ` (aborting turn ${this.turn.turnId})` : ''}`);
+        this.resetSession().catch((error: unknown) => this.deps.logger.error('Chat reset on view close', error));
       },
     };
   }
@@ -119,6 +122,9 @@ export class ChatController {
       case 'chat.send':
         if (!this.ready) {
           logger.debug('[Chat] send rejected — the view has not sent ready');
+        } else if (isClearCommand(msg.text)) {
+          // A host command, not a prompt: the same path as the New chat button, even mid-turn.
+          await this.newChat();
         } else if (this.turn) {
           logger.debug('[Chat] send rejected — a turn is already running');
         } else {
@@ -179,12 +185,17 @@ export class ChatController {
       .catch((error: unknown) => this.deps.logger.error('Chat gate decision', error));
   }
 
-  private async newChat(): Promise<void> {
+  /** Aborts a running turn, waits for it to end, then starts a fresh session (memory, state machine, gate, results, transcript). */
+  private async resetSession(): Promise<void> {
     if (this.turn) {
       this.turn.abort.abort();
       await this.turn.done;
     }
     this.deps.getSession().beginNativeChatSession();
+  }
+
+  private async newChat(): Promise<void> {
+    await this.resetSession();
     this.post({ type: 'chat.history', messages: [] });
     this.post(this.stateMsg());
   }
