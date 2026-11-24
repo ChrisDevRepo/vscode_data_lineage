@@ -1051,7 +1051,7 @@ export async function searchDdl(
     total: number,
     objects: number,
   ) => withSearched(searched => ({
-    reason:          admission.reason,
+    code:            admission.code,
     counts:          admission.detail.counts,
     limits:          admission.detail.limits,
     total,

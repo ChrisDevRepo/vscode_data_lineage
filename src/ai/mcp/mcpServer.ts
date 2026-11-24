@@ -174,7 +174,10 @@ const acceptAll: jsonSchemaValidator = {
  * One tool answer as the MCP result. A refusal is `isError` with the text the chat serves at its
  * first feedback level ({@link renderRejection}), so a client model reads the same reason and hint;
  * the envelope (`code`, `issuePaths`, `detail`) rides in `structuredContent`, which the spec allows
- * without an `outputSchema`.
+ * without an `outputSchema`. The rendered rejection text replaces the serialized JSON TextContent
+ * that the spec's tools page (server/tools, structured content) recommends alongside it, because
+ * that text is what the client model reads. `structuredContent` is supplementary: Claude Code
+ * passes it neither to the model nor into its transcript.
  */
 function toMcpResult(text: string, call: RejectedCall): CallToolResult {
   const rejection = readToolError(JSON.parse(text));
