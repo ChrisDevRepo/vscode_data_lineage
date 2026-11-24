@@ -11,8 +11,6 @@ import type Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel } from './types';
 
-export { findShortestPathOrdered } from './shared/lineageTrace';
-
 /**
  * Logging callback injected into state machines for operational tracing; the optional error
  * preserves caught stacks at production adapters without tying the engine to a concrete logger.

@@ -13,7 +13,8 @@ import { bfsFromNode } from 'graphology-traversal';
 import dagre from '@dagrejs/dagre';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
-import { AI_BADGE_BAND, AI_NOTE_BAND, NODE_HEIGHT, buildGraph, dagreLayout, setGraphLogSink, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
+import { AI_BADGE_BAND, AI_NOTE_BAND, NODE_HEIGHT, buildGraph, dagreLayout, setGraphLogSink } from '../../../src/engine/graphBuilder';
+import { traceNodeWithLevels } from '../../../src/engine/shared/lineageTrace';
 import { DEFAULT_CONFIG, type DatabaseModel } from '../../../src/engine/types';
 import { loadAdventureWorksModel, testPath } from '../helpers/testUtils';
 

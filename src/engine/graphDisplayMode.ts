@@ -1,6 +1,6 @@
 import type Graph from 'graphology';
 import { OBJECT_TYPES, type ExtensionConfig, type FilterState, type GraphMode } from './types';
-import { traceNodeIdsWithLevels } from './graphBuilder';
+import { traceNodeIdsWithLevels } from './shared/lineageTrace';
 
 /**
  * Which graph surface the canvas renders: `full` (individual objects with layout), `schemaOverview`

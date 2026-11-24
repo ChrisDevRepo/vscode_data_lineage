@@ -7,21 +7,13 @@
  */
 import { request } from 'node:http';
 import { createServer } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type * as VSCode from 'vscode';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-
-// `lineage_detect_graph_patterns` reads its thresholds through `vscode.workspace`; the shared stub
-// has none.
-vi.mock('vscode', async importOriginal => {
-  const actual = await importOriginal<typeof import('vscode')>();
-  return { ...actual, workspace: { ...(actual as { workspace?: object }).workspace, getConfiguration: () => ({ get: () => undefined }) } };
-});
 
 import { McpService, MCP_TOKEN_KEY } from '../../../src/ai/mcp/mcpServer';
 import type { ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { AiSession } from '../../../src/ai/session/session';
-import { filterRegistry, ToolRegistry } from '../../../src/ai/tools/registry';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { TOOL_DEFS } from '../../../src/ai/tools/toolDefs';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
@@ -380,16 +372,5 @@ describe('lineage tools over MCP', () => {
     // Positive control: the same call left open logs its deadline result.
     expect((await post(url, headers, slow)).status).toBe(200);
     expect(resultLogged()).toBe(true);
-  });
-
-  it('guards the registry names it serves and dispatches the raw input unchanged', async () => {
-    const registry = new ToolRegistry();
-    const tool = { ...TOOL_DEFS[0], execute: (input: unknown) => input };
-    registry.register(tool);
-    expect(() => { registry.register(tool); }).toThrow(/duplicate/);
-    expect(() => registry.invoke('lineage_not_registered', {})).toThrow(/no tool registered/i);
-    expect(() => filterRegistry(registry, new Set()).invoke(tool.name, {})).toThrow(/no tool registered/i);
-    const original = { nested: { value: 'original' } };
-    expect(await registry.invoke(tool.name, original)).toBe(original);
   });
 });

@@ -172,7 +172,7 @@ class ToolHandler implements ToolServices {
       this.logger.debug(`Invoking ${toolName} — input: ${inputJson}`);
     }
 
-    // The hop log is the chat turn's record; a call outside a turn (MCP) leaves the session as it was.
+    // The hop log is the chat turn's record; a call outside a turn (MCP) leaves the session as is.
     if (this.turnLease) sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     const rejection = readToolError(data);
     if (rejection) {
@@ -512,8 +512,9 @@ type ToolExecutor = (input: unknown, context?: ToolCallContext) => LineageToolOu
  *   `getStoredRun` resolves the AI run behind an applied bookmark,
  *   `model`/`signal` supply the text completion `start_exploration` uses for the discovery-handoff
  *   memo on the approval card, and `budget` carries the owning turn's caps so a superseded turn's
- *   dispatch keeps measuring against its own model (`null`: no limit, the MCP server's); `served` names the tools of a caller outside
- *   the chat turn (the MCP server), which replaces the chat stage's policy and hints;
+ *   dispatch keeps measuring against its own model (`null`: no limit, the MCP server's); `served`
+ *   names the tools of a caller outside the chat turn (the MCP server), which replaces the chat
+ *   stage's policy and hints;
  *   `authorName` is the display name the graph preview credits (the chat's model, the MCP client).
  */
 export function buildAiToolRegistry(

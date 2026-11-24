@@ -100,7 +100,7 @@ function toMcpResult(text: string, call: RejectedCall): CallToolResult {
     : { content: [{ type: 'text', text }], isError: false };
 }
 
-/** The author the graph preview credits for an MCP call: the stateless server has no client handshake at call time. */
+/** The graph preview's author for an MCP call: the stateless server has no client handshake. */
 const MCP_CALLER_LABEL = 'MCP client';
 
 /** The names the MCP server serves, which the registry's stage policy and hints are told. */

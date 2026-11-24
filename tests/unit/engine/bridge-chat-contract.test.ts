@@ -41,16 +41,16 @@ describe('chat frames to the webview', () => {
     const frames: unknown[] = [
       { type: 'chat.event', turnId: 't', event: { type: 'text', delta: 'a' } },
       { type: 'chat.event', turnId: 't', event: { type: 'gate', gateId: 'g', gate: 'confirm_sm_start', summary: 's', classes: ['x'], fullPlan: { markdown: 'p', objects: 2 } }, replacesAnalysis: true },
-      { type: 'chat.state', models: [{ id: 'a', name: 'A', supportsReasoningEffort: ['low'], reasoningEffort: 'low' }], selectedModelId: 'a', effort: 'low', busy: false },
+      { type: 'chat.state', models: [{ id: 'a', name: 'A', supportsReasoningEffort: ['low'], reasoningEffort: 'low' }], selectedModelId: 'a', effort: 'low', busy: false, followups: [] },
       { type: 'chat.history', messages: [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }] },
     ];
     for (const frame of frames) expect(ExtensionToWebviewMsgSchema.safeParse(frame).success).toBe(true);
     expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'chat.event', turnId: 't', event: { type: 'bogus' } }).success).toBe(false);
   });
 
-  it('defaults the state followups to none and keeps the ones sent', () => {
+  it('requires the state followups and keeps the ones sent', () => {
     const state = { type: 'chat.state', models: [], selectedModelId: '', busy: false };
-    expect(ExtensionToWebviewMsgSchema.parse(state)).toMatchObject({ followups: [] });
+    expect(ExtensionToWebviewMsgSchema.safeParse(state).success).toBe(false);
     const followups = [{ label: 'Show full description', prompt: 'Show the full description' }];
     expect(ExtensionToWebviewMsgSchema.parse({ ...state, followups })).toMatchObject({ followups });
     expect(ExtensionToWebviewMsgSchema.safeParse({ ...state, followups: [{ label: 'x' }] }).success).toBe(false);

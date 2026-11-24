@@ -109,8 +109,8 @@ export function aiTestEntry(env: NodeJS.ProcessEnv): ModelEntry {
   const text = (key: string) => env[key]?.trim() || undefined;
   const missing = ['AI_TEST_ENDPOINT', 'AI_TEST_MODEL', 'AI_TEST_API_TYPE', 'AI_TEST_MAX_INPUT_TOKENS', 'AI_TEST_MAX_OUTPUT_TOKENS']
     .filter(key => !text(key));
-  if (missing.length) throw new Error(`Set ${missing.join(', ')} for the AI smoke.`);
-  if (!text('AI_TEST_API_KEY')) throw new Error('Set AI_TEST_API_KEY for the AI smoke.');
+  if (missing.length) throw new Error(`Set ${missing.join(', ')} for the headless AI run (npm run test:ai:headless).`);
+  if (!text('AI_TEST_API_KEY')) throw new Error('Set AI_TEST_API_KEY for the headless AI run (npm run test:ai:headless).');
   const forced = text('AI_TEST_FORCED_TOOL_CHOICE');
   if (forced !== undefined && forced !== 'true' && forced !== 'false') throw new Error('AI_TEST_FORCED_TOOL_CHOICE must be true or false.');
   let requestBody: unknown;

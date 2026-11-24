@@ -31,9 +31,9 @@ export function gateRound(gate: readonly GateRoundPolicy[] | undefined, index: n
 
 /**
  * Evaluates one `approve.expect` assertion (`field~substring`, `field=count`, `!` negates) against
- * the pending proposal. Exported for the internal gate-logic unit test. @internal
+ * the pending proposal.
  */
-export function evaluateGateExpectation(expr: string, session: Pick<AiSession, 'pendingExploration'>): boolean {
+function evaluateGateExpectation(expr: string, session: Pick<AiSession, 'pendingExploration'>): boolean {
   const proposal = session.pendingExploration;
   if (!proposal) return false;
   const negated = expr.startsWith('!');
@@ -60,8 +60,7 @@ export function evaluateGateExpectation(expr: string, session: Pick<AiSession, '
 
 /**
  * The workload dimensions of a proposed card, as the user sees them before deciding; prose is
- * excluded so two cards compare by what they would cost.
- * Exported for the internal case checks. @internal
+ * excluded so two cards compare by what they would cost. Read by `runTurn` for the gate receipt.
  */
 export function approvalWorkload(proposal: Pick<PendingExplorationProposal, 'classification' | 'init'>) {
   const init = proposal.init;
