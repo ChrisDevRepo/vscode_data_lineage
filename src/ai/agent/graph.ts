@@ -43,7 +43,6 @@ import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolPro
 import { detectSlashRoute } from './slashCommands';
 import { buildNodeMap } from '../support/graphUtils';
 import { resolveModelNodeId } from '../support/inputNormalization';
-import type { DatabaseModel } from '../../engine/types';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
@@ -232,7 +231,7 @@ export interface AgentGraphDeps {
 
 
 /** The canonical node id when every object a `/trace` names resolves to the same one node; else `null`. */
-function resolveTraceOrigin(origins: string[], model: DatabaseModel | null): string | null {
+function resolveTraceOrigin(origins: string[], model: ReturnType<AgentGraphDeps['getSession']>['model']): string | null {
   if (!model) return null;
   const nodeMap = buildNodeMap(model);
   const resolved = new Set(origins.map(id => resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive)));
