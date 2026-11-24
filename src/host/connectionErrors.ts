@@ -1,14 +1,13 @@
 /**
  * One place that turns a failed connect or query into the text and actions the user sees. The
- * driver's own message is shown verbatim behind the connection name, except when the server reports
- * that it is unavailable (one plain sentence, the driver text goes to the log); only the actions are
- * chosen, by error number, code or message pattern.
+ * driver's own message is shown verbatim behind the connection name; only the actions are chosen,
+ * by error number, code or message pattern.
  */
 
 import * as vscode from 'vscode';
 import type { Logger } from '../utils/log';
 import type { StoredConnectionInfo } from '../engine/shared/bridgeContract';
-import { describeConnection, resolveServerAddress, AZURE_SQL_HOST, type BuiltInConnection } from '../engine/db/connectionSettings';
+import { describeConnection, type BuiltInConnection } from '../engine/db/connectionSettings';
 import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, type DbSession } from '../engine/db/dbSession';
 import { readBuiltInConnections, upsertBuiltInConnection } from './connectionStore';
 import { pickAccount, signInForSql } from './entraSignIn';
@@ -67,7 +66,6 @@ const NETWORK_TEXT = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|Failed to co
 const UNAVAILABLE_TEXT = /is not currently available|service is currently busy|encountered an error processing your request|requested by the login\.\s+The login failed/i;
 const PERMISSION_TEXT = /permission was denied|permission denied|does not have permission to perform this action/i;
 const TOKEN_REJECTED_TEXT = /not currently configured to accept this token/i;
-const TOKEN_REJECTED_HINT = 'The server did not accept this Microsoft account. Check that the server has a Microsoft Entra admin and that the account is a user in the database, or sign in with another account.';
 const SIGN_IN_TEXT = /Microsoft sign-in did not complete|User did not consent to login/i;
 const CANNOT_OPEN_DATABASE_TEXT = /Cannot open database\s+["'].+["']\s+requested by the login|not able to access the database/i;
 
@@ -132,12 +130,9 @@ function grantStatement(grant: string, user: string | undefined): string {
 
 /**
  * Describes a connection or query failure for the user. `message` is
- * `<connection name>: <original driver text>` with credential-shaped text removed, plus one hint
- * when the server rejects a Microsoft token, or "It might still be starting." when a connect to an
- * Azure SQL host timed out or dropped; for an unavailable server it is "Couldn't connect to
- * <database>. It might still be starting." Actions depend on the error class: those updating a
- * connection are offered for a `builtIn` connection, and Retry is offered only when the caller
- * supplies a retry hook. Each action runs on the user's click and any retry is a single
+ * `<connection name>: <original driver text>` with credential-shaped text removed. Actions depend on
+ * the error class: those updating a connection are offered for a `builtIn` connection, and Retry is
+ * offered only when the caller supplies a retry hook. Each action runs on the user's click and any retry is a single
  * attempt, never a loop.
  *
  * @param hooks - Caller-supplied capabilities the actions use.
@@ -148,11 +143,7 @@ export function describeConnectionError(
   hooks: ConnectionErrorHooks = {},
 ): { message: string; actions: ConnectionErrorAction[] } {
   const kind = classify(err);
-  const stillStarting = kind === 'network' && STARTING_CODES.has(errorCode(err) ?? '') && AZURE_SQL_HOST.test(resolveServerAddress(target.server).host);
-  const hint = kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : stillStarting ? ' It might still be starting.' : '';
-  const message = kind === 'unavailable'
-    ? `Couldn't connect to ${target.database ?? target.name}. It might still be starting.`
-    : `${target.name}: ${redactSecrets(errorMessage(err))}${hint}`;
+  const message = `${target.name}: ${redactSecrets(errorMessage(err))}`;
   const builtIn = target.provider === 'builtIn';
   const connectionId = target.connectionId;
 
