@@ -1,4 +1,5 @@
-import type { ColumnEdge, SmNodeState, SmState } from '../sm/smTypes';
+import type { ColumnEdge } from '../sm/smTypes';
+import type { SmNodeState, SmState } from '../sm/navigationSnapshotSchema';
 import type { AIViewMetadata } from '../../engine/projectStore';
 
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */

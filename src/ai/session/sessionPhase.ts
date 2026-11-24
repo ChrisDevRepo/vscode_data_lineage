@@ -9,7 +9,7 @@ import { z } from 'zod';
 
 /**
  * Runtime schema for an engine-emitted `action_required` envelope, validating gate payloads before
- * the host graph/runtime publishes native gate events.
+ * the host graph/runtime publishes gate events.
  */
 export const PendingGateSchema = z.object({
   gate: z.literal('confirm_sm_start'),

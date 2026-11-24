@@ -7,7 +7,7 @@
  * tool result. {@link readToolError} reads that shape back. Provider-pure.
  */
 import { z } from 'zod';
-import { toModelJsonSchema } from '../tools/jsonSchema';
+import { schemaBranches, toModelJsonSchema, type JsonSchemaShape } from '../tools/jsonSchema';
 import { locateJsonTextFault, parseJson } from './inputNormalization';
 import { REJECTION_CODES } from './rejectionCodes';
 import { sectionField } from '../session/classification';
@@ -491,6 +491,11 @@ export function readToolError(data: unknown): ToolRejection | null {
   return { ...rest, ...(detail !== undefined ? { detail } : {}) };
 }
 
+/** Reader over a tool result's text: the rejection it carries, or `null` for any other text, including unparseable JSON. */
+export function readToolErrorText(resultText: string): ToolRejection | null {
+  return readToolError(parseJson(resultText));
+}
+
 /** Longest one dotted-path segment: an identifier, or an index. */
 const MAX_PATH_SEGMENT_CHARS = 100;
 /**
@@ -700,7 +705,7 @@ export function renderLastFeedbackHelp(
   const paths = [...new Set(faults.map(({ path }) => path))];
   const field = facts.length === 0 && paths.length === 1 && paths[0] !== '' ? jsonSchemaNodeAt(served, schemaPath(paths[0]!)) : undefined;
   const keywordFault = field !== undefined && faults.some(({ code }) => MEANING_CODES.has(code)
-    || (code === 'invalid' && variantsOf(field).some(variant => variant.pattern !== undefined)));
+    || (code === 'invalid' && schemaBranches(field).some(variant => variant.pattern !== undefined)));
   return [...lines, ...facts, ...(keywordFault ? fieldMeaning(field, jsonPointer(schemaPath(paths[0]!)), errors) : [])];
 }
 
@@ -731,8 +736,8 @@ function stepTerminal(terminal: NonNullable<FeedbackContext['terminal']>): strin
  * (`invalid`) the pattern.
  */
 function fieldMeaning(node: JsonSchemaShape, pointer: string, faults: readonly Pick<ToolError, 'code' | 'values' | 'types' | 'bound'>[]): string[] {
-  const description = variantsOf(node).map(variant => variant.description).find(Boolean)?.trim();
-  const branch = variantsOf(node).find(variant => variant.type !== 'null' && (variant.type || variant.enum)) ?? node;
+  const description = schemaBranches(node).map(variant => variant.description).find(Boolean)?.trim();
+  const branch = schemaBranches(node).find(variant => variant.type !== 'null' && (variant.type || variant.enum)) ?? node;
   const stated = (keyword: string) => faults.some(fault => (keyword === 'enum' ? fault.values !== undefined
     : keyword === 'type' ? fault.code === 'type' || fault.types !== undefined
       : keyword === 'pattern' ? fault.code === 'invalid' : fault.bound?.keyword === keyword));
@@ -953,24 +958,6 @@ function baseIssueMessage(issue: z.core.$ZodIssue): string {
     : issue.message;
 }
 
-/** The slice of a JSON Schema node the repair hints read. */
-interface JsonSchemaShape {
-  type?: string | string[];
-  anyOf?: JsonSchemaShape[];
-  oneOf?: JsonSchemaShape[];
-  items?: JsonSchemaShape;
-  properties?: Record<string, JsonSchemaShape>;
-  required?: string[];
-  enum?: unknown[];
-  const?: unknown;
-  minItems?: number;
-  maxItems?: number;
-  minLength?: number;
-  maxLength?: number;
-  pattern?: string;
-  description?: string;
-}
-
 /** The RFC 6901 JSON Pointer a served reason or fault line names: `/sections/2/blocks`; `''` is the call. */
 export const jsonPointer = (path: readonly PropertyKey[]): string => path.map(key => `/${String(key).replace(/~/g, '~0').replace(/\//g, '~1')}`).join('');
 
@@ -990,7 +977,7 @@ function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly Property
   if (!schema) return undefined;
   let node = toModelJsonSchema(schema) as JsonSchemaShape;
   for (const key of path) {
-    const next: JsonSchemaShape | undefined = variantsOf(node)
+    const next: JsonSchemaShape | undefined = schemaBranches(node)
       .map((variant) => (typeof key === 'number' ? variant.items : variant.properties?.[String(key)]))
       .find((candidate) => candidate !== undefined);
     if (!next) return undefined;
@@ -1002,21 +989,18 @@ function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly Property
 /** Whether an object's own properties include `key` (a sent key may be any string). */
 const hasField = (properties: object, key: string): boolean => Object.prototype.hasOwnProperty.call(properties, key);
 
-/** A node and its union branches. */
-const variantsOf = (node: JsonSchemaShape): JsonSchemaShape[] => [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])];
-
 /** The branch of a node that is an object with properties; `undefined` for any other node. */
-const objectBranch = (node: JsonSchemaShape): JsonSchemaShape | undefined => variantsOf(node).find(variant => variant.properties);
+const objectBranch = (node: JsonSchemaShape): JsonSchemaShape | undefined => schemaBranches(node).find(variant => variant.properties);
 
 /** The branch of a node that is a list; `undefined` for any other node. */
-const listBranch = (node: JsonSchemaShape): JsonSchemaShape | undefined => variantsOf(node).find(variant => variant.items);
+const listBranch = (node: JsonSchemaShape): JsonSchemaShape | undefined => schemaBranches(node).find(variant => variant.items);
 
 /** The properties of a node's object branch; empty for a missing node or any other node. */
 const propertiesOf = (node: JsonSchemaShape | undefined): Record<string, JsonSchemaShape> => (node && objectBranch(node)?.properties) ?? {};
 
 /** Whether a node accepts `null`: its own type or one of its branches. */
 function acceptsNull(node: JsonSchemaShape): boolean {
-  return variantsOf(node).some(variant => [variant.type ?? []].flat().includes('null'));
+  return schemaBranches(node).some(variant => [variant.type ?? []].flat().includes('null'));
 }
 
 /**

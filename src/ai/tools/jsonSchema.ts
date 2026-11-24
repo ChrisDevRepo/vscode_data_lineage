@@ -32,3 +32,27 @@ export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
   modelJsonSchemaCache.set(schema, fragment);
   return fragment;
 }
+
+/** The slice of a JSON Schema node the repair hints and argument coercion read. */
+export interface JsonSchemaShape {
+  type?: string | string[];
+  anyOf?: JsonSchemaShape[];
+  oneOf?: JsonSchemaShape[];
+  items?: JsonSchemaShape;
+  properties?: Record<string, JsonSchemaShape>;
+  required?: string[];
+  enum?: unknown[];
+  const?: unknown;
+  minItems?: number;
+  maxItems?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  description?: string;
+}
+
+/** A node followed by its `anyOf` and `oneOf` branches, nested unions flattened; empty for a missing node. */
+export function schemaBranches(node: JsonSchemaShape | undefined): JsonSchemaShape[] {
+  if (!node) return [];
+  return [node, ...(node.anyOf ?? []).flatMap(schemaBranches), ...(node.oneOf ?? []).flatMap(schemaBranches)];
+}

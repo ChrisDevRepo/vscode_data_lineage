@@ -1,5 +1,6 @@
 import { normalizeColName, schemaKey } from '../../utils/sql';
-import type { InvestigationTask, PendingLead, ScalarReturnTarget } from './smTypes';
+import type { InvestigationTask, PendingLead } from './navigationSnapshotSchema';
+import type { ScalarReturnTarget } from './smTypes';
 
 /**
  * What a caller supplies to open a ledger task; the ledger assigns the id and the closed state. The

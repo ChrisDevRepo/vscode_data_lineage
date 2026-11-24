@@ -111,7 +111,7 @@ export type WireEvent =
 
 /** One JSONL line: a captured event plus the generation it belongs to. */
 export type WireRecord = WireEvent & {
-  /** Native request identifier shared with lifecycle and tool records. */
+  /** Request identifier shared with lifecycle and tool records. */
   readonly requestId: string;
   /** 1-based model-call index within the port, matching `[AI] usage call=N`. */
   readonly generation: number;

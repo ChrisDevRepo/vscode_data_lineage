@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { NavigationSnapshotSchema } from '../sm/navigationSnapshotSchema';
-import type { SmState } from '../sm/smTypes';
+import type { SmState } from '../sm/navigationSnapshotSchema';
 import { sanitizeForLog, trunc, type Logger } from '../../utils/log';
 import type { FilterProfile } from '../../engine/shared/bridgeContract';
 import type { PresentationArtifact, ResultGraph } from './types';

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { SmState } from './smTypes';
 import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import { heldHopFindingSchemaForMode } from '../tools/toolSchemas';
@@ -290,7 +289,7 @@ const EngineInternalsSchema = z.object({
 }) => internals);
 
 /** Shape of the serialized NavigationEngine projection: the state dump and saved run snapshot. */
-export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
+export const NavigationSnapshotSchema = z.object({
   snapshotVersion: z.union([z.literal(1), z.literal(2)]),
   identifierCaseSensitive: z.boolean().optional(),
   columnAspect: ColumnAspectSchema.nullable(),
@@ -312,7 +311,43 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict();
 
-type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
+/** Serialized state-machine projection: the state dump and the saved run's snapshot. */
+export type SmState = z.infer<typeof NavigationSnapshotSchema>;
+
+/** Serializable projection of the engine's private working state, the `engineInternals` field of {@link SmState}. */
+export type EngineInternalsSnapshot = SmState['engineInternals'];
+
+/** Lifecycle stage of an exploration session. */
+export type SmStatus = SmState['status'];
+
+/**
+ * Process state for one node in the SM traversal; the source of truth for lifecycle state.
+ * `DetailSlot` stays the text/evidence bucket, and a node can be `passthrough` without one.
+ */
+export type SmNodeState = SmState['nodeStates'][number];
+
+/** Engine-owned lifecycle action for a node in an SM result. */
+export type SmNodeAction = SmNodeState['action'];
+
+/** Who made the lifecycle decision for a node. */
+export type SmNodeStateSource = SmNodeState['source'];
+
+/** Why a node received its lifecycle action. Keeps the public action vocabulary small. */
+export type SmNodeStateReason = SmNodeState['reason'];
+
+/** Explicit per-neighbor column demand, as saved on an agenda entry. */
+export type ColumnCarry = NonNullable<SmState['agenda'][number]['columnCarry']>;
+
+/** The `init` parameters kept for the refine re-run. */
+export type EngineInitSnapshot = NonNullable<EngineInternalsSnapshot['initSnapshot']>;
+
+/** Engine-owned unit of investigation; questions stay structured state, not agenda prose. */
+export type InvestigationTask = EngineInternalsSnapshot['investigationTasks'][number];
+
+/** Valuable investigation deliberately left outside the approved run boundary. */
+export type PendingLead = EngineInternalsSnapshot['pendingLeads'][number];
+
+type NavigationSnapshot = SmState;
 
 /**
  * Validates the engine's serialized projection against the persistence shape without repairing or

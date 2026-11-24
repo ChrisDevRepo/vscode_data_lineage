@@ -1,5 +1,5 @@
 /**
- * Pure SM sliding-memory policy for the native LangGraph host.
+ * Pure SM sliding-memory policy for the LangGraph host.
  *
  * @remarks
  * The graph reseeds the thread to a single continuation anchor at approval and after every

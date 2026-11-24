@@ -1,69 +1,20 @@
 /**
  * Navigation Engine hop lifecycle types.
  *
- * Concrete types for the IHopStateMachine contract. Type-only imports keep this file free of
+ * Concrete types of the NavigationEngine hop lifecycle. Type-only imports keep this file free of
  * runtime dependencies, so it can be unit-tested without a live engine.
  */
 
 import type { ClassificationValue } from '../session/classification';
-import type { CaptureAngle, CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
+import type { CaptureAngle, CapturedSection, DetailSlot } from '../session/memoryManager';
 import type { ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
+import type { SmNodeState } from './navigationSnapshotSchema';
 
-
-/** Represents the current lifecycle stage of an SM exploration session. */
-export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findings' | 'complete' | 'error';
 
 /** Live hop-loop progress: completed AI hops, queued nodes, display-safe total work, prunes. */
 export type HopProgress = { current: number; open: number; total: number; pruned: number; added: number };
-
-/**
- * The focus node's self-status submitted each hop. Two states: `analyze` = the node applies
- * business logic on the data path (sections stored, featured in the answer); `passthrough` = the
- * node is on the data path but applies no logic (a raw source / bridge / target table, a SELECT *
- * or synonym) — it is KEPT in the lineage and linked by flow role, and the trace continues
- * *through* it, or it carries nothing further (a dead end). Off-path neighbors leave through
- * `prune_neighbors` (recorded as node action `prune`).
- */
-type Verdict = 'analyze' | 'passthrough';
-
-/** Engine-owned lifecycle action for a node in an SM result. Mirrors {@link Verdict}. */
-export type SmNodeAction = 'analyze' | 'passthrough' | 'prune';
-
-/** Who made the lifecycle decision for a node. */
-export type SmNodeStateSource = 'ai' | 'engine' | 'user';
-
-/** Why a node received its lifecycle action. Keeps the public action vocabulary small. */
-export type SmNodeStateReason =
-  | 'submitted_analyze'
-  | 'submitted_passthrough'
-  | 'submitted_prune'
-  | 'bb_prune_neighbor'
-  | 'user_pass_filter'
-  | 'non_bodied_passthrough'
-  /** CT: a kept neighbor no traced column reaches and no question names; it gets no hop. */
-  | 'kept_end_node';
-
-/**
- * Process state for one node in the SM traversal; the source of truth for lifecycle state.
- * `DetailSlot` stays the text/evidence bucket, and a node can be `passthrough` without one.
- */
-export interface SmNodeState {
-  /** Canonical id of the node this state describes. */
-  nodeId: string;
-  action: SmNodeAction;
-  /** Who made the lifecycle decision. */
-  source: SmNodeStateSource;
-  /** Why the node received its action. */
-  reason: SmNodeStateReason;
-  /** Traced columns bound to the node; absent in BB sessions. */
-  columns?: string[];
-  /** Focus node this state was recorded from. */
-  viaNodeId?: string;
-  /** Hop index at which this state was recorded. */
-  atHop?: number;
-}
 
 /** State and constraints for the column-tracing aspect of an exploration. */
 export interface ColumnAspect {
@@ -283,15 +234,6 @@ export interface FunctionCallerContext extends ScalarReturnTarget {
   readonly callerTaskId: string;
   readonly ddlHash: string;
 }
-
-/**
- * Explicit per-neighbor column demand: ordinary columns (empty: no traced column) or
- * compiler-declared scalar caller outputs. Qualified outputs stay separate when callers share a
- * column name.
- */
-export type ColumnCarry =
-  | { readonly kind: 'carry'; readonly columns: readonly string[] }
-  | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
 
 /**
  * Per-route outcome in a successful `submitFindings` return. Engine-side only: the tool returns the
@@ -616,71 +558,6 @@ export interface DeferredQuestion {
   atHop: number;
 }
 
-/** Fields shared by every engine-owned investigation task. */
-interface InvestigationTaskBase {
-  /** Stable deterministic identifier derived from the normalized task identity. */
-  id: string;
-  /** Authority that created the task. */
-  source: 'mission' | 'model' | 'engine';
-  /** Question the hop must answer. */
-  question: string;
-  /** Node the task applies to, when known. */
-  nodeId?: string;
-  /** Parent task for a routed or contracted continuation. */
-  parentTaskId?: string;
-  /** Directed routing leg retained through table and user-pass contraction. */
-  traversalSide?: 'upstream' | 'downstream';
-  /** Lifecycle controlled by the navigation engine. */
-  status: 'pending' | 'active' | 'resolved' | 'deferred';
-  createdHop: number;
-  resolvedHop?: number;
-  /** Explicit caller declaration anchored to its originating task and SQL snapshot. */
-  callerContext?: FunctionCallerContext;
-}
-
-/** Engine-owned unit of investigation; questions stay structured state, not agenda prose. */
-export type InvestigationTask = InvestigationTaskBase & (
-  | {
-      /** BB root mission or analytical sub-question. */
-      kind: 'root' | 'analytical';
-      /** BB tasks structurally forbid column state. */
-      activeColumns?: never;
-    }
-  | {
-      /** CT lineage continuation, including the CT root mission. */
-      kind: 'column_lineage';
-      /** Non-empty canonical column context for this CT task. */
-      activeColumns: [string, ...string[]];
-      /** Qualified incoming column context; a task does not itself create a column edge. */
-      sourceRefs?: Array<{ node: string; col: string }>;
-      /** Qualified compiler-declared caller outputs; absent on ordinary column tasks. */
-      returnTargets?: ScalarReturnTarget[];
-    }
-);
-
-/** Valuable investigation deliberately left outside the approved run boundary. */
-export interface PendingLead {
-  /** Stable deterministic lead identifier. */
-  id: string;
-  /** Deferred task that retains the original question. */
-  taskId: string;
-  /** Target node worth investigating. */
-  nodeId: string;
-  /** In-scope node from which the lead was discovered. */
-  fromNodeId: string;
-  /** Mechanical boundary that prevented exploration in the current run. */
-  reason: 'schema_boundary' | 'depth_boundary' | 'contracted_scope' | 'budget' | 'insufficient_evidence' | 'out_of_direction' | 'excluded' | 'pruned_by_ai';
-  /** Target schema used by the derived synthesis projection. */
-  schema?: string;
-  /** Target depth retained when a depth boundary created the lead. */
-  depth?: number;
-  /** Concise grounded explanation shown to the user. */
-  valueToUser: string;
-  /** Follow-up lifecycle. */
-  status: 'pending' | 'scheduled' | 'resolved' | 'dismissed';
-  createdHop: number;
-}
-
 /** The border the user approved at session start — locked for the rest of the SM session. */
 export interface ApprovedBorder {
   /** Lower-cased schemas in scope. */
@@ -689,25 +566,6 @@ export interface ApprovedBorder {
    * Effective depth ceiling with mode headroom and session extensions; null without a depth budget.
    */
   depth_cap: number | null;
-}
-
-/**
- * The `init` parameters captured so the refine path (gate cycle) can re-run init without the
- * AI re-sending origin / direction / depth / mission_brief. Named here (rather than inlined on
- * the engine field) so {@link EngineInternalsSnapshot} can record it.
- */
-export interface EngineInitSnapshot {
-  /** Original user question. */
-  question: string;
-  /** Resolved origin node id. */
-  origin: string;
-  /** Explicit exploration mode approved before hop-by-hop analysis. */
-  analysisMode: 'bb' | 'ct';
-  targetColumns?: [string, ...string[]];
-  direction: 'upstream' | 'downstream' | 'bidirectional';
-  /** AI-owned depth verdict that seeded the scope. */
-  depthIntent: DepthIntent;
-  mission_brief?: string;
 }
 
 /**
@@ -763,158 +621,6 @@ export interface NavigationInitParams {
   scopeNotes?: string[];
   /** Sanitized mission brief carried verbatim into every hop. */
   mission_brief?: string;
-}
-
-/**
- * Serializable projection of the {@link NavigationEngine}'s private working state not carried by
- * the top-level fields of {@link SmState}. Runtime handles (model, graph, logger, store, node and
- * edge maps) are rebuilt from the active host and not serialized; maps and sets flatten to arrays.
- * A saved run is read back only through the `NavigationSnapshot` schema.
- */
-export interface EngineInternalsSnapshot {
-  /** Resolved origin/root node id (anchors the trace). */
-  originNodeId: string | null;
-  /** Exploration direction set at init. */
-  direction: 'upstream' | 'downstream' | 'bidirectional';
-  /** User-declared depth budget, or null when unbounded. */
-  depthBudget: number | null;
-  /** How strictly the depth budget is enforced. */
-  depthEnforcement: 'strict' | 'silent';
-  /** Per-side ceilings, `null` where that side is unbounded; absent in a v1 saved run. */
-  depthLimits?: { upstream: number | null; downstream: number | null };
-  /** BFS depth-from-origin, flattened to `[nodeId, depth]` pairs (insertion order preserved). */
-  depthFromOrigin: Array<[string, number]>;
-  /** Out-of-budget expansions allowed in soft/silent mode. */
-  budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }>;
-  /** Count of bodied (view/proc/function) nodes in scope — the hop denominator. */
-  bodiedScopeSize: number;
-  /** Total acknowledged bodied nodes (drives `hopProgress.total`). */
-  totalNodes: number;
-  /** Schemas in the user's active filter (initial route-validation allowlist). */
-  userSchemas: string[];
-  /** Session-scoped schema allowlist (grows via mid-session confirmations). */
-  sessionAllowedSchemas: string[];
-  /** Object types the user excluded at init. */
-  excludedTypes: string[];
-  excludedSchemas: string[];
-  excludedNodeIds: string[];
-  /** Object types hidden by the GUI filter at session start (advisory diagnostics). */
-  guiHiddenTypes: string[];
-  /** Node ids kept in scope but skipped for analysis (auto pass-through). */
-  passNodeIds: string[];
-  /** Agenda-entry question captured at dequeue for the current focus. */
-  currentFocusQuestion: string | null;
-  currentFocusTaskIds: string[];
-  /** Last current-task question delivered with a hop context. */
-  lastCurrentTask: string;
-  /** AI-composed discovery summary memo (survives sliding-memory wipes). */
-  discoverySummary: string | null;
-  /** Cumulative detail + summary char count across the session. */
-  archiveChars: number;
-  /** Detail chars written in the most recent hop (diagnostics). */
-  lastHopDetailChars: number;
-  /** Summary chars written in the most recent hop (diagnostics). */
-  lastHopSummaryChars: number;
-  /** Verdict of the most recent hop (diagnostics). */
-  lastHopVerdict: 'analyze' | 'passthrough' | 'prune' | null;
-  /** column_flow entries submitted in the most recent hop (CT diagnostics). */
-  lastHopColumnFlowEntries: number;
-  /** Routes accepted in the most recent submit (diagnostics). */
-  lastRoutedNew: number;
-  /** Routes rejected in the most recent submit (diagnostics). */
-  lastRoutedRejected: number;
-  /** Routes deferred in the most recent submit (diagnostics). */
-  lastRoutedDeferred: number;
-  /** Typed investigation tasks, including deferred follow-up questions. */
-  investigationTasks: InvestigationTask[];
-  /** Stable user-facing follow-up leads. */
-  pendingLeads: PendingLead[];
-  /** The `init` params snapshot kept for the refine re-run. */
-  initSnapshot: EngineInitSnapshot | null;
-  /** Explicit post-completion follow-up targets; absent in older saved runs. */
-  supplementNodeIds?: string[];
-  /** Accepted prune/keep votes not yet resolved because another sender remains live. */
-  pruneBallots?: Array<{ nodeId: string; votes: Array<{ senderId: string; vote: 'prune' | 'keep' }> }>;
-  /** Held finding and its authorization, recorded together. */
-  heldFinding?: { focusId: string; hop: number; mode: 'bb' | 'ct'; failed: string[]; finding: HopFindingKept } | null;
-  /** Continuation-state format marker, written as `1`. */
-  continuationVersion?: 1;
-}
-
-/**
- * Serialized state-machine projection: the state dump and the saved run's snapshot.
- *
- * @remarks
- * A saved run is untrusted input and passes the strict `NavigationSnapshot` schema when read.
- */
-export interface SmState {
-  /** Current fail-closed persistence contract version. */
-  snapshotVersion: 1 | 2;
-  /** Source identifier policy at capture; an absent field denotes a legacy CI saved run. */
-  identifierCaseSensitive?: boolean;
-  /** The current aspect mode (e.g. column tracing). */
-  columnAspect: ColumnAspect | null;
-  /** The current lifecycle status. */
-  status: SmStatus;
-  /** Total number of hops completed in this session. */
-  hopCount: number;
-  /** Total number of nodes within the discovered exploration scope. */
-  scopeSize: number;
-  scopeNodeIds: string[];
-  /** Set of node IDs already visited by the engine. */
-  visited: string[];
-  /** Set of node IDs explicitly pruned from the exploration. */
-  removedSet: string[];
-  /** Engine-owned node lifecycle states keyed by node id. */
-  nodeStates: SmNodeState[];
-  /** Current number of nodes waiting on the agenda. */
-  agendaSize: number;
-  /** The list of upcoming tasks on the engine's agenda. */
-  agenda: Array<{
-    /** All task ids answered by the node's single hop. */
-    taskIds: string[];
-    /** The unique identifier of the node to visit. */
-    nodeId: string;
-    /** The priority of this visit; higher dequeues first. */
-    priority: number;
-    /** Topological depth relative to origin. */
-    depth: number;
-    /** Column-trace columns of interest for this node. */
-    activeColumns?: string[];
-    /** CT chain-continuation questions an earlier hop opened for this node, owned by this entry. */
-    lineageQuestions?: string[];
-    /** Per-neighbour column-carry decision that survived contraction (`carry`/`scalar_return`). */
-    columnCarry?: ColumnCarry;
-  }>;
-  currentFocusNodeId: string | null;
-  /** Serialized snapshot of the associated memory manager. */
-  memory: MemoryStateSnapshot;
-  /**
-   * Engine working-state projection.
-   *
-   * @remarks
-   * Missing or malformed internals fail the `NavigationSnapshot` schema; no field is inferred.
-   */
-  engineInternals: EngineInternalsSnapshot;
-  /**
-   * Lineage questions owned by the in-flight hop's own {@link AgendaEntry}, captured at
-   * dispatch time (CT only) — shows what questions would be fed to the next hop, critical
-   * for diagnosing CT tracking failures.
-   */
-  lineageQuestionsLastHop?: string[];
-  /** Legacy key from saved runs written before focus cuts were removed; accepted and ignored. */
-  ctPrunedNodeIds?: string[];
-  /**
-   * Recorded column-edge endpoint IDs; the historical checkpoint key stays readable, retention is
-   * independent.
-   */
-  ctDeclaredRouteIds?: string[];
-  /**
-   * Node IDs the last `getResult` removed from the render as undispositioned write sinks.
-   * Present only when that call dropped something; a drop is a recorded disposition, not a gap
-   * between this snapshot's scope and the rendered node set for a reader to infer.
-   */
-  renderDroppedNodeIds?: string[];
 }
 
 /** Log entry representing a single tool invocation within the SM lifecycle. */

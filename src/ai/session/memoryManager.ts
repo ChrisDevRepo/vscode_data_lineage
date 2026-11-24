@@ -6,6 +6,7 @@
  */
 
 import type { LineageNode } from '../../engine/types';
+import type { SmState } from '../sm/navigationSnapshotSchema';
 
 /**
  * Neighbor summaries carried in `<short_term_memory>`. At most three: the most recent stored
@@ -108,21 +109,7 @@ export interface WorkingMemory {
 
 
 /** Frozen `AiMemoryManager` snapshot from `toJSON()`, embedded in `SmState.memory`. */
-export interface MemoryStateSnapshot {
-  /** The user's original question, captured at session start. */
-  userQuestion: string;
-  /** Every stored `DetailSlot` keyed by node id, in insertion order. */
-  detailSlots: Record<string, DetailSlot>;
-  /** Count of stored detail slots (mirrors `Object.keys(detailSlots).length`). */
-  slotCount: number;
-  /** The AI-composed mission brief, surviving sliding-memory wipes. */
-  missionBrief: string;
-  /** User-stated analysis constraints no filter expresses, surviving sliding-memory wipes. */
-  scopeNotes: string[];
-  verdictCounts: { analyze: number; passthrough: number; prune: number };
-  /** Ring buffer (≤5) of recent route rejections surfaced in working memory. */
-  recentRejections: Array<{ nodeId: string; reason: string; atHop: number }>;
-}
+export type MemoryStateSnapshot = SmState['memory'];
 
 
 /**

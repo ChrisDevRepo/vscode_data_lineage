@@ -239,7 +239,7 @@ function resolveTraceOrigin(origins: string[], model: ReturnType<AgentGraphDeps[
 }
 
 /**
- * Builds the production LangGraph runtime for one native-chat turn. Runtime handles are captured in
+ * Builds the production LangGraph runtime for one chat turn. Runtime handles are captured in
  * node closures; checkpointed channels stay serializable so the host can pause at the consent
  * interrupt and resume through `Command({ resume })`.
  */

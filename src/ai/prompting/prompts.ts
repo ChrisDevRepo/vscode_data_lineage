@@ -10,7 +10,7 @@
 
 import { escapePromptText } from '../support/text';
 import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
-import type { InvestigationTask } from '../sm/smTypes';
+import type { InvestigationTask } from '../sm/navigationSnapshotSchema';
 
 /** Phase key used by the TS prompt protocol builders ({@link buildPhasePrompt}). */
 export type PromptPhase = 'discover' | 'active' | 'synthesis' | 'completed';
