@@ -258,7 +258,7 @@ export interface ColumnDef {
   name: string;
   /** The formatted SQL data type (e.g., 'nvarchar(50)'). */
   type: string;
-  /** Whether the column allows nulls ('NULL' or 'NOT NULL'). */
+  /** 'NULL' or 'NOT NULL'; '' when the source declares none (computed and view columns). */
   nullable: string;
   /** Additional flags like 'IDENTITY' or 'COMPUTED'. */
   extra: string;
@@ -302,6 +302,7 @@ export interface ForeignKeyInfo {
  * conversion and fixed-type detection.
  *
  * @param maxLength - Declared max length; unit depends on `lengthInChars`.
+ * @param nullable - `undefined` when the source declares no nullability (stored as '').
  * @param lengthInChars - True when `maxLength` is already a character count (dacpac
  *   `TypeSpecifier.Length`). False (default) when it is a byte count (DMV `max_length`), which
  *   nvarchar/nchar must still halve.
@@ -352,7 +353,7 @@ export const UNRESOLVED_COLUMN_TYPE = '—';
 export function buildColumnDef(
   name: string,
   typeName: string,
-  nullable: boolean,
+  nullable: boolean | undefined,
   isIdentity: boolean,
   isComputed: boolean,
   maxLength?: string,
@@ -365,7 +366,7 @@ export function buildColumnDef(
     type: isComputed
       ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '', lengthInChars) : UNRESOLVED_COLUMN_TYPE)
       : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '', lengthInChars),
-    nullable: nullable ? 'NULL' : 'NOT NULL',
+    nullable: nullable === undefined ? '' : nullable ? 'NULL' : 'NOT NULL',
     extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
   };
 }

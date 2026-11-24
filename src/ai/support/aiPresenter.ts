@@ -3,6 +3,7 @@
  * domain decisions; tool handlers share these projections so field naming and compaction stay
  * consistent.
  */
+import { columnFacts } from '../../engine/shared/columnFacts';
 import type { LineageEdge, LineageNode, ColumnDef, SchemaInfo, NeighborIndex, ForeignKeyInfo } from '../../engine/types';
 import type { SerializedFilterState } from '../../engine/projectStore';
 
@@ -86,18 +87,17 @@ export function presentNode(
 }
 
 /**
- * Transforms a column definition into a compact record for `getObjectDetail`, abbreviating
- * constraints (`nl`=nullable, `pk`=primary key, `uq`=unique, `ck`=check).
+ * Serializes a column's {@link columnFacts} for `getObjectDetail`, abbreviating them
+ * (`nl`=nullable, `pk`=primary key, `uq`=unique, `ck`=check, `ex`=IDENTITY/COMPUTED).
+ * A fact the model does not declare is omitted, never invented.
  */
 export function presentColumn(col: ColumnDef): Record<string, unknown> {
-  return strip({
-    n:  col.name,
-    t:  col.type,
-    nl: col.nullable  || undefined,
-    pk: col.pkOrdinal ?? undefined,
-    uq: col.unique    || undefined,
-    ck: col.check     || undefined,
-  });
+  const f = columnFacts(col);
+  return {
+    ...strip({ n: f.name, t: f.type }),
+    ...(f.nullable !== undefined && { nl: f.nullable }),
+    ...strip({ pk: f.pk, uq: f.unique, ck: f.check, ex: f.extra }),
+  };
 }
 
 /**

@@ -464,9 +464,12 @@ function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, stri
   for (const colEl of relatedElements(el, 'Columns')) {
     const colName = lastNamePart(colEl['@_Name'] ?? '');
     const props = asArray(colEl.Property);
-    const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
     const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
     const isComputed = colEl['@_Type'] === 'SqlComputedColumn';
+    const declaredNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'];
+    // A simple column without the property is nullable (DACPAC default); a computed column
+    // (every view column included) without it has no declared nullability.
+    const isNullable = declaredNullable === undefined ? (isComputed ? undefined : true) : declaredNullable !== 'False';
 
     let typeName = '?';
     let length: string | undefined;
