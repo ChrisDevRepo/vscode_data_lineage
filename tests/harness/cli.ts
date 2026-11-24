@@ -16,6 +16,7 @@ import { executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/c
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
 import { exportRunToLangfuse, resolveLangfuseConfig } from './langfuseExport';
+import { GateRoundSchema, type GateRoundPolicy } from './gatePolicy';
 import { runHarnessTurn } from './runTurn';
 import { createHarnessSession, repoPath } from './sessionFactory';
 import { parseTrace } from './traceModel';
@@ -24,6 +25,7 @@ import { setShimLogSink, Uri } from './vscodeHostShim';
 const DEFAULT_PROMPT = 'Summarize the loaded database and its main dependencies.';
 const HELP = `Optional testing toolset (no scoring):
   npm run test:ai:headless -- [--dacpac FILE] [--prompt TEXT] [--followup TEXT ...]
+                            [--gate JSON] [--cards open|closed]
                             [--timeout-ms N] [--langfuse] [--trace-verbose]
   npm run test:db:smoke -- [--timeout-ms N]
 AI runs one model entry on the product provider port: AI_TEST_ENDPOINT (the entry url),
@@ -34,7 +36,15 @@ DB uses DB_TEST_SERVER, DB_TEST_DATABASE, DB_TEST_USER, DB_TEST_PASSWORD, option
 DB_TEST_PORT, DB_TEST_ENCRYPT and DB_TEST_TRUST_SERVER_CERTIFICATE. Langfuse uses LANGFUSE_BASE_URL,
 LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY. All services require explicit setup.
 Artifacts are written only under ignored test-results/headless. AI gates are
-simulated approvals; this runner does not test interactive VS Code consent.`;
+simulated: --gate takes a JSON array of rounds, round N answering card N across the run's turns;
+a card past the list is held open (run.json turns[].unansweredCard). A round is
+{"kind":"approve","expect":"classification~technical","onMismatch":{"instruction":"..."}}, which
+approves; a card that misses expect is answered once with the onMismatch Change, then the revised
+card is approved and the miss recorded. Others: {"kind":"deny"} and
+{"kind":"refine","instruction":"..."}. Without --gate every card is approved.
+--cards closed (default) stops before the next --followup once a card is held open (run.json
+stoppedAfterTurn, stopReason unanswered_card); --cards open continues with it.
+This runner does not test interactive VS Code consent.`;
 
 /** Parses bounded runner options; rejects unknown flags before any service call. */
 export function parseOptions(kind: string, args: readonly string[]) {
@@ -43,6 +53,8 @@ export function parseOptions(kind: string, args: readonly string[]) {
   let timeoutMs = 300_000;
   let langfuse = false;
   let verbose = false;
+  let gate: GateRoundPolicy[] | undefined;
+  let cards: 'open' | 'closed' = 'closed';
   const followups: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
@@ -51,7 +63,7 @@ export function parseOptions(kind: string, args: readonly string[]) {
       else verbose = true;
       continue;
     }
-    if (!(flag === '--timeout-ms' || kind === 'ai' && ['--dacpac', '--prompt', '--followup'].includes(flag))) {
+    if (!(flag === '--timeout-ms' || kind === 'ai' && ['--dacpac', '--prompt', '--followup', '--gate', '--cards'].includes(flag))) {
       throw new Error(`Unknown option ${flag}. Use --help.`);
     }
     const value = args[++i];
@@ -60,8 +72,16 @@ export function parseOptions(kind: string, args: readonly string[]) {
     if (flag === '--dacpac') dacpac = resolve(value);
     if (flag === '--prompt') prompt = value;
     if (flag === '--followup') followups.push(value);
+    if (flag === '--cards') cards = z.enum(['open', 'closed']).parse(value);
+    if (flag === '--gate') {
+      try {
+        gate = z.array(GateRoundSchema).parse(JSON.parse(value));
+      } catch (error) {
+        throw error instanceof z.ZodError ? error : new Error('--gate must be a JSON array of gate rounds.');
+      }
+    }
   }
-  return { dacpac, prompt, followups, timeoutMs, langfuse, verbose };
+  return { dacpac, prompt, followups, gate, cards, timeoutMs, langfuse, verbose };
 }
 
 /** Resolves SQL-login configuration without provisioning a database or persisting credentials. */
@@ -198,15 +218,22 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       const { session, budget } = await createHarnessSession({ dacpacPath: options.dacpac, contextWindow: entry!.maxInputTokens });
       result.model = entry!.model;
       result.apiType = entry!.apiType;
-      const turns: Array<{ outcome: string; modelCalls: number }> = [];
+      const turns: Array<{ outcome: string; modelCalls: number; gates: unknown; unansweredCard?: true }> = [];
+      let answeredCards = 0;
       for (const [index, prompt] of [options.prompt, ...options.followups].entries()) {
         const requestId = randomUUID();
         const port = createProviderModelPort(entry!, process.env.AI_TEST_API_KEY!.trim(), {
           requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); },
         });
-        const turn = await runHarnessTurn({ session, model: port, requestId, prompt, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter });
-        turns.push({ outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls });
+        const turn = await runHarnessTurn({ session, model: port, requestId, prompt, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter, ...(options.gate ? { gate: options.gate, gateOffset: answeredCards } : {}) });
+        answeredCards += turn.gates.length;
+        turns.push({ outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls, gates: turn.gates, ...(turn.unansweredCard ? { unansweredCard: true as const } : {}) });
         if (turn.outcome.outcome !== 'ok') break;
+        if (turn.unansweredCard && options.cards === 'closed') {
+          result.stoppedAfterTurn = index + 1;
+          result.stopReason = 'unanswered_card';
+          break;
+        }
       }
       result.turns = turns;
       result.runtime = turns.at(-1)?.outcome ?? 'error';
