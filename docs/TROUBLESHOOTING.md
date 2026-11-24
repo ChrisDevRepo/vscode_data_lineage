@@ -21,7 +21,7 @@
 ## AI model endpoints
 
 - **A model entry is not offered.** The warning names the entry in `dataLineageViz.ai.models` and what is wrong with it: an `https` URL (or `http` on `127.0.0.1`, `localhost` or `[::1]`), an `apiType` of `chat-completions` or `responses`, and token limits are required. Keys never belong in an entry.
-- **"No API key is stored".** Run **Data Lineage: Set API key** and pick the entry.
+- **"No API key is stored".** Run **Data Lineage: Update AI Model Key** and pick the entry.
 - **An endpoint rejects a forced tool call.** Set `forcedToolChoice` to `false` on that entry; the extension then sends `auto`.
 
 ## Table statistics

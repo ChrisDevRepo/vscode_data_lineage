@@ -4,6 +4,7 @@ import { getSession } from './ai/session/session';
 import { registerCommands } from './commands';
 import { openPanel, getActivePanel, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { ChatController } from './bridge/chatHandlers';
+import { ADD_AI_MODEL_COMMAND, MANAGE_AI_MODELS_COMMAND } from './host/aiModelCommands';
 import { postToWebview } from './bridge/host';
 import { Logger, OUTPUT_CHANNEL_NAME, OUTPUT_POINTER } from './utils/log';
 import { clearOnceToasts, notifyErrorOnce, notifyWarning, notifyWarningOnce } from './utils/notifications';
@@ -122,6 +123,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
             maxTraceColumns: readDeclaredNumericSetting(cfg, 'ai.maxTraceColumns'),
           };
         },
+        runModelCommand: (command) => vscode.commands.executeCommand(command === 'add' ? ADD_AI_MODEL_COMMAND : MANAGE_AI_MODELS_COMMAND),
         logger: aiLogger,
         showErrorMessage: (message) => vscode.window.showErrorMessage(message),
         showWarningMessage: (message) => vscode.window.showWarningMessage(message),

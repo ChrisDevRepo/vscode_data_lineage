@@ -47,6 +47,8 @@ export interface ChatHostDeps {
     readonly maxRounds: number;
     readonly maxTraceColumns: number;
   };
+  /** Runs the host's guided model command the view asked for: Add AI Model, or the Manage AI Models menu. */
+  readonly runModelCommand: (command: Extract<ChatToExtensionMsg, { type: 'chat.modelCommand' }>['command']) => PromiseLike<unknown>;
   readonly logger: Logger;
   readonly showErrorMessage: (message: string) => unknown;
   readonly showWarningMessage: (message: string) => unknown;
@@ -143,6 +145,9 @@ export class ChatController {
         return;
       case 'chat.newChat':
         await this.newChat();
+        return;
+      case 'chat.modelCommand':
+        Promise.resolve(this.deps.runModelCommand(msg.command)).catch((error: unknown) => logger.error('Chat model command', error));
         return;
       case 'chat.selectModel':
         if (!this.entries().entries.some((candidate) => candidate.id === msg.modelId)) {

@@ -9,7 +9,18 @@ import { z } from 'zod';
 const CHAT_TEXT_MAX_CHARS = 50_000;
 
 /** What the host's turn error and the chat view's composer notice both say when no `ai.models` entry exists. */
-export const NO_MODEL_MESSAGE = 'No model is configured. Add an entry to the dataLineageViz.ai.models setting and set dataLineageViz.ai.defaultModel.';
+export const NO_MODEL_MESSAGE = 'No model is configured. Run Data Lineage: Add AI Model, or use Add model in the chat.';
+
+/**
+ * The commands the composer lists when the user types `/`. `trace` and `search` pin the entry route,
+ * `clear` and `new` start a new chat; the host recognizes exactly these (`ai/agent/slashCommands.ts`).
+ */
+export const CHAT_COMMANDS = [
+  { id: 'trace', description: 'Trace the lineage of an object or column' },
+  { id: 'search', description: 'Search the objects of the project' },
+  { id: 'clear', description: 'Start a new chat' },
+  { id: 'new', description: 'Start a new chat' },
+] as const;
 
 /** The one definition of a turn event: the runtime's sink emits it and the bridge validates it. */
 const TurnEventSchema = z.discriminatedUnion('type', [
@@ -95,6 +106,8 @@ export const ChatToExtensionMsgSchemas = [
     message: 'A refine decision needs the requested change as text.',
   }),
   z.object({ type: z.literal('chat.newChat') }),
+  /** Opens the host's guided model commands: Add AI Model, or the Manage AI Models menu. */
+  z.object({ type: z.literal('chat.modelCommand'), command: z.enum(['add', 'manage']) }),
   z.object({ type: z.literal('chat.selectModel'), modelId: ChatIdSchema }),
   z.object({ type: z.literal('chat.selectEffort'), effort: ChatIdSchema }),
   z.object({ type: z.literal('chat.ready') }),

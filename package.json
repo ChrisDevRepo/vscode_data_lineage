@@ -168,8 +168,28 @@
         "category": "Data Lineage"
       },
       {
-        "command": "dataLineageViz.setApiKey",
-        "title": "Set API key",
+        "command": "dataLineageViz.addAiModel",
+        "title": "Add AI Model",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.editAiModel",
+        "title": "Edit AI Model",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.removeAiModel",
+        "title": "Remove AI Model",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.updateAiModelKey",
+        "title": "Update AI Model Key",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.manageAiModels",
+        "title": "Manage AI Models",
         "category": "Data Lineage"
       },
       {
@@ -602,7 +622,7 @@
             "type": "array",
             "default": [],
             "scope": "application",
-            "markdownDescription": "OpenAI-compatible model endpoints the assistant can use (Chat Completions or Responses). Keys never belong here: run [Set API key](command:dataLineageViz.setApiKey) per entry. An invalid entry is named and not offered.",
+            "markdownDescription": "OpenAI-compatible model endpoints the assistant can use (Chat Completions or Responses). Keys never belong here; they stay in VS Code secret storage. An invalid entry is named and not offered.\n\n**Manage:** [Add](command:dataLineageViz.addAiModel) · [Edit](command:dataLineageViz.editAiModel) · [Update Key](command:dataLineageViz.updateAiModelKey) · [Remove](command:dataLineageViz.removeAiModel)",
             "items": {
               "type": "object",
               "additionalProperties": false,

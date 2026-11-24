@@ -13,6 +13,7 @@ import ChatPane, { ComposerControls, modelsMissing, toContent, toSuggestions, to
 import { initialChatState, type ChatMessage, type ChatState } from '../../../src/components/chat/chatStore';
 import type { ChatActions } from '../../../src/components/chat/useChat';
 import { BRIDGE_PROTOCOL_VERSION } from '../../../src/engine/shared/bridgeContract';
+import { NO_MODEL_MESSAGE } from '../../../src/engine/shared/chatContract';
 import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,9 +73,16 @@ describe('no configured model', () => {
     expect(markup(initialChatState)).toBe('');
   });
 
-  it('is missing once the host reports an empty model list, and the composer says what to do', () => {
+  it('is missing once the host reports an empty model list, and the composer offers the Add model button', async () => {
     expect(modelsMissing(noModels)).toBe(true);
-    expect(markup(noModels)).toContain('No model is configured. Add an entry to the dataLineageViz.ai.models setting and set dataLineageViz.ai.defaultModel.');
+    expect(markup(noModels)).toContain(NO_MODEL_MESSAGE);
+    const modelCommand = vi.fn();
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    act(() => root.render(<ChatContext.Provider value={{ state: noModels, actions: { modelCommand } as unknown as ChatActions }}><ComposerControls /></ChatContext.Provider>));
+    await act(async () => { host.querySelector('button')?.click(); });
+    act(() => root.unmount());
+    expect(modelCommand).toHaveBeenCalledExactlyOnceWith('add');
   });
 
   it('is not missing when the host lists a model', () => {

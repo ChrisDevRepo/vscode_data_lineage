@@ -58,6 +58,7 @@ function setup(session: AiSession, overrides: { runtime?: ConstructorParameters<
     logger: Logger.create(channel as never, 'AI'),
     showErrorMessage: vi.fn(),
     showWarningMessage: vi.fn(),
+    runModelCommand: vi.fn(),
     createPort: async () => overrides.port ?? ({} as ModelPort),
   });
   controller.attachView({ post: (msg) => { frames.push(msg); } });

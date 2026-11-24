@@ -11,7 +11,7 @@ import { applyModelToSession, buildExtensionConfig, isModelOverLimit } from './b
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { registerConnectionCommands } from './host/connectionCommands';
 import { loadDmvQueries } from './host/dbHost';
-import { registerSetApiKeyCommand } from './ai/providers/apiKeyCommand';
+import { registerAiModelCommands } from './host/aiModelCommands';
 
 /** Registers all user-facing and internal commands; returns their disposables. */
 export function registerCommands(
@@ -27,7 +27,7 @@ export function registerCommands(
 
   return [
     ...registerConnectionCommands(context, outputChannel, () => loadDmvQueries(outputChannel, context.extensionUri)),
-    registerSetApiKeyCommand(context, aiLogger),
+    ...registerAiModelCommands(context, aiLogger),
     vscode.commands.registerCommand('dataLineageViz.open', (arg?: { replace?: boolean }) => openPanel(context, 'Data Lineage Viz', false, arg?.replace === true)),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
 

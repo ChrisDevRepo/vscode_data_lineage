@@ -14,6 +14,8 @@ describe('chat frames from the webview', () => {
     { type: 'chat.newChat' },
     { type: 'chat.selectModel', modelId: 'cloud' },
     { type: 'chat.selectEffort', effort: 'high' },
+    { type: 'chat.modelCommand', command: 'add' },
+    { type: 'chat.modelCommand', command: 'manage' },
     { type: 'chat.ready' },
   ])('accepts %j', (msg) => {
     expect(MainPanelToExtensionMsgSchema.safeParse(msg).success).toBe(true);
@@ -28,6 +30,7 @@ describe('chat frames from the webview', () => {
     ['a refine without text', { type: 'chat.gate', turnId: 't', gateId: 'g', decision: 'refine' }],
     ['a refine with blank text', { type: 'chat.gate', turnId: 't', gateId: 'g', decision: 'refine', text: '  ' }],
     ['a cancel without turnId', { type: 'chat.cancel' }],
+    ['a model command the host does not offer', { type: 'chat.modelCommand', command: 'workbench.action.reloadWindow' }],
   ])('rejects %s', (_name, msg) => {
     expect(MainPanelToExtensionMsgSchema.safeParse(msg).success).toBe(false);
   });

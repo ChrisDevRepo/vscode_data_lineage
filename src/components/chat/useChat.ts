@@ -9,6 +9,7 @@ export interface ChatActions {
   cancel: () => void;
   decideGate: (turnId: string, gateId: string, decision: GateDecision, text?: string) => void;
   newChat: () => void;
+  modelCommand: (command: 'add' | 'manage') => void;
   selectModel: (modelId: string) => void;
   selectEffort: (effort: string) => void;
 }
@@ -66,6 +67,7 @@ export function useChat(): { state: ChatState; actions: ChatActions } {
       vscodeApi.postMessage({ type: 'chat.gate', turnId: gateTurnId, gateId, decision, ...(text ? { text } : {}) });
     }, [vscodeApi]),
     newChat: useCallback(() => vscodeApi.postMessage({ type: 'chat.newChat' }), [vscodeApi]),
+    modelCommand: useCallback((command: 'add' | 'manage') => vscodeApi.postMessage({ type: 'chat.modelCommand', command }), [vscodeApi]),
     selectModel: useCallback((modelId: string) => vscodeApi.postMessage({ type: 'chat.selectModel', modelId }), [vscodeApi]),
     selectEffort: useCallback((effort: string) => vscodeApi.postMessage({ type: 'chat.selectEffort', effort }), [vscodeApi]),
   };

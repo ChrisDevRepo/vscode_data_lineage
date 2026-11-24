@@ -16,72 +16,12 @@ import {
   MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_SYSNAME_LENGTH, passwordSecretKey, passwordTooLong,
   savePassword, tooLong, type BuiltInConnection,
 } from '../engine/db/connectionSettings';
+import { outcome, runSteps, wizardPrompts, type WizardStep } from './wizardSteps';
 
 const WIZARD_TITLE = 'Add Database Connection';
 const WIZARD_STEPS = 6;
 
-const BACK = Symbol('back');
-type Answer<T> = T | typeof BACK | undefined;
-
-interface InputOptions {
-  step: number;
-  prompt: string;
-  value?: string;
-  placeholder?: string;
-  password?: boolean;
-  canGoBack: boolean;
-  validate?: (value: string) => string | undefined;
-}
-
-function askInput(options: InputOptions): Promise<Answer<string>> {
-  return new Promise((resolve) => {
-    const box = vscode.window.createInputBox();
-    box.title = WIZARD_TITLE;
-    box.step = options.step;
-    box.totalSteps = WIZARD_STEPS;
-    box.prompt = options.prompt;
-    box.value = options.value ?? '';
-    box.placeholder = options.placeholder;
-    box.password = options.password === true;
-    box.ignoreFocusOut = true;
-    box.buttons = options.canGoBack ? [vscode.QuickInputButtons.Back] : [];
-    const done = (answer: Answer<string>) => { resolve(answer); box.dispose(); };
-    box.onDidTriggerButton((button) => { if (button === vscode.QuickInputButtons.Back) done(BACK); });
-    box.onDidAccept(() => {
-      const problem = options.validate?.(box.value);
-      if (problem) { box.validationMessage = problem; return; }
-      done(box.value);
-    });
-    box.onDidHide(() => done(undefined));
-    box.show();
-  });
-}
-
-interface PickOptions<T extends vscode.QuickPickItem> {
-  step: number;
-  placeholder: string;
-  items: T[];
-  canGoBack: boolean;
-}
-
-function askPick<T extends vscode.QuickPickItem>(options: PickOptions<T>): Promise<Answer<T>> {
-  return new Promise((resolve) => {
-    const pick = vscode.window.createQuickPick<T>();
-    pick.title = WIZARD_TITLE;
-    pick.step = options.step;
-    pick.totalSteps = WIZARD_STEPS;
-    pick.placeholder = options.placeholder;
-    pick.ignoreFocusOut = true;
-    pick.matchOnDescription = true;
-    pick.items = options.items;
-    pick.buttons = options.canGoBack ? [vscode.QuickInputButtons.Back] : [];
-    const done = (answer: Answer<T>) => { resolve(answer); pick.dispose(); };
-    pick.onDidTriggerButton((button) => { if (button === vscode.QuickInputButtons.Back) done(BACK); });
-    pick.onDidAccept(() => done(pick.selectedItems[0]));
-    pick.onDidHide(() => done(undefined));
-    pick.show();
-  });
-}
+const { askInput, askPick } = wizardPrompts(WIZARD_TITLE, WIZARD_STEPS);
 
 interface WizardState {
   server?: string;
@@ -96,10 +36,6 @@ interface WizardState {
   encrypt?: boolean;
   trustServerCertificate?: boolean;
 }
-
-type StepOutcome = 'next' | 'back' | 'cancel';
-
-const outcome = (answer: Answer<unknown>): StepOutcome => (answer === BACK ? 'back' : answer === undefined ? 'cancel' : 'next');
 
 function toConnection(state: WizardState, id: string): BuiltInConnection {
   return BuiltInConnectionSchema.parse({
@@ -175,7 +111,7 @@ export async function runAddConnectionFlow(
 
   const testOptions = () => (state.password !== undefined ? { password: state.password } : {});
 
-  const steps: Array<{ applies: () => boolean; run: (n: number) => Promise<StepOutcome> }> = [
+  const steps: WizardStep[] = [
     {
       applies: () => true,
       run: async (n) => {
@@ -290,48 +226,37 @@ export async function runAddConnectionFlow(
     },
   ];
 
-  let at = 0;
-  let direction = 1;
+  if (!await runSteps(steps)) return undefined;
   while (true) {
-    if (at >= steps.length) {
-      const connection = toConnection(state, id);
-      const failure = await withConnectProgress(`Testing ${describeConnection(connection)}…`, async () => {
-        try {
-          const session = await openBuiltInSession(connection, env, testOptions());
-          if (!session) return 'cancelled' as const;
-          await session.dispose();
-          return undefined;
-        } catch (err) {
-          return describeConnectionError(err, builtInTarget(connection, connection.database));
-        }
-      });
-      if (failure === 'cancelled') return undefined;
-      if (failure) {
-        const offerTrust = !state.trustServerCertificate && failure.actions.some((a) => a.id === 'trustServerCertificate');
-        const trustLabel = CONNECTION_ERROR_LABELS.trustServerCertificate;
-        const choice = await vscode.window.showErrorMessage(failure.message, ...(offerTrust ? [trustLabel] : []), 'Edit', 'Cancel');
-        if (choice === trustLabel) {
-          state.trustServerCertificate = true;
-          continue;
-        }
-        if (choice !== 'Edit') return undefined;
-        at = 0;
-        direction = 1;
+    const connection = toConnection(state, id);
+    const failure = await withConnectProgress(`Testing ${describeConnection(connection)}…`, async () => {
+      try {
+        const session = await openBuiltInSession(connection, env, testOptions());
+        if (!session) return 'cancelled' as const;
+        await session.dispose();
+        return undefined;
+      } catch (err) {
+        return describeConnectionError(err, builtInTarget(connection, connection.database));
+      }
+    });
+    if (failure === 'cancelled') return undefined;
+    if (failure) {
+      const offerTrust = !state.trustServerCertificate && failure.actions.some((a) => a.id === 'trustServerCertificate');
+      const trustLabel = CONNECTION_ERROR_LABELS.trustServerCertificate;
+      const choice = await vscode.window.showErrorMessage(failure.message, ...(offerTrust ? [trustLabel] : []), 'Edit', 'Cancel');
+      if (choice === trustLabel) {
+        state.trustServerCertificate = true;
         continue;
       }
-      await upsertBuiltInConnection(connection);
-      await reconcilePassword(env.secrets, existing, connection, state.password);
-      logger.info('Saved database connection');
-      logger.debug(`Saved database connection ${id} (${describeConnection(connection)})`);
-      return connection;
+      if (choice !== 'Edit') return undefined;
+      if (!await runSteps(steps)) return undefined;
+      continue;
     }
-    if (at < 0) return undefined;
-    const step = steps[at];
-    if (!step.applies()) { at += direction; continue; }
-    const result = await step.run(at + 1);
-    if (result === 'cancel') return undefined;
-    direction = result === 'back' ? -1 : 1;
-    at += direction;
+    await upsertBuiltInConnection(connection);
+    await reconcilePassword(env.secrets, existing, connection, state.password);
+    logger.info('Saved database connection');
+    logger.debug(`Saved database connection ${id} (${describeConnection(connection)})`);
+    return connection;
   }
 }
 

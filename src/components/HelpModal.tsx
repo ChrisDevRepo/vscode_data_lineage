@@ -323,7 +323,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
           <h3 className="text-sm font-semibold ln-text">AI model endpoints</h3>
         </div>
         <p className="text-sm mb-3 ln-text-muted">
-          List OpenAI-compatible endpoints in <code>dataLineageViz.ai.models</code>, then run <span className="font-bold font-mono ln-text-link">Data Lineage: Set API key</span> for each. The key is kept in VS Code secret storage, never in settings.
+          Run <span className="font-bold font-mono ln-text-link">Data Lineage: Add AI Model</span> (or <strong>Add model</strong> in the chat) to pick a provider, enter the endpoint, model and key, and test the connection. Models are kept in <code>dataLineageViz.ai.models</code>; the key is kept in VS Code secret storage, never in settings.
         </p>
         <p className="text-xs mt-3 ln-text-muted">The lineage tools read only the loaded graph and are inactive when none is loaded. Local MCP clients such as Copilot can call them when <code>dataLineageViz.mcp.enabled</code> is on (run <strong>Data Lineage: Enable MCP Server</strong>).</p>
       </div>

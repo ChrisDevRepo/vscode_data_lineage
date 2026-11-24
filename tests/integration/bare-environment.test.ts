@@ -72,8 +72,8 @@ suite('Bare environment — no model entry or database extension', () => {
     );
 
     assert.ok(
-      commands.includes('dataLineageViz.setApiKey'),
-      'the API key command must be registered without a model entry or key',
+      ['addAiModel', 'editAiModel', 'removeAiModel', 'updateAiModelKey', 'manageAiModels'].every((name) => commands.includes(`dataLineageViz.${name}`)),
+      'the AI model commands must be registered without a model entry or key',
     );
   });
 });

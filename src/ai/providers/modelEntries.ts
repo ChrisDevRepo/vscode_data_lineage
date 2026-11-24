@@ -21,10 +21,13 @@ const PORT_OWNED_BODY_KEYS: readonly string[] = [
 /** Header names that carry a credential; a key never belongs in a settings file. */
 const CREDENTIAL_HEADER = /authorization|api[-_]?key|token|secret|cookie/i;
 
+/** Longest display name of an entry. */
+export const MAX_ENTRY_NAME_LENGTH = 256;
+
 const LOOPBACK_HOSTS: readonly string[] = ['127.0.0.1', 'localhost', '[::1]'];
 
 /** Why a base URL cannot serve as the OpenAI client's `baseURL`; `undefined` when it can. */
-function baseUrlFault(value: string): string | undefined {
+export function baseUrlFault(value: string): string | undefined {
   let url: URL;
   try {
     url = new URL(value);
@@ -45,7 +48,7 @@ function baseUrlFault(value: string): string | undefined {
 const ModelEntrySchema = z.strictObject({
   /** Stable identifier; also names the SecretStorage entry of the key. */
   id: z.string().min(1).max(128),
-  name: z.string().min(1).max(256),
+  name: z.string().min(1).max(MAX_ENTRY_NAME_LENGTH),
   /** Base URL of the OpenAI-compatible API, e.g. `https://host/openai/v1/`. */
   url: z.string().min(1),
   model: z.string().min(1),
@@ -75,7 +78,7 @@ const ModelEntrySchema = z.strictObject({
   }
   for (const name of Object.keys(entry.requestHeaders ?? {})) {
     if (CREDENTIAL_HEADER.test(name)) {
-      ctx.addIssue({ code: 'custom', path: ['requestHeaders', name], message: `requestHeaders "${name}" looks like a credential; keys go through Set API key` });
+      ctx.addIssue({ code: 'custom', path: ['requestHeaders', name], message: `requestHeaders "${name}" looks like a credential; keys go through Update AI Model Key` });
     }
   }
 });

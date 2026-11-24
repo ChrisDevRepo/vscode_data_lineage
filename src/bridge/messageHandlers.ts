@@ -998,6 +998,7 @@ export function createMessageHandlers(
     'chat.cancel': chatFrame,
     'chat.gate': chatFrame,
     'chat.newChat': chatFrame,
+    'chat.modelCommand': chatFrame,
     'chat.selectModel': chatFrame,
     'chat.selectEffort': chatFrame,
     'chat.ready': chatFrame,

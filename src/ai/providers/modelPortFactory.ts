@@ -42,7 +42,7 @@ export async function createConfiguredModelPort(
   if (!apiKey) {
     throw new ModelPortError(
       'no_permission',
-      `No API key is stored for model entry "${entry.id}"; run Data Lineage: Set API key.`,
+      `No API key is stored for model entry "${entry.id}"; run Data Lineage: Update AI Model Key.`,
     );
   }
   return createProviderModelPort(entry, apiKey, portOptions);
