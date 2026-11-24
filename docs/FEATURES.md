@@ -193,7 +193,7 @@ Tables above `tableStatistics.sampleThreshold` rows are sampled instead of fully
 
 ## MCP server
 
-A local MCP server lets other AI clients call the lineage tools. It covers the discovery phase: lookup tools (context, screen state, object search, object detail, graph patterns, DDL search) plus trace, path and graph preview. The client's own model does the reasoning and writes the answer; the server returns each result or an error result. Everything after discovery is in the chat panel, which uses your configured model (see [AI chat panel](#ai-chat-panel)). The six lookup tools run the same code as in the chat panel.
+A local MCP server lets other AI clients call the lineage tools. It covers the discovery phase: lookup tools (context, screen state, object search, object detail, graph patterns, DDL search) plus trace, path and graph preview. The client's own model does the reasoning and writes the answer; the server returns each result or an error result. Everything after discovery is in the chat panel, which uses your configured model (see [AI chat panel](#ai-chat-panel)). The nine tools run the same code as in the chat panel.
 
 - **Tools.** `lineage_get_context`, `lineage_get_screen_state`, `lineage_search_objects`, `lineage_get_object_detail`, `lineage_detect_graph_patterns`, `lineage_search_ddl`, `lineage_get_trace`, `lineage_get_path` and `lineage_create_graph_preview`. They read the loaded model and are inactive when none is loaded. Nothing connects to the database. The graph preview opens its view in the graph panel.
 - **Failed calls.** A call that is refused returns an error result with a corrective message and a structured error. The server keeps no state, retries nothing and sets no call limit; the client decides whether to retry.

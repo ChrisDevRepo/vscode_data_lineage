@@ -2,13 +2,14 @@
  * Canonical tool-by-stage policy shared by provider projection and runtime authorization (tool
  * names without the `lineage_` prefix):
  * - `discover`: get_context, get_screen_state, search_objects, get_scope_bundle, search_ddl,
- *   get_object_detail, detect_graph_patterns.
+ *   get_object_detail, detect_graph_patterns, get_trace, get_path, and create_graph_preview.
  * - `sm_entry`: get_screen_state, search_objects, get_object_detail (resolves all columns for a CT
  *   start), start_exploration (resolves the origin and opens the consent gate).
  * - `active` (sm_bb): submit_findings. `active` (sm_ct): submit_findings, get_neighbor_columns.
  * - `synthesis`: present_result.
  * - `completed`: present_result, start_exploration (a supplement on the completed engine, or a
- *   fresh proposal), and every discovery read tool.
+ *   fresh proposal), and every discovery read tool (no graph preview: `present_result` owns the
+ *   rendered graph).
  *
  * SM keeps `present_result` synthesis-only because the agenda drains across many hops.
  */
@@ -41,6 +42,8 @@ const DISCOVERY_TOOLS: readonly string[] = [
   'lineage_search_ddl',
   'lineage_get_object_detail',
   'lineage_detect_graph_patterns',
+  'lineage_get_trace',
+  'lineage_get_path',
 ];
 
 /**
@@ -85,7 +88,7 @@ function assertNever(x: never): never {
 export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
   switch (stage.kind) {
     case 'discover':
-      return new Set(DISCOVERY_TOOLS);
+      return new Set([...DISCOVERY_TOOLS, 'lineage_create_graph_preview']);
     case 'sm_entry':
       return new Set(SM_ENTRY_TOOLS);
     case 'synthesis':
