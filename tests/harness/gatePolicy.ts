@@ -1,6 +1,6 @@
 /** The simulated consent-gate policy of a headless turn: its rounds and how a card is judged. */
 import { z } from 'zod';
-import type { AiSession } from '../../src/ai/session/session';
+import type { AiSession, PendingExplorationProposal } from '../../src/ai/session/session';
 
 /**
  * How one gate round is answered: the user's next chat turn. The `--gate` JSON array is a list of
@@ -57,6 +57,30 @@ export function evaluateGateExpectation(expr: string, session: Pick<AiSession, '
   const ok = values.some((v) => v.toLowerCase().includes(needle.toLowerCase()));
   return negated ? !ok : ok;
 }
+
+/**
+ * The workload dimensions of a proposed card, as the user sees them before deciding; prose is
+ * excluded so two cards compare by what they would cost.
+ * Exported for the internal case checks. @internal
+ */
+export function approvalWorkload(proposal: Pick<PendingExplorationProposal, 'classification' | 'init'>) {
+  const init = proposal.init;
+  const sorted = (values: readonly string[] | undefined) => [...new Set(values ?? [])].sort();
+  return {
+    classification: proposal.classification,
+    origin: init.origin,
+    analysisMode: init.analysisMode ?? (init.targetColumns?.length ? 'ct' : 'bb'),
+    targetColumns: sorted(init.targetColumns),
+    direction: init.direction ?? 'bidirectional',
+    depthIntent: structuredClone(init.depthIntent),
+    excludeTypes: sorted(init.excludeTypes),
+    excludeSchemas: sorted(init.excludeSchemas),
+    excludeNodeIds: sorted(init.excludeNodeIds),
+    passNodeIds: sorted(init.passNodeIds),
+  };
+}
+
+export type ApprovalWorkload = ReturnType<typeof approvalWorkload>;
 
 /** What an approve round's `expect` check left on its receipt. */
 export interface GateExpectationReceipt {
