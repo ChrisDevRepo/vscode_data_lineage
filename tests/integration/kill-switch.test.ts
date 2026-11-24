@@ -4,8 +4,8 @@ import { announceLaneTier } from './laneTier';
 
 /**
  * Proves the `dataLineageViz.ai.enabled` kill switch: with the setting off, activation completes,
- * the core product registers in full, and the AI surface — the language-model tools — is genuinely
- * not registered rather than merely hidden.
+ * the core product registers in full, and the AI runtime (the lineage runtime behind the chat
+ * panel) is genuinely not created rather than merely hidden.
  *
  * @remarks
  * The lane launches with a seeded `--user-data-dir` whose user settings carry
@@ -46,8 +46,12 @@ suite('AI disabled by setting — kill switch honours the manifest', () => {
     }
   });
 
-  test('no lineage tool is registered with vscode.lm', () => {
-    // Lineage tools are served by the local MCP server only; the manifest contributes none.
-    assert.deepStrictEqual(vscode.lm.tools.filter(t => t.name.startsWith('lineage_')).map(t => t.name), []);
+  test('the AI runtime is not created', async () => {
+    // `activateRuntime` returns `lineageRuntime` only when `ai.enabled` is true, so with the switch
+    // off it is the observable proof that the chat controller and its runtime were not loaded.
+    const ext = vscode.extensions.getExtension(EXTENSION_ID);
+    assert.ok(ext, 'extension is installed in the test host');
+    const exported = await ext.activate() as { lineageRuntime?: unknown };
+    assert.strictEqual(exported.lineageRuntime, undefined, 'ai.enabled=false must not construct the lineage runtime');
   });
 });

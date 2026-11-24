@@ -2,8 +2,8 @@
  * The `Add / Edit / Remove AI Model` and `Update AI Model Key` commands, and the multi-step wizard
  * behind add and edit: the AI counterpart of the Database Connection commands, on the same
  * QuickInput steps ({@link wizardPrompts}). An entry is the `dataLineageViz.ai.models` item the
- * settings schema declares, written to user settings; its key lives in SecretStorage under the entry
- * id and is never in settings, a log line or a message.
+ * settings schema declares, written to user settings; its key lives in SecretStorage under the
+ * entry id and is never in settings, a log line or a message.
  */
 
 import * as vscode from 'vscode';
@@ -12,6 +12,7 @@ import { apiKeySecretName, baseUrlFault, MAX_ENTRY_NAME_LENGTH, parseModelEntrie
 import { createProviderModelPort } from '../ai/providers/openAiTransport';
 import type { Logger } from '../utils/log';
 import { notifyWarning } from '../utils/notifications';
+import { rawId, readRawList, rewriteRawList } from './rawSettingList';
 import { outcome, runSteps, wizardPrompts, type WizardStep } from './wizardSteps';
 
 export const ADD_AI_MODEL_COMMAND = 'dataLineageViz.addAiModel';
@@ -30,14 +31,15 @@ const { askInput, askPick } = wizardPrompts(WIZARD_TITLE, WIZARD_STEPS);
 
 type ApiType = ModelEntry['apiType'];
 
-/** The window and output limit a new entry is written with; the user overwrites them in the settings JSON. */
+/** The window and output limit a new entry gets; the user edits them in settings.json. */
 const DEFAULT_MAX_INPUT_TOKENS = 128_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
 
-/** The sampling Copilot sent on Chat Completions, written into the entry so it is no black box; the OpenAI Responses preset has none (reasoning models reject it). */
+/** Sampling written into a new chat-completions entry; the Responses preset has none (reasoning
+ * models reject it). */
 const SAMPLING_REQUEST_BODY = { temperature: 0.1, top_p: 1 };
 
-/** A provider the wizard starts from: its base URL and wire format, so the user types only what differs. */
+/** A provider the wizard starts from: its base URL and wire format, so the user types the rest. */
 interface ModelPreset {
   readonly id: string;
   readonly label: string;
@@ -58,30 +60,20 @@ const PRESETS: readonly ModelPreset[] = [
   { id: 'custom', label: 'Other OpenAI-compatible endpoint', description: 'Azure OpenAI, a gateway or any server', url: '', apiType: 'chat-completions', requestBody: SAMPLING_REQUEST_BODY },
 ];
 
-/** What the connection test asks the endpoint; any reply shows the URL, key and model are accepted. */
+/** What the connection test asks the endpoint; any reply shows URL, key and model are accepted. */
 const TEST_PROMPT = 'Reply with the single word OK.';
 
 interface WizardState {
   preset?: ModelPreset;
   url: string;
   model: string;
-  /** The key to test with and save: the saved one of an edited entry until the user types another. */
+  /** The key to test with and save: the saved one of an edited entry until another is typed. */
   key?: string;
   name: string;
 }
 
-/** The raw `ai.models` list as settings.json holds it. */
-function readRawModels(): unknown[] {
-  const raw = vscode.workspace.getConfiguration('dataLineageViz.ai').get<unknown>('models');
-  return Array.isArray(raw) ? [...raw] : [];
-}
-
-const rawId = (entry: unknown): unknown => (entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined);
-
-/** Rewrites the list in the user (global) settings; the setting is application-scoped. */
-function writeModels(models: unknown[]): Thenable<void> {
-  return vscode.workspace.getConfiguration('dataLineageViz.ai').update('models', models, vscode.ConfigurationTarget.Global);
-}
+const AI_CONFIG_SECTION = 'dataLineageViz.ai';
+const MODELS_SETTING = 'models';
 
 /** A readable entry id from the display name, made unique among the ids already in the list. */
 function newEntryId(name: string, taken: readonly unknown[]): string {
@@ -115,13 +107,13 @@ function testConnection(entry: ModelEntry, apiKey: string, logger: Logger): Then
 
 /**
  * Runs the add (or, with `existing`, edit) wizard and saves the result. Five steps (provider
- * preset, base URL, model name, API key, display name), each with a Back button after the first; the
- * entry is test-connected before it is written, which reports a wrong URL, key or model name. A new
- * entry gets the preset's wire format and the default limits; the user tunes them, and adds
+ * preset, base URL, model name, API key, display name), each with a Back button after the first;
+ * the entry is test-connected before it is written, which reports a wrong URL, key or model name.
+ * A new entry gets the preset's wire format and the default limits; the user tunes them, and adds
  * `requestBody` and the rest, in the settings JSON.
  *
- * @param existing - Entry to edit; its id, every field the wizard does not ask and its saved key are
- *   kept. A changed base URL requires the key again, so a saved key is never sent to another host.
+ * @param existing - Entry to edit; its id, every field the wizard does not ask and its saved key
+ *   are kept. A changed base URL requires the key again, so a saved key never goes to another host.
  * @returns The saved entry id, or `undefined` when the user cancelled.
  */
 async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, existing?: ModelEntry): Promise<string | undefined> {
@@ -201,7 +193,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
   if (!await runSteps(steps)) return undefined;
   let openSettings = false;
   while (true) {
-    const models = readRawModels();
+    const models = readRawList(AI_CONFIG_SECTION, MODELS_SETTING);
     const id = existing?.id ?? newEntryId(state.name, models);
     const stored = models.find((entry) => rawId(entry) === id) as Partial<ModelEntry> | undefined;
     const added = stored ? {} : {
@@ -224,10 +216,12 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
       if (choice !== SAVE_AND_OPEN) return undefined;
       openSettings = true;
     }
-    const at = models.findIndex((item) => rawId(item) === id);
-    if (at >= 0) models[at] = candidate;
-    else models.push(candidate);
-    await writeModels(models);
+    await rewriteRawList(AI_CONFIG_SECTION, MODELS_SETTING, (entries) => {
+      const at = entries.findIndex((item) => rawId(item) === id);
+      if (at >= 0) entries[at] = candidate;
+      else entries.push(candidate);
+      return entries;
+    });
     if (state.key !== savedKey) await secrets.store(apiKeySecretName(id), state.key!);
     logger.info('Saved AI model');
     logger.debug(`Saved AI model ${id}`);
@@ -236,7 +230,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
   }
 }
 
-/** After a save: the limits and any further setting of the entry are the user's to tune in the settings JSON. */
+/** After a save: the limits and any further setting of the entry are tuned in the settings JSON. */
 async function offerSettingsJson(): Promise<void> {
   const choice = await vscode.window.showInformationMessage(
     'AI model saved. Tune its limits, requestBody and other settings in dataLineageViz.ai.models.', OPEN_SETTINGS,
@@ -244,9 +238,9 @@ async function offerSettingsJson(): Promise<void> {
   if (choice === OPEN_SETTINGS) await vscode.commands.executeCommand(OPEN_SETTINGS_JSON);
 }
 
-/** The valid entry an argument names by id, or the picked one; an invalid entry is named in a warning, never offered. */
+/** The valid entry an argument names by id, or the picked one; an invalid entry is warned about. */
 async function entryFromArg(arg: unknown, placeholder: string, logger: Logger): Promise<ModelEntry | undefined> {
-  const { entries, invalid } = parseModelEntries(vscode.workspace.getConfiguration('dataLineageViz.ai').get('models'));
+  const { entries, invalid } = parseModelEntries(vscode.workspace.getConfiguration(AI_CONFIG_SECTION).get(MODELS_SETTING));
   if (invalid.length > 0) {
     notifyWarning(
       logger,
@@ -286,7 +280,7 @@ export function registerAiModelCommands(context: vscode.ExtensionContext, logger
     vscode.commands.registerCommand(REMOVE_AI_MODEL_COMMAND, async (arg?: unknown): Promise<void> => {
       const target = await entryFromArg(arg, 'Select a model to remove', logger);
       if (!target) return;
-      await writeModels(readRawModels().filter((entry) => rawId(entry) !== target.id));
+      await rewriteRawList(AI_CONFIG_SECTION, MODELS_SETTING, (entries) => entries.filter((entry) => rawId(entry) !== target.id));
       await context.secrets.delete(apiKeySecretName(target.id));
       logger.info('Removed AI model');
       logger.debug(`Removed AI model ${target.id}`);

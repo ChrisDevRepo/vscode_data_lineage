@@ -1089,7 +1089,7 @@ function superRefineAll<T>(fn: (value: T, ctx: z.core.$RefinementCtx<T>) => void
   return z.superRefine<T>(fn, { when: () => true });
 }
 
-/** Refinement for a `sections` list: each final label maps to exactly one section text; `hint` is the repair. */
+/** Refinement for a `sections` list: each final label maps to one section text; `hint` repairs. */
 function rejectDuplicateSectionLabels(hint: string) {
   return (sections: ReadonlyArray<{ label: string }>, ctx: z.core.$RefinementCtx): void => {
     if (!Array.isArray(sections)) return;

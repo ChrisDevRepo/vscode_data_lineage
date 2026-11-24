@@ -33,7 +33,8 @@ import {
   analyzeIslands,
   analyzeLongestPath,
 } from '../../../src/engine/graphAnalysis';
-import { buildGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
+import { buildGraph } from '../../../src/engine/graphBuilder';
+import { traceNodeWithLevels } from '../../../src/engine/shared/lineageTrace';
 import { filterBySchemas } from '../../../src/engine/modelFilters';
 import { bfsReachable } from '../../../src/engine/graphGuards';
 import type { DatabaseModel } from '../../../src/engine/types';

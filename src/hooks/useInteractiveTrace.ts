@@ -2,11 +2,11 @@ import { useState, useCallback, useEffect, useMemo, useRef, startTransition } fr
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel, type CustomNodeData } from '../engine/types';
-import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
+import { applyTraceToFlow, buildGraphologyGraph } from '../engine/graphBuilder';
 import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode, traceRemovalSides, unionConnectingPaths } from '../engine/traceScope';
 import { notifyUser } from '../utils/notify';
 import { directNeighborIds } from '../engine/graphGuards';
-import { resolveBfsGraph } from '../engine/shared/lineageTrace';
+import { computeShortestPath, resolveBfsGraph, traceNodeWithLevels } from '../engine/shared/lineageTrace';
 import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
 /** State and control actions returned by `useInteractiveTrace`. */

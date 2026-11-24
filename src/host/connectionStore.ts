@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import type { Logger } from '../utils/log';
 import { DATABASE_CONFIG_SECTION } from '../engine/db/dbSession';
 import { BuiltInConnectionSchema, type BuiltInConnection } from '../engine/db/connectionSettings';
+import { rawId, rewriteRawList } from './rawSettingList';
 
 const CONNECTIONS_SETTING = 'connections';
 
@@ -31,42 +32,13 @@ export function readBuiltInConnections(logger?: Pick<Logger, 'debug'>): BuiltInC
   return connections;
 }
 
-/** A copy of the raw setting value, as the user's settings.json holds it. */
-function readRawConnections(): unknown[] {
-  const raw = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<unknown>(CONNECTIONS_SETTING);
-  return Array.isArray(raw) ? [...raw] : [];
-}
-
-function rawId(entry: unknown): unknown {
-  return entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined;
-}
-
-/** Tail of the connection-list rewrites; each read-modify-write starts after the last settles. */
-let rewriteTail: Promise<unknown> = Promise.resolve();
-
-/**
- * Rewrites the connection list in the user (global) settings, one rewrite at a time. The setting is
- * application-scoped, so a workspace can neither hold nor override it. `change` reads the list only
- * after every earlier rewrite has landed, so concurrent saves never drop each other's entries; a
- * failed rewrite rejects its own caller and does not block the next.
- */
-function rewriteConnections(change: (entries: unknown[]) => unknown[]): Promise<void> {
-  const run = async (): Promise<void> => {
-    await vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION)
-      .update(CONNECTIONS_SETTING, change(readRawConnections()), vscode.ConfigurationTarget.Global);
-  };
-  const result = rewriteTail.then(run, run);
-  rewriteTail = result.catch(() => undefined);
-  return result;
-}
-
 /**
  * Adds a connection, or replaces the saved one with the same id. Every other entry is written back
  * as stored, including a hand-edited one that fails validation. Serialized with
  * {@link deleteBuiltInConnection}, so concurrent calls never drop an entry.
  */
 export function upsertBuiltInConnection(connection: BuiltInConnection): Promise<void> {
-  return rewriteConnections((entries) => {
+  return rewriteRawList(DATABASE_CONFIG_SECTION, CONNECTIONS_SETTING, (entries) => {
     const at = entries.findIndex((entry) => rawId(entry) === connection.id);
     if (at >= 0) entries[at] = connection;
     else entries.push(connection);
@@ -79,5 +51,5 @@ export function upsertBuiltInConnection(connection: BuiltInConnection): Promise<
  * Serialized with {@link upsertBuiltInConnection}.
  */
 export function deleteBuiltInConnection(id: string): Promise<void> {
-  return rewriteConnections((entries) => entries.filter((entry) => rawId(entry) !== id));
+  return rewriteRawList(DATABASE_CONFIG_SECTION, CONNECTIONS_SETTING, (entries) => entries.filter((entry) => rawId(entry) !== id));
 }

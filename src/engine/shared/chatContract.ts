@@ -8,12 +8,13 @@ import { z } from 'zod';
 /** Upper bound, in characters, on one chat prompt or gate refinement text the webview may post. */
 const CHAT_TEXT_MAX_CHARS = 50_000;
 
-/** What the host's turn error and the chat view's composer notice both say when no `ai.models` entry exists. */
+/** What the host's turn error and the composer notice both say when no `ai.models` entry exists. */
 export const NO_MODEL_MESSAGE = 'No model is configured. Run Data Lineage: Add AI Model, or use Add model in the chat.';
 
 /**
- * The commands the composer lists when the user types `/`. `trace` and `search` pin the entry route,
- * `clear` and `new` start a new chat; the host recognizes exactly these (`ai/agent/slashCommands.ts`).
+ * The commands the composer lists when the user types `/`. `trace` and `search` pin the entry
+ * route, `clear` and `new` start a new chat; the host recognizes exactly these
+ * (`ai/agent/slashCommands.ts`).
  */
 export const CHAT_COMMANDS = [
   { id: 'trace', description: 'Trace the lineage of an object or column' },
@@ -67,10 +68,10 @@ const ChatEventMsgSchema = z.object({
   replacesAnalysis: z.boolean().optional(),
 });
 
-/** One suggested next prompt: `label` is the button text, `prompt` is what the view sends when it is clicked. */
+/** One suggested next prompt: `label` is the button text, `prompt` is what a click sends. */
 const ChatFollowupSchema = z.object({ label: z.string(), prompt: z.string() });
 
-/** Composer state: the picker lists, the selection, whether a turn is running, and the follow-ups on offer. */
+/** Composer state: the picker lists, the selection, whether a turn runs, and the follow-ups. */
 const ChatStateMsgSchema = z.object({
   type: z.literal('chat.state'),
   models: z.array(ChatModelSchema),
@@ -78,8 +79,8 @@ const ChatStateMsgSchema = z.object({
   effort: z.string().optional(),
   busy: z.boolean(),
   turnId: z.string().optional(),
-  /** Follow-up buttons for the session as it stands; empty while a turn runs or a gate is pending. */
-  followups: z.array(ChatFollowupSchema).default([]),
+  /** Follow-up buttons for the session; empty while a turn runs or a gate is pending. */
+  followups: z.array(ChatFollowupSchema),
 });
 
 /** Finished exchanges of the session transcript, oldest first; replaces the view's list. */
@@ -93,7 +94,8 @@ export const ChatToWebviewMsgSchemas = [ChatEventMsgSchema, ChatStateMsgSchema, 
 
 const ChatIdSchema = z.string().min(1).max(256);
 
-/** Webview→host chat frames, joined into `MainPanelToExtensionMsgSchema`. A refine decision carries the change as `text`. */
+/** Webview→host chat frames, joined into `MainPanelToExtensionMsgSchema`; a refine decision
+ * carries the change as `text`. */
 export const ChatToExtensionMsgSchemas = [
   z.object({ type: z.literal('chat.send'), text: z.string().min(1).max(CHAT_TEXT_MAX_CHARS) }),
   z.object({ type: z.literal('chat.cancel'), turnId: ChatIdSchema }),

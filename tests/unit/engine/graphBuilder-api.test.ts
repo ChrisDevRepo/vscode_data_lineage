@@ -18,7 +18,6 @@ import {
   buildGraphologyGraph,
   buildSchemaGraph,
   buildExpandedSchemaViewGraph,
-  computeShortestPath,
   dagreLayout,
   getGraphMetrics,
   hasCachedLayout,
@@ -27,9 +26,8 @@ import {
   objectLayoutInputForGraph,
   runDagre,
   seedLayoutCache,
-  traceNodeIdsWithLevels,
-  traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
+import { computeShortestPath, traceNodeIdsWithLevels, traceNodeWithLevels } from '../../../src/engine/shared/lineageTrace';
 import { buildWebviewCsp } from '../../../src/utils/cspBuilder';
 import { buildModel } from '../../../src/engine/modelBuilder';
 import { buildColumnTraceView, columnRowKey, type ColumnTraceRelation } from '../../../src/engine/columnTraceView';

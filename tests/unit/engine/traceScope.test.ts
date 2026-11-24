@@ -9,9 +9,9 @@ import {
 } from '../../../src/engine/traceScope';
 import {
   bfsReachable,
-  findShortestPathOrdered,
   analyzeRemoval,
 } from '../../../src/engine/graphGuards';
+import { findShortestPathOrdered } from '../../../src/engine/shared/lineageTrace';
 import type { TraceState } from '../../../src/engine/types';
 import type { DatabaseModel, LineageEdge, LineageNode } from '../../../src/engine/types';
 import { describe, expect, it } from 'vitest';

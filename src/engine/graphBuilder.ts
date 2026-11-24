@@ -5,7 +5,6 @@
  */
 
 import Graph from 'graphology';
-export { computeShortestPath, traceNodeIdsWithLevels, traceNodeWithLevels } from './shared/lineageTrace';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, LineageNode, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData } from './types';

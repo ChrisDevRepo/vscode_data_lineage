@@ -13,15 +13,16 @@
 
 import Graph from 'graphology';
 import { describe, expect, it } from 'vitest';
-import { buildGraphologyGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
+import { buildGraphologyGraph } from '../../../src/engine/graphBuilder';
+import { traceNodeWithLevels } from '../../../src/engine/shared/lineageTrace';
 import type { DatabaseModel } from '../../../src/engine/types';
 import {
   bfsDepthMap,
   bfsReachable,
   directNeighborIds,
-  findShortestPathOrdered,
   analyzeRemoval,
 } from '../../../src/engine/graphGuards';
+import { findShortestPathOrdered } from '../../../src/engine/shared/lineageTrace';
 import { makeGraph } from '../helpers/testUtils';
 import { buildModel } from '../../../src/engine/modelBuilder';
 
