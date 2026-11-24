@@ -56,6 +56,11 @@ export type WireEvent =
       readonly tools: ReadonlyArray<{ readonly name: string; readonly descriptionHash: string; readonly inputSchema: unknown }>;
       /** 1 when the request offers tools, 2 when it forces a call; absent when it carries no tools. */
       readonly toolMode?: number;
+      /**
+       * The request fields that steer the model, as the HTTP body sent them: `tool_choice`,
+       * `reasoning_effort`, `reasoning`, `output_config`, `thinking`. Never a header or key.
+       */
+      readonly body?: Readonly<Record<string, unknown>>;
       /** The verbatim system instruction, captured only while the trace runs verbose. */
       readonly system?: string;
       /** SHA-256 of the system instruction; present whenever one was sent. */

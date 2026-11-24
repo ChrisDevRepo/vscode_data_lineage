@@ -64,6 +64,15 @@ function createChatModel(entry: ModelEntry, apiKey: string, effort: string | und
   return written === named ? build(cap) : build();
 }
 
+/** The body fields a trace states: the ones that steer reasoning and tool use, never a header. */
+const WIRE_BODY_FIELDS = ['tool_choice', 'reasoning_effort', 'reasoning', 'output_config', 'thinking'] as const;
+
+/** Those fields as the client sends them for `toolChoice`; absent ones are left out. */
+function wireBody(chat: ChatOpenAI, toolChoice: WireToolChoice): Record<string, unknown> {
+  const params: Record<string, unknown> = chat.invocationParams({ tool_choice: toolChoice });
+  return Object.fromEntries(WIRE_BODY_FIELDS.filter((field) => params[field] !== undefined).map((field) => [field, params[field]]));
+}
+
 function toUsage(usage: AIMessageChunk['usage_metadata']): TokenUsage | undefined {
   if (!usage) return undefined;
   const count = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
@@ -227,6 +236,7 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
             inputSchema: tool.inputSchema,
           })),
           toolMode: tools.length > 0 ? (forced ? 2 : 1) : undefined,
+          body: wireBody(chat, tools.length > 0 ? sentChoice : undefined),
         });
         const model = tools.length > 0
           ? chat.bindTools(
