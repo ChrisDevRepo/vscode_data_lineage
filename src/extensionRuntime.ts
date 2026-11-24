@@ -8,8 +8,9 @@ import { Logger, OUTPUT_CHANNEL_NAME, OUTPUT_POINTER } from './utils/log';
 import { clearOnceToasts, notifyErrorOnce, notifyWarning, notifyWarningOnce } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } from './engine/projectStore';
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
-import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
+import { buildAiToolRegistry } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
+import { registerMcp } from './ai/mcp/mcpServer';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
 import { createConfiguredModelPort } from './ai/providers/modelPortFactory';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
@@ -113,7 +114,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     .get<boolean>('enabled', DEFAULT_AI_ENABLED);
 
   const missingAiApis = [
-    typeof vscode.lm?.registerTool === 'function' ? '' : 'language-model tools (vscode.lm)',
+    typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function' ? '' : 'MCP server definitions (vscode.lm)',
   ].filter(Boolean);
 
   let lineageRuntime: LineageRuntime | undefined;
@@ -129,10 +130,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     const aiToolHost = {
       getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
     };
-    context.subscriptions.push(
-      ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
-    );
-
     const aiLogger = Logger.create(outputChannel, 'AI');
     lineageRuntime = new LineageRuntime({
       getSession,
@@ -146,9 +143,10 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       },
     });
 
+    registerMcp(context, { getSession, outputChannel, getPanel: getActivePanel, host: aiToolHost });
     } else {
       logger.info(
-        'AI surface disabled — dataLineageViz.ai.enabled is false; the language-model tools and ' +
+        'AI surface disabled — dataLineageViz.ai.enabled is false; the MCP server and ' +
         'the AI runtime were not loaded.',
       );
     }
@@ -265,7 +263,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
 /**
  * Deactivation needs no cleanup: every disposable from {@link activateRuntime} (output channel,
- * commands, tree provider, config listener, AI tools) is on
+ * commands, tree provider, config listener, MCP server) is on
  * `context.subscriptions` and torn down by VS Code. Panel resources such as database connections
  * are released by each panel's own `onDidDispose`.
  */

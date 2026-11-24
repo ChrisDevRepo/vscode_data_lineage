@@ -46,21 +46,8 @@ suite('AI disabled by setting — kill switch honours the manifest', () => {
     }
   });
 
-  test('contributed tools stay listed from the manifest, but invoking one fails cleanly', async () => {
-    // `vscode.lm.tools` reflects the static `languageModelTools` contribution, not runtime
-    // registration — the listing survives the kill switch by host design. The enforced contract
-    // is therefore at invocation: no handler is registered, so the call rejects and nothing hangs.
-    const lineageTools = vscode.lm.tools.filter(t => t.name.startsWith('lineage_'));
-    assert.ok(
-      lineageTools.length > 0,
-      'the manifest contribution should keep the tools listed; an empty list means the host semantics changed and the FEATURES.md wording must be revisited',
-    );
-    await assert.rejects(
-      () => Promise.resolve(vscode.lm.invokeTool('lineage_search_objects', {
-        input: { query: 'x' },
-        toolInvocationToken: undefined,
-      })),
-      'invoking an unregistered tool must reject, never hang or crash the host',
-    );
+  test('no lineage tool is registered with vscode.lm', () => {
+    // Lineage tools are served by the local MCP server only; the manifest contributes none.
+    assert.deepStrictEqual(vscode.lm.tools.filter(t => t.name.startsWith('lineage_')).map(t => t.name), []);
   });
 });

@@ -53,8 +53,7 @@ export function stripFocusNodeLinks(markdown: string): string {
 /**
  * Maximum object ids one screen-state list carries: the cap the presenter applies when rendering a
  * screen-fact id list (overflow is reported as a count) and, identically, the cap on the ids a
- * `lineage_get_screen_state` recall may name, so one governor sizes both ends. `package.json`'s
- * `maxItems` is generated from the schema by `scripts/generate-tool-manifest.mjs`, never by hand.
+ * `lineage_get_screen_state` recall may name, so one governor sizes both ends.
  */
 export const SCREEN_STATE_MAX_IDS = 20;
 

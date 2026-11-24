@@ -199,9 +199,8 @@ What the AI may and may not do:
 Prompts and templates: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 Tool names, descriptions and input schemas are defined once in
-`src/ai/tools/toolDefs.ts`. After you change them, run
-`npm run generate:tool-manifest` to update the copy in
-`package.json`; `npm run gate` fails if it is out of date.
+`src/ai/tools/toolDefs.ts`. The `@lineage` participant and the local MCP server
+([`src/ai/mcp/mcpServer.ts`](../src/ai/mcp/mcpServer.ts)) both serve them from there.
 
 ## Test
 
@@ -220,8 +219,8 @@ No VS Code window opens.
 | `npm run test:scale` | Layout of a 1,500-node graph. |
 | `npm run gate` | The full pre-push check, described below. |
 
-`npm run gate` runs the product, unit and harness type checks, lint, the tool-manifest and
-template-version checks, the layer-direction check, core coverage, the runtime
+`npm run gate` runs the product, unit and harness type checks, lint, the
+template-version check, the layer-direction check, core coverage, the runtime
 tests, the build, and the package-content and LangSmith-absence checks. Run it
 before you push. CI runs it on pull requests.
 
@@ -229,7 +228,7 @@ Optional checks run only when you start them:
 
 | Command | Needs |
 |---------|-------|
-| `npm run test:edh` | A real VS Code host, downloaded on first run (needs network and a display). Runs the `bare-environment`, `kill-switch` and `tools` lanes. `npm run test:bare-environment` and `npm run test:tools` run one lane each. |
+| `npm run test:edh` | A real VS Code host, downloaded on first run (needs network and a display). Runs the `bare-environment` and `kill-switch` lanes. `npm run test:bare-environment` runs one lane. |
 | `npm run test:ai:smoke` | The VS Code host plus a model provider configured in `.env`. |
 | `npm run test:ai:headless` | A model provider configured in `.env`. |
 | `npm run test:db:smoke` | A disposable database configured in `.env`. |

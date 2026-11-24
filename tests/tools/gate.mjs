@@ -42,7 +42,6 @@ const STEPS = [
   npmRun('typecheck:harness', 'typecheck:harness'),
   npmRun('lint', 'lint'),
   npmRun('knip (dead code)', 'knip'),
-  { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'test environment profiles', cmd: nodeBin, args: ['--test', 'tests/tools/load-test-env.test.mjs'] },
   {

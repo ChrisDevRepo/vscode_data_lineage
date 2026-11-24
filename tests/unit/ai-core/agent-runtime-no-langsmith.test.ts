@@ -60,7 +60,7 @@ describe('AgentRuntime LangSmith egress boundary', () => {
 
     await expect(runtime.run('SECRET-PROMPT-MUST-STAY-LOCAL')).resolves.toBe('error');
     expect(runtime.lastFailureDetail?.turnStop).toMatchObject({ source: 'internal', diagnostic: {
-      message: expect.stringContaining('External LangChain tracing is not supported by @lineage'),
+      message: expect.stringContaining('External LangChain tracing is not supported by Data Lineage'),
     } });
     await new Promise((resolve) => setTimeout(resolve, 25));
 

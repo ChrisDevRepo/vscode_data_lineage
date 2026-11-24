@@ -197,7 +197,7 @@ The assistant is being rebuilt as its own panel; the VS Code chat participant `@
 
 - **Models.** `dataLineageViz.ai.models` lists OpenAI-compatible endpoints (Chat Completions or Responses). `dataLineageViz.ai.defaultModel` names the entry to use. An invalid entry is named in a warning and not offered.
 - **API keys.** **Data Lineage: Set API key** stores the key of one entry in VS Code's secret storage. A key is never in settings, logs or the webview.
-- **Tools.** The read-only lineage tools over the loaded model stay available to AI clients in VS Code, for example Copilot agent mode. Nothing connects to the database.
+- **Tools.** The read-only lineage tools over the loaded model are served to local MCP clients (such as Copilot, Claude Code, Cursor or Codex CLI) when `dataLineageViz.mcp.enabled` is on. Nothing connects to the database.
 - **Output templates.** **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml), which controls the summary, badges and notes. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 What a model reads (the SQL and metadata the tools return) is sent to the endpoint of the entry used, including for a local DACPAC. To turn the AI tools off, set `dataLineageViz.ai.enabled` to `false` and reload the window.
@@ -289,3 +289,5 @@ Database import only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 | `ai.outputTemplateFile` | empty | Custom output templates YAML; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |
 | `ai.models` | empty list | OpenAI-compatible endpoints (Chat Completions or Responses), one entry each: `id`, `name`, `url`, `model`, `apiType`, `maxInputTokens`, `maxOutputTokens`, optional `supportsReasoningEffort`, `reasoningEffort`, `forcedToolChoice`, `requestBody` (extra parameters, sent unchanged) and `requestHeaders`. An invalid entry is named and not offered. Keys are never settings: run **Data Lineage: Set API key** per entry. |
 | `ai.defaultModel` | empty | The `id` of the `ai.models` entry used by default. |
+| `mcp.enabled` | off | Serves the lineage tools to local AI clients over MCP on 127.0.0.1; needs `ai.enabled`. Run **Data Lineage: Copy MCP Config** for clients outside VS Code: the config contains the access token, so the client writes it into its own config file. **Data Lineage: Rotate MCP Token** replaces it. |
+| `mcp.port` | 47633 (1024–65535) | Port of the local MCP server. The first VS Code window takes it; other windows report that it is in use. |

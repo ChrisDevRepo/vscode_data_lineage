@@ -1,8 +1,7 @@
 /**
- * Canonical AI tool registry, handlers and optional VS Code LM registrations; the Zod boundary
- * between untrusted LM tool input and the engine. The native `@lineage` runtime dispatches through
- * {@link buildAiToolRegistry}; {@link registerAiTools} exposes the same catalog via
- * `vscode.lm.registerTool`. Read-only tools wrap provider-neutral functions in
+ * Canonical AI tool registry and handlers; the Zod boundary between untrusted LM tool input and the
+ * engine. The native AI runtime and the local MCP server both dispatch through
+ * {@link buildAiToolRegistry}. Read-only tools wrap provider-neutral functions in
  * [`tools.ts`](./tools.ts); mutating tools live in `handlers/`; this module owns their shared host
  * services, registry binding, turn-lease checks and effect serialization.
  */
@@ -32,9 +31,8 @@ import { readDeclaredNumericSetting } from '../../configCore';
 import { type SerializedFilterState } from '../../engine/projectStore';
 import { countVisibleNodes } from '../../engine/shared/modelFilters';
 import { getAllowedLmToolNames, activeModeOf, type LmStage } from '../tools/toolPolicy';
-import { ToolRegistry, filterRegistry } from '../tools/registry';
+import { ToolRegistry } from '../tools/registry';
 import { TOOL_DEFS, type ToolName } from '../tools/toolDefs';
-import { getToolInvocationLabel } from '../tools/toolLabels';
 import { readToolError, isConsentGateRejection, makeRejection, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
@@ -50,7 +48,6 @@ import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
 import type { ModelPort } from '../model/modelPort';
-import { tokenToAbortSignal } from '../providers/cancellation';
 import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
@@ -108,7 +105,7 @@ export function classifyRejectionCode(code: string): RejectionChatGroup {
 /**
  * Reveals the result panel and posts one preview, naming the outcome: `no_panel`, `delivered`, or
  * `post_failed` (the validated send was dropped or refused). A transport throw propagates. A schema
- * drop is only a log line here; the participant's failed-render toast is the one user-visible
+ * drop is only a log line here; the AI host's failed-render notice is the one user-visible
  * notice.
  * @internal
  */
@@ -230,7 +227,7 @@ class ToolHandler implements ToolServices {
   /**
    * Mechanical phase guard: enforces the per-phase tool policy at the shared registry boundary, not
    * just at the LM `tools[]` parameter. Both dispatch paths (the native full catalog and the
-   * read-only `vscode.lm` subset) land here, so the current phase stays authoritative even for
+   * read-only MCP subset) land here, so the current phase stays authoritative even for
    * externally addressable reads.
    *
    * @returns Provider-neutral JSON text carrying an `off_policy` error when the tool is not allowed
@@ -461,7 +458,7 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
 /**
  * Builds the shared lineage {@link ToolRegistry}, the single authoritative dispatch surface
  * (`invoke`) for names, handlers, ordering, authorization and labels. The native runtime calls this
- * directly; {@link registerAiTools} reuses it for externally invokable contributed tools.
+ * directly; the MCP server serves its read-only subset ({@link MCP_TOOL_NAMES}).
  *
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
@@ -526,49 +523,14 @@ export function buildAiToolRegistry(
 }
 
 /**
- * The externally addressable subset of the catalog: read-only tools. A `vscode.lm` registration is
- * invokable by **any** extension or chat participant with no `@lineage` turn behind it; reads are
- * safe there, but every other effect class commits session lifecycle state only the owning turn may
- * advance, and exposing them would let a third party drive the state machine.
+ * The tools the local MCP server serves: the read-only catalog. An MCP client has no AI
+ * turn behind it; reads are safe there, but every other effect class commits session lifecycle
+ * state only the owning turn may advance, and exposing them would let a third party drive the
+ * state machine. `lineage_get_neighbor_columns` is the one read left out: it answers only inside
+ * an active hop phase.
  */
-const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(
-  TOOL_DEFS.filter(def => def.effect === 'read').map(def => def.name),
+export const MCP_TOOL_NAMES: ReadonlySet<string> = new Set(
+  TOOL_DEFS
+    .filter(def => def.effect === 'read' && def.name !== 'lineage_get_neighbor_columns')
+    .map(def => def.name),
 );
-
-/**
- * Registers the **read-only** lineage tools with `vscode.lm` for external callers, exposing the
- * {@link EXTERNAL_TOOL_NAMES} subset of {@link buildAiToolRegistry} through the shared
- * {@link filterRegistry} view rather than a second hand-kept list. `package.json` contributes
- * exactly this subset: a contributed entry with no `registerTool` binding is a broken tool, so
- * manifest and filter must move together.
- *
- * @param host - Optional host seam forwarded to the registry builder.
- * @returns Disposables for the registered tool bindings.
- */
-export function registerAiTools(
-  getSession: () => AiSession,
-  outputChannel: vscode.LogOutputChannel,
-  getPanel: () => vscode.WebviewPanel | undefined,
-  host?: { getStoredRun?: StoredRunReader },
-): vscode.Disposable[] {
-  const external = filterRegistry(
-    buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, host),
-    EXTERNAL_TOOL_NAMES,
-  );
-
-  return external.getTools().map((tool) =>
-    vscode.lm.registerTool(tool.name, {
-      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel(tool.name, options.input) }; },
-      async invoke(options, token) {
-        const abort = tokenToAbortSignal(token);
-        try {
-          const requestRegistry = buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, { ...host, signal: abort.signal });
-          const text = await requestRegistry.invoke(tool.name, options.input);
-          return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(text)]);
-        } finally {
-          abort.dispose();
-        }
-      },
-    }),
-  );
-}

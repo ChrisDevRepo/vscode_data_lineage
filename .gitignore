@@ -63,8 +63,6 @@ internal-tests/**
 # Verification scripts and artifacts (contents-pattern so tracked build tooling can be re-included:
 # git cannot negate below an excluded directory)
 scripts/*
-# The gate's manifest step runs this — it must be committable.
-!scripts/generate-tool-manifest.mjs
 # The postinstall hook runs this — it must be committable or fresh clones break.
 !scripts/repair-langsmith-stub.mjs
 # Regenerates THIRD_PARTY_NOTICES.md from the bundled package set.

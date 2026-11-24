@@ -109,8 +109,8 @@ export function createTurnTokenBudget(settings: {
 }
 
 /**
- * The budget where no turn selected one: shipped defaults, no model window. Read by the `vscode.lm`
- * tool registration, which serves external callers outside any `@lineage` turn and so has no model
+ * The budget where no turn selected one: shipped defaults, no model window. Read by the MCP
+ * server, which serves external callers outside any AI turn and so has no model
  * window or turn settings to calibrate against.
  */
 export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget();

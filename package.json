@@ -63,6 +63,9 @@
       ]
     }
   },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -168,6 +171,14 @@
         "command": "dataLineageViz.setApiKey",
         "title": "Set API key",
         "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.mcp.copyConfig",
+        "title": "Data Lineage: Copy MCP Config"
+      },
+      {
+        "command": "dataLineageViz.mcp.rotateToken",
+        "title": "Data Lineage: Rotate MCP Token"
       }
     ],
     "keybindings": [],
@@ -177,6 +188,16 @@
           "command": "dataLineageViz.open",
           "when": "view == dataLineageViz.quickActions",
           "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dataLineageViz.mcp.copyConfig",
+          "when": "config.dataLineageViz.ai.enabled && config.dataLineageViz.mcp.enabled"
+        },
+        {
+          "command": "dataLineageViz.mcp.rotateToken",
+          "when": "config.dataLineageViz.ai.enabled && config.dataLineageViz.mcp.enabled"
         }
       ]
     },
@@ -599,278 +620,28 @@
             "default": "",
             "scope": "application",
             "markdownDescription": "The `id` of the `ai.models` entry used by default."
+          },
+          "dataLineageViz.mcp.enabled": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "markdownDescription": "Serve the read-only lineage tools to local AI clients (VS Code Copilot, Claude Code, Cursor, Codex CLI) over a local MCP server on 127.0.0.1. Has an effect only while `dataLineageViz.ai.enabled` is on. Use **Data Lineage: Copy MCP Config** for clients outside VS Code."
+          },
+          "dataLineageViz.mcp.port": {
+            "type": "integer",
+            "default": 47633,
+            "minimum": 1024,
+            "maximum": 65535,
+            "scope": "application",
+            "markdownDescription": "Port of the local MCP server. The first VS Code window takes it; other windows report that it is in use."
           }
         }
       }
     ],
-    "languageModelTools": [
+    "mcpServerDefinitionProviders": [
       {
-        "name": "lineage_get_context",
-        "toolReferenceName": "lineage_get_context",
-        "displayName": "Get Lineage Context",
-        "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Returns the current database context including loaded schemas, stats, and active UI filters.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-research"
-        ],
-        "icon": "$(info)",
-        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
-        "inputSchema": {
-          "type": "object",
-          "properties": {},
-          "additionalProperties": false
-        }
-      },
-      {
-        "name": "lineage_search_objects",
-        "toolReferenceName": "lineage_search_objects",
-        "displayName": "Search Objects",
-        "userDescription": "Search for database objects by name or column.",
-        "modelDescription": "Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` `{status: unique|ambiguous, ids}` for an exact name.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-research"
-        ],
-        "icon": "$(search)",
-        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "In substring mode: any part of an object or column name, without a schema prefix like '[dbo].'. In regex mode: the pattern, used verbatim. May be empty ONLY together with schemas[] to list everything in those schemas."
-            },
-            "types": {
-              "description": "Object-type filter.",
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "table",
-                  "view",
-                  "procedure",
-                  "function",
-                  "external"
-                ]
-              }
-            },
-            "schemas": {
-              "description": "Schema-name filter.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "mode": {
-              "description": "\"substring\" (default) or \"regex\" (case-insensitive, matched against name and schema.name).",
-              "type": "string",
-              "enum": [
-                "substring",
-                "regex"
-              ]
-            },
-            "cursor": {
-              "type": "string",
-              "pattern": "^\\d+$",
-              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
-            }
-          },
-          "required": [
-            "query"
-          ],
-          "additionalProperties": false
-        }
-      },
-      {
-        "name": "lineage_get_object_detail",
-        "toolReferenceName": "lineage_get_object_detail",
-        "displayName": "Get Object Detail",
-        "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors).",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-research"
-        ],
-        "icon": "$(symbol-class)",
-        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string",
-              "description": "Canonical object ID returned by a lineage search or scope tool."
-            },
-            "cursor": {
-              "type": "string",
-              "pattern": "^\\d+$",
-              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
-            }
-          },
-          "required": [
-            "id"
-          ],
-          "additionalProperties": false
-        }
-      },
-      {
-        "name": "lineage_detect_graph_patterns",
-        "toolReferenceName": "lineage_detect_graph_patterns",
-        "displayName": "Detect Graph Patterns",
-        "userDescription": "Find structural patterns like hubs, cycles, or orphans in the graph.",
-        "modelDescription": "Analyzes the entire graph for specific structural patterns such as hubs, islands, orphans, longest paths, cycles, or external references.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-research"
-        ],
-        "icon": "$(graph)",
-        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "type": {
-              "type": "string",
-              "enum": [
-                "hubs",
-                "islands",
-                "orphans",
-                "longest-path",
-                "cycles",
-                "external-refs"
-              ],
-              "description": "Structural graph pattern to detect."
-            },
-            "min_degree": {
-              "description": "Minimum node degree for hub detection.",
-              "type": "number"
-            },
-            "max_size": {
-              "description": "Maximum number of pattern results to return.",
-              "type": "number"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "additionalProperties": false
-        }
-      },
-      {
-        "name": "lineage_search_ddl",
-        "toolReferenceName": "lineage_search_ddl",
-        "displayName": "Search DDL",
-        "userDescription": "Search SQL body scripts for a text pattern.",
-        "modelDescription": "Grep view, procedure and function bodies. `by_object` lists each object with its `hits` count and its hits under `matches`. Each hit has line, context, `commented: true` when the match sits in a SQL comment, and `enclosing_predicate` with the governing IF/WHILE condition when the match is inside one. No matches is `total: 0`; a bad pattern is `invalid_regex` with the repair. Use lineage_search_objects for names.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-research"
-        ],
-        "icon": "$(file-code)",
-        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "Regular expression against SQL body text; case-insensitive; `^` and `$` match per line."
-            },
-            "types": {
-              "description": "Optional body-type filter; omit to search all three.",
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "view",
-                  "procedure",
-                  "function"
-                ]
-              }
-            }
-          },
-          "required": [
-            "query"
-          ],
-          "additionalProperties": false
-        }
-      },
-      {
-        "name": "lineage_get_neighbor_columns",
-        "toolReferenceName": "lineage_get_neighbor_columns",
-        "displayName": "Get Neighbor Columns",
-        "userDescription": "Inspect a neighbor's columns for pruning decisions during an approved deep analysis.",
-        "modelDescription": "Column metadata (types, keys) for direct neighbors of the focus, without SQL. Use it only when the focus SQL hides which neighbor columns it reads (SELECT *, dynamic SQL); a neighbor shown without cols needs no call.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage"
-        ],
-        "icon": "$(symbol-field)",
-        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "ids": {
-              "minItems": 1,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "description": "Neighbor ids, not the focus."
-            }
-          },
-          "required": [
-            "ids"
-          ],
-          "additionalProperties": false
-        }
-      },
-      {
-        "name": "lineage_get_screen_state",
-        "toolReferenceName": "lineageView",
-        "displayName": "Get Screen State",
-        "userDescription": "Shows what is currently on screen: active trace, analysis, or applied bookmark.",
-        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall the stored run.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-research"
-        ],
-        "icon": "$(eye)",
-        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "ids": {
-              "description": "Canonical object ids to recall, taken from the screen card's ai_run.analyzed_ids or node_ids.",
-              "minItems": 1,
-              "maxItems": 20,
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "filter": {
-              "description": "Class of the stored run to list.",
-              "type": "string",
-              "enum": [
-                "pruned",
-                "open_leads",
-                "stale"
-              ]
-            },
-            "cursor": {
-              "type": "string",
-              "pattern": "^\\d+$",
-              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
-            }
-          },
-          "additionalProperties": false
-        }
+        "id": "dataLineageViz.mcp",
+        "label": "Data Lineage"
       }
     ]
   },
@@ -893,12 +664,10 @@
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tests/unit/tsconfig.json --noEmit",
     "typecheck:harness": "tsc -p tests/harness/tsconfig.json --noEmit",
-    "generate:tool-manifest": "node scripts/generate-tool-manifest.mjs",
     "pretest:integration": "npm run build && tsc -p tsconfig.integration.json",
     "pretest:edh": "npm run pretest:integration",
     "test:edh": "vscode-test",
     "test:bare-environment": "vscode-test --label bare-environment",
-    "test:tools": "vscode-test --label tools",
     "test:gui:host": "node tests/tools/gui-test-host.mjs",
     "test:gui:smoke": "node tests/tools/playwright-smoke.mjs",
     "package": "vsce package --no-dependencies",
@@ -915,6 +684,8 @@
     "@langchain/langgraph": "1.7.5",
     "@langchain/openai": "1.8.5",
     "@microsoft/vscode-azext-azureauth": "5.1.1",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "13.0.2",
     "comlink": "4.4.2",
@@ -939,6 +710,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
     "@tailwindcss/vite": "^4.3.5",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.20.5",

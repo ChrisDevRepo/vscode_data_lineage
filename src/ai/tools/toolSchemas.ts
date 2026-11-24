@@ -476,7 +476,7 @@ const KEPT_VERDICT_ONLY = 'Only with analyze or passthrough: ';
 
 /**
  * Single source for the `prune_neighbors` field describe text, shared by the strict per-mode
- * schemas and the permissive participant union so the two cannot drift.
+ * schemas and the permissive provider union so the two cannot drift.
  */
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path. A named neighbor is removed, with whatever only it leads to, once every branch that reaches it also prunes it. '
@@ -518,7 +518,7 @@ const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
 
 /**
  * Single source for the `badge_label` describe text, shared by the strict per-mode
- * `submit_findings` schemas and the permissive participant union so the two never restate the
+ * `submit_findings` schemas and the permissive provider union so the two never restate the
  * same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere
  * else: `badge_label` is a per-hop tool field, not template-governed content.
  */
@@ -566,7 +566,7 @@ const ColumnFlowEntrySchema = z.object({
 
 
 /**
- * `verdict` field for `submit_findings`: one definition set for BB, CT and the participant union.
+ * `verdict` field for `submit_findings`: one definition set for BB, CT and the provider union.
  *
  * @remarks
  * CT is BB plus columns, so the verdict words mean the same in both modes. The focus is never

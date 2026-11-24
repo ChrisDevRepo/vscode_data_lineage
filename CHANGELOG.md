@@ -4,6 +4,7 @@
 
 ### Changed
 - The `@lineage` chat participant is removed. AI models are now OpenAI-compatible endpoints listed in `dataLineageViz.ai.models`, with their keys stored by **Data Lineage: Set API key**.
+- Copilot tools moved to the MCP server: enable `dataLineageViz.mcp.enabled`.
 - Column traces show join and filter columns as indirect sources.
 - AI follow-ups that name a border table bring in its next-level objects.
 
