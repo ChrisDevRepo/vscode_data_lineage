@@ -520,6 +520,12 @@ body.vscode-reduce-motion *::after {
   resize: horizontal;
   overflow: hidden;
 }
+/* The composer stays at the bottom of the pane also in an empty thread (the template centres it there). */
+.ln-chat-dock-pane .aui-thread-viewport-footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+}
 .ln-chat-dock-close {
   position: absolute;
   top: 4px;
