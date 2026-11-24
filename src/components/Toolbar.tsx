@@ -15,6 +15,7 @@ import { SavedViewsDropdown } from './SavedViewsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
 import type { FilterProfile } from '../engine/projectStore';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
+import { ToolbarOverflowMenu, useToolbarOverflow, type ToolbarItem } from './toolbarOverflow';
 
 interface ToolbarProps {
   types: Set<ObjectType>;
@@ -235,6 +236,7 @@ export const Toolbar = memo(function Toolbar({
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [confirmingBack, setConfirmingBack] = useState(false);
   const backButtonRef = useRef<HTMLButtonElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
   const requestBack = () => (isFilterDirty ? setConfirmingBack(true) : onBack());
   const handledBackRequest = useRef(backRequest);
   useEffect(() => {
@@ -299,41 +301,20 @@ export const Toolbar = memo(function Toolbar({
     exclusionPatterns.length > 0,
   ].filter(Boolean).length, [selectedSchemas.size, schemas.length, types.size, showExternalRefs, externalRefTypes.size, exclusionPatterns.length]);
 
-  return (
-    <>
-      <div className="ln-toolbar flex items-center gap-2 px-4 py-2.5">
-        <Tooltip content="Load New Project">
-          <Button ref={backButtonRef} onClick={requestBack} variant="icon" aria-label="Load New Project">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />
-            </svg>
-          </Button>
-        </Tooltip>
-        {onSaveView && onApplyView && onDeleteView && (
-          <SavedViewsDropdown
-            filterProfiles={filterProfiles}
-            isEnabled={!!activeProjectId}
-            activeViewId={activeViewId}
-            isViewModified={isViewModified}
-            onSaveView={onSaveView}
-            onApplyView={onApplyView}
-            onDeleteView={onDeleteView}
-            onUpdateView={onUpdateView}
-          />
-        )}
-
-        <div className="w-px h-6 ln-divider" />
-
-        <div className="flex-1 min-w-[100px] max-w-[340px]">
-          <SearchWithAutocomplete
-            onExecuteSearch={onExecuteSearch}
-            onStartTrace={onStartTrace}
-            startTraceDisabledReason={!canStartNewScopedMode ? 'Exit the current mode to start a new trace' : undefined}
-            allNodes={allNodes}
-            visibleNodeIds={visibleNodeIds}
-            collapsedSchemaNodeIds={collapsedSchemaNodeIds}
-          />
-        </div>
+  const candidates: ToolbarItem[] = [
+    { key: 'saved-views', node: onSaveView && onApplyView && onDeleteView ? (
+        <SavedViewsDropdown
+          filterProfiles={filterProfiles}
+          isEnabled={!!activeProjectId}
+          activeViewId={activeViewId}
+          isViewModified={isViewModified}
+          onSaveView={onSaveView}
+          onApplyView={onApplyView}
+          onDeleteView={onDeleteView}
+          onUpdateView={onUpdateView}
+        />
+      ) : null },
+    { key: 'detail-search', node: (
         <Tooltip content="Detail Search (full-text search in SQL bodies)">
           <Button onClick={onToggleDetailSearch} variant="icon" className={isDetailSearchOpen ? 'ln-btn-icon-active' : ''} aria-label="Detail Search" aria-pressed={isDetailSearchOpen}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -342,6 +323,8 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
+      ) },
+    { key: 'schema-view', node: (
         <Tooltip content={graphModeDisabledReason ?? 'Schema View (S)'}>
           <Button
             onClick={() => onGraphModeChange?.(currentGraphMode === 'overview' ? 'full' : 'overview')}
@@ -356,19 +339,25 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
+      ) },
+    { key: 'schema-filter', node: (
         <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} isNarrowed={selectedSchemas.size < schemas.length && schemas.length > 0} disabled={isModeLocked} disabledReason={filterEditDisabledReason} />
+      ) },
+    { key: 'type-filter', node: (
         <TypeFilterDropdown types={types} onToggleType={onToggleType} isNarrowed={types.size < 5} disabled={isModeLocked} disabledReason={filterEditDisabledReason} />
-        {onToggleExternalRefs && onToggleExternalRefType && (
-          <ExternalRefsDropdown
-            showExternalRefs={showExternalRefs}
-            externalRefTypes={externalRefTypes}
-            onToggleMaster={onToggleExternalRefs}
-            onToggleSubType={onToggleExternalRefType}
-            isNarrowed={!showExternalRefs || externalRefTypes.size < 2}
-            disabled={isModeLocked}
-            disabledReason={filterEditDisabledReason}
-          />
-        )}
+      ) },
+    { key: 'external-refs', node: onToggleExternalRefs && onToggleExternalRefType ? (
+        <ExternalRefsDropdown
+          showExternalRefs={showExternalRefs}
+          externalRefTypes={externalRefTypes}
+          onToggleMaster={onToggleExternalRefs}
+          onToggleSubType={onToggleExternalRefType}
+          isNarrowed={!showExternalRefs || externalRefTypes.size < 2}
+          disabled={isModeLocked}
+          disabledReason={filterEditDisabledReason}
+        />
+      ) : null },
+    { key: 'refresh-view', node: (
         <div className="relative inline-flex">
           <Tooltip content={activeFilterCount > 0 ? `Refresh View (${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active)` : 'Refresh View'}>
             <Button onClick={() => { onRefresh(); onResetExpandedSchemaView?.(); }} variant="icon" aria-label="Refresh View" disabled={isRebuilding}>
@@ -387,9 +376,8 @@ export const Toolbar = memo(function Toolbar({
             </span>
           )}
         </div>
-        <div className="w-px h-6 ln-divider" />
-
-        {/* Display Preferences (sticky — not cleared by Clear All) */}
+      ) },
+    { key: 'hide-isolated', divider: true, node: (
         <Tooltip content={analysisType === 'orphans' ? 'Disabled during Orphan analysis' : 'Hide Isolated Nodes'}>
           <Button onClick={onToggleIsolated} variant="icon" className={hideIsolated ? 'ln-btn-icon-active' : ''} disabled={analysisType === 'orphans'} aria-label="Hide Isolated Nodes" aria-pressed={hideIsolated}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -397,69 +385,70 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
-        {onAddExclusionPattern && onRemoveExclusionPattern && (
-          <ExclusionDropdown
-            exclusionPatterns={exclusionPatterns}
-            onAddPattern={onAddExclusionPattern}
-            onRemovePattern={onRemoveExclusionPattern}
-            disabled={isModeLocked}
-            disabledReason={filterEditDisabledReason}
-          />
-        )}
-
-        <Tooltip content={!canStartNewScopedMode && !isAnalysisActive ? 'Exit current mode to start analysis' : 'Graph Analysis'}>
-          <Button
-            ref={analysis.refs.setReference}
-            {...analysisNav.getReferenceProps({ onClick: analysis.toggle })}
-            variant="icon"
-            className={isAnalysisActive ? 'ln-btn-icon-active ln-btn-icon-active--analysis' : ''}
-            disabled={!canStartNewScopedMode && !isAnalysisActive}
-            aria-label="Graph Analysis"
-            aria-pressed={isAnalysisActive}
-            aria-haspopup="menu"
-            aria-expanded={analysis.isOpen}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605" />
-            </svg>
-          </Button>
-        </Tooltip>
-        <FloatingPortal>
-          {analysis.isOpen && (
-            <FloatingFocusManager context={analysis.context} modal={false}>
-              <div
-                ref={analysis.refs.setFloating}
-                style={{ ...analysis.floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
-                className="w-52 rounded-md shadow-lg z-50 ln-dropdown"
-                role="menu"
-                aria-label="Graph analysis tools"
-                {...analysis.getFloatingProps(analysisNav.getFloatingProps())}
-              >
-                <div className="py-1">
-                  {ALL_ANALYSIS_TYPES.map((type, index) => (
-                    <button
-                      key={type}
-                      role="menuitem"
-                      tabIndex={analysisActiveIndex === index ? 0 : -1}
-                      className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
-                      {...analysisNav.getItemProps({
-                        ref: (node: HTMLButtonElement | null) => { analysisItemsRef.current[index] = node; },
-                        onClick: () => { analysis.close(); onOpenAnalysis?.(type); },
-                      })}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d={ANALYSIS_TYPE_INFO[type].icon} /></svg>
-                      {ANALYSIS_TYPE_INFO[type].title}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </FloatingFocusManager>
-          )}
-        </FloatingPortal>
-
-        <div className="w-px h-6 ln-divider" />
-
-        {/* Tools: DDL Viewer, Refresh, Export */}
+      ) },
+    { key: 'exclusion', node: onAddExclusionPattern && onRemoveExclusionPattern ? (
+        <ExclusionDropdown
+          exclusionPatterns={exclusionPatterns}
+          onAddPattern={onAddExclusionPattern}
+          onRemovePattern={onRemoveExclusionPattern}
+          disabled={isModeLocked}
+          disabledReason={filterEditDisabledReason}
+        />
+      ) : null },
+    { key: 'analysis', node: (
+        <>
+                <Tooltip content={!canStartNewScopedMode && !isAnalysisActive ? 'Exit current mode to start analysis' : 'Graph Analysis'}>
+                  <Button
+                    ref={analysis.refs.setReference}
+                    {...analysisNav.getReferenceProps({ onClick: analysis.toggle })}
+                    variant="icon"
+                    className={isAnalysisActive ? 'ln-btn-icon-active ln-btn-icon-active--analysis' : ''}
+                    disabled={!canStartNewScopedMode && !isAnalysisActive}
+                    aria-label="Graph Analysis"
+                    aria-pressed={isAnalysisActive}
+                    aria-haspopup="menu"
+                    aria-expanded={analysis.isOpen}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605" />
+                    </svg>
+                  </Button>
+                </Tooltip>
+                <FloatingPortal>
+                  {analysis.isOpen && (
+                    <FloatingFocusManager context={analysis.context} modal={false}>
+                      <div
+                        ref={analysis.refs.setFloating}
+                        style={{ ...analysis.floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+                        className="w-52 rounded-md shadow-lg z-50 ln-dropdown"
+                        role="menu"
+                        aria-label="Graph analysis tools"
+                        {...analysis.getFloatingProps(analysisNav.getFloatingProps())}
+                      >
+                        <div className="py-1">
+                          {ALL_ANALYSIS_TYPES.map((type, index) => (
+                            <button
+                              key={type}
+                              role="menuitem"
+                              tabIndex={analysisActiveIndex === index ? 0 : -1}
+                              className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
+                              {...analysisNav.getItemProps({
+                                ref: (node: HTMLButtonElement | null) => { analysisItemsRef.current[index] = node; },
+                                onClick: () => { analysis.close(); onOpenAnalysis?.(type); },
+                              })}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d={ANALYSIS_TYPE_INFO[type].icon} /></svg>
+                              {ANALYSIS_TYPE_INFO[type].title}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </FloatingFocusManager>
+                  )}
+                </FloatingPortal>
+        </>
+      ) },
+    { key: 'ddl', divider: true, node: (
         <Tooltip content={hasHighlightedNode ? 'View DDL / SQL source for selected object' : 'View DDL / SQL source'}>
           <Button onClick={onOpenDdlViewer} variant="icon" aria-label="View DDL / SQL source" disabled={!onOpenDdlViewer}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -467,16 +456,17 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
-        {onRebuild && (
-          <Tooltip content="Refresh (re-read settings &amp; rebuild graph)">
-            <Button onClick={onRebuild} variant="icon" aria-label="Refresh (re-read settings and rebuild graph)" disabled={isRebuilding}>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-              </svg>
-            </Button>
-          </Tooltip>
-        )}
-
+      ) },
+    { key: 'rebuild', node: onRebuild ? (
+        <Tooltip content="Refresh (re-read settings &amp; rebuild graph)">
+          <Button onClick={onRebuild} variant="icon" aria-label="Refresh (re-read settings and rebuild graph)" disabled={isRebuilding}>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+          </Button>
+        </Tooltip>
+      ) : null },
+    { key: 'export', node: (
         <Tooltip content={isOverview ? 'Export Schema View as Draw.io' : 'Export as Draw.io'}>
           <Button onClick={onExportDrawio} variant="icon" aria-label="Export as Draw.io" disabled={!onExportDrawio}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -484,6 +474,8 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
+      ) },
+    { key: 'help', node: (
         <Tooltip content="Help">
           <Button onClick={() => setIsHelpOpen(true)} variant="icon" aria-label="Help">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -491,93 +483,119 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
+      ) },
+    { key: 'expanded', divider: true, node: currentGraphMode === 'overview' && (onExpandAllSchemas || onResetExpandedSchemaView) ? (
+        <>
+                    {isExpandedSchemaViewActive && onToggleExpandedSchemaClusters && (
+                      <Tooltip content={[
+                        expandedSchemaStatusText(expandedSchemaCount),
+                        showExpandedSchemaClusters ? 'Schema clusters visible — hide (H)' : 'Schema clusters hidden — show (H)',
+                      ].join('\n')} multiline>
+                        <Button
+                          onClick={onToggleExpandedSchemaClusters}
+                          variant="icon"
+                          className={!showExpandedSchemaClusters ? 'ln-btn-icon-active' : ''}
+                          aria-label="Hide schema clusters"
+                          aria-pressed={!showExpandedSchemaClusters}
+                        >
+                          {showExpandedSchemaClusters ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12 18 18.75 12 18.75 2.25 12 2.25 12Z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                            </svg>
+                          ) : (
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M10.58 10.58A2 2 0 0 0 12 14a2 2 0 0 0 1.42-.58M9.1 5.52A8.96 8.96 0 0 1 12 5.25c6 0 9.75 6.75 9.75 6.75a16.6 16.6 0 0 1-3.02 3.69M6.35 7.35A17.28 17.28 0 0 0 2.25 12S6 18.75 12 18.75a9.2 9.2 0 0 0 4.1-.98" />
+                            </svg>
+                          )}
+                        </Button>
+                      </Tooltip>
+                    )}
+                    {isExpandedSchemaViewActive && onResetExpandedSchemaView ? (
+                      <Tooltip content={[
+                        expandedSchemaStatusText(expandedSchemaCount),
+                        showExpandedSchemaClusters ? 'Schema clusters visible' : 'Schema clusters hidden',
+                        'Collapse all expanded schemas and return to Schema View',
+                      ].join('\n')} multiline>
+                        <Button onClick={onResetExpandedSchemaView} variant="icon" aria-label="Collapse all schemas">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
+                          </svg>
+                        </Button>
+                      </Tooltip>
+                    ) : onExpandAllSchemas ? (
+                      <Tooltip content="Expand all schemas">
+                        <Button onClick={onExpandAllSchemas} variant="icon" aria-label="Expand all schemas">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                          </svg>
+                        </Button>
+                      </Tooltip>
+                    ) : null}
+        </>
+      ) : null },
+    { key: 'metrics', divider: true, className: 'ml-auto', node: metrics ? (
+        <Tooltip content={buildMetricsTooltip(allNodes, metrics, renderedNodeCount, overviewThreshold, renderLimit, viewModeTooltipLines)} delay={400} multiline>
+          <div
+            className="shrink-0 flex items-center gap-2 pr-1 cursor-default select-none"
+            aria-label={isExpandedSchemaViewActive
+              ? `Rendered ${renderedNodeCount}, filtered ${metrics.totalNodes}, total ${allNodes.length}`
+              : `${metrics.totalNodes} filtered nodes`}
+          >
+            <span className="text-xs ln-text-muted whitespace-nowrap tabular-nums flex items-baseline gap-1">
+              {isExpandedSchemaViewActive ? (
+                <>
+                  <span className="font-medium" style={{ color: metricColor }}>{formatMetricCount(renderedNodeCount)}</span>
+                  <span className="opacity-45">/</span>
+                  <span className="font-medium">{formatMetricCount(metrics.totalNodes)}</span>
+                  <span className="opacity-45">/</span>
+                  <span>{formatMetricCount(allNodes.length)}</span>
+                </>
+              ) : (
+                <>
+                  <span className="font-medium" style={{ color: metricColor }}>{formatMetricCount(metrics.totalNodes)}</span>
+                  <span>nodes</span>
+                </>
+              )}
+            </span>
+          </div>
+        </Tooltip>
+      ) : null },
+  ];
+  const barItems = candidates.filter(item => item.node !== null);
+  const { inBar, overflowed } = useToolbarOverflow(barRef, barItems);
 
-        {/* Compact Expanded Schema View controls — persistent in Schema View so the expand/collapse action is always reachable. */}
-        {currentGraphMode === 'overview' && (onExpandAllSchemas || onResetExpandedSchemaView) && (
-          <>
-            <div className="w-px h-6 ln-divider" />
-            {isExpandedSchemaViewActive && onToggleExpandedSchemaClusters && (
-              <Tooltip content={[
-                expandedSchemaStatusText(expandedSchemaCount),
-                showExpandedSchemaClusters ? 'Schema clusters visible — hide (H)' : 'Schema clusters hidden — show (H)',
-              ].join('\n')} multiline>
-                <Button
-                  onClick={onToggleExpandedSchemaClusters}
-                  variant="icon"
-                  className={!showExpandedSchemaClusters ? 'ln-btn-icon-active' : ''}
-                  aria-label="Hide schema clusters"
-                  aria-pressed={!showExpandedSchemaClusters}
-                >
-                  {showExpandedSchemaClusters ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12 18 18.75 12 18.75 2.25 12 2.25 12Z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.58 10.58A2 2 0 0 0 12 14a2 2 0 0 0 1.42-.58M9.1 5.52A8.96 8.96 0 0 1 12 5.25c6 0 9.75 6.75 9.75 6.75a16.6 16.6 0 0 1-3.02 3.69M6.35 7.35A17.28 17.28 0 0 0 2.25 12S6 18.75 12 18.75a9.2 9.2 0 0 0 4.1-.98" />
-                    </svg>
-                  )}
-                </Button>
-              </Tooltip>
-            )}
-            {isExpandedSchemaViewActive && onResetExpandedSchemaView ? (
-              <Tooltip content={[
-                expandedSchemaStatusText(expandedSchemaCount),
-                showExpandedSchemaClusters ? 'Schema clusters visible' : 'Schema clusters hidden',
-                'Collapse all expanded schemas and return to Schema View',
-              ].join('\n')} multiline>
-                <Button onClick={onResetExpandedSchemaView} variant="icon" aria-label="Collapse all schemas">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
-                  </svg>
-                </Button>
-              </Tooltip>
-            ) : onExpandAllSchemas ? (
-              <Tooltip content="Expand all schemas">
-                <Button onClick={onExpandAllSchemas} variant="icon" aria-label="Expand all schemas">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-                  </svg>
-                </Button>
-              </Tooltip>
-            ) : null}
-          </>
-        )}
-
-        {/* Metrics, pushed right: rendered-node count against the render limit, with a tick at the
-            initial Schema View threshold. */}
-        {metrics && (
-          <>
-            <div className="ml-auto w-px h-6 shrink-0 ln-divider" />
-            <Tooltip content={buildMetricsTooltip(allNodes, metrics, renderedNodeCount, overviewThreshold, renderLimit, viewModeTooltipLines)} delay={400} multiline>
-              <div
-                className="shrink-0 flex items-center gap-2 pr-1 cursor-default select-none"
-                aria-label={isExpandedSchemaViewActive
-                  ? `Rendered ${renderedNodeCount}, filtered ${metrics.totalNodes}, total ${allNodes.length}`
-                  : `${metrics.totalNodes} filtered nodes`}
-              >
-                <span className="text-xs ln-text-muted whitespace-nowrap tabular-nums flex items-baseline gap-1">
-                  {isExpandedSchemaViewActive ? (
-                    <>
-                      <span className="font-medium" style={{ color: metricColor }}>{formatMetricCount(renderedNodeCount)}</span>
-                      <span className="opacity-45">/</span>
-                      <span className="font-medium">{formatMetricCount(metrics.totalNodes)}</span>
-                      <span className="opacity-45">/</span>
-                      <span>{formatMetricCount(allNodes.length)}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="font-medium" style={{ color: metricColor }}>{formatMetricCount(metrics.totalNodes)}</span>
-                      <span>nodes</span>
-                    </>
-                  )}
-                </span>
-              </div>
-            </Tooltip>
-          </>
-        )}
+  return (
+    <>
+      <div ref={barRef} className="ln-toolbar flex flex-nowrap items-center gap-2 px-4 py-2.5">
+        <div className="flex shrink-0 items-center gap-2" data-bar-fixed="">
+          <Tooltip content="Load New Project">
+            <Button ref={backButtonRef} onClick={requestBack} variant="icon" aria-label="Load New Project">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />
+              </svg>
+            </Button>
+          </Tooltip>
+          <div className="w-px h-6 ln-divider" />
+        </div>
+        <div className="flex-1 min-w-[160px] max-w-[340px]" data-bar-fixed="" data-bar-min="160">
+            <SearchWithAutocomplete
+              onExecuteSearch={onExecuteSearch}
+              onStartTrace={onStartTrace}
+              startTraceDisabledReason={!canStartNewScopedMode ? 'Exit the current mode to start a new trace' : undefined}
+              allNodes={allNodes}
+              visibleNodeIds={visibleNodeIds}
+              collapsedSchemaNodeIds={collapsedSchemaNodeIds}
+            />
+        </div>
+        {inBar.map((item) => (
+          <div key={item.key} data-bar-item={item.key} className={`flex shrink-0 items-center gap-2 ${item.className ?? ''}`}>
+            {item.divider && <div className="w-px h-6 ln-divider" />}
+            {item.node}
+          </div>
+        ))}
+        {overflowed.length > 0 && <ToolbarOverflowMenu items={overflowed} />}
       </div>
 
       {confirmingBack && (

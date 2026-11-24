@@ -86,7 +86,7 @@ export function openPanel(
   );
 
   activePanel = panel;
-  panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, loadDemo);
+  panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, loadDemo, chat !== undefined);
 
   const host: BridgeHost = createBridgeHost(panel, context, outputChannel);
 
@@ -158,8 +158,12 @@ export function openPanel(
 
 import { buildWebviewCsp } from './utils/cspBuilder';
 
-/** Generates the root HTML for the lineage webview. */
-function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadDemo: boolean): string {
+/**
+ * Generates the root HTML for the lineage webview. `aiChat` is whether the host runs the chat
+ * (`dataLineageViz.ai.enabled`): the page carries it as `window.AI_CHAT_ENABLED`, so the webview
+ * renders no chat surface at all when it is false and never has to guess.
+ */
+function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadDemo: boolean, aiChat: boolean): string {
   const stylesUri = getUri(webview, extensionUri, ["dist", "assets", "index.css"]);
   const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
   const logoUri = getUri(webview, extensionUri, ["images", "logo.png"]);
@@ -184,6 +188,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
   </div>
   <script nonce="${nonce}">
     window.LOGO_URI = "${logoUri}";
+    window.AI_CHAT_ENABLED = ${aiChat ? 'true' : 'false'};
     // Display fallback if React hasn't mounted and cleared the root element within 3 seconds
     setTimeout(() => {
       const fallback = document.getElementById('bootloader-fallback');

@@ -21,6 +21,8 @@ declare function acquireVsCodeApi(): VsCodeAPI;
 interface Window {
   vscode?: VsCodeAPI;
   LOGO_URI?: string;
+  /** Set by the host in the page: whether the chat runs (`dataLineageViz.ai.enabled`). */
+  AI_CHAT_ENABLED?: boolean;
 }
 
 declare const __APP_VERSION__: string;

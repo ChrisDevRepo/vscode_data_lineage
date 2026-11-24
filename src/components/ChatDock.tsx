@@ -1,24 +1,43 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  lazy, Suspense, useCallback, useEffect, useId, useState,
+  type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode,
+} from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 
-/** `window.vscode` state keys the chat pane's width and open flag are kept under, beside other keys. */
+/** `window.vscode` state keys holding the chat pane's width and open flag, beside other keys. */
 const CHAT_WIDTH_STATE_KEY = 'chatDockWidth';
 const CHAT_OPEN_STATE_KEY = 'chatDockOpen';
-/** Width of the pane before the user resizes it; the stylesheet's `min-width` and `max-width` clamp it. */
+/** Width of the pane before the user resizes it. */
 const CHAT_DEFAULT_WIDTH = 440;
-/** A resize drag is saved once the width has stopped changing for this long. */
-const WIDTH_SETTLE_MS = 250;
+/** The pane stays at least this wide (px) and at most this share of the window (percent). */
+const CHAT_MIN_WIDTH = 280;
+const CHAT_MAX_WIDTH_VW = 75;
+/** Px an arrow key moves the pane's left edge. */
+const CHAT_KEY_STEP = 24;
+
+/** The widest the pane may be in this window (px, never below the minimum). */
+const maxWidth = (): number =>
+  Math.max(Math.round((window.innerWidth * CHAT_MAX_WIDTH_VW) / 100), CHAT_MIN_WIDTH);
+/** A width a drag or key writes: whole px between the minimum and the maximum. */
+const clampWidth = (px: number): number => Math.min(Math.max(Math.round(px), CHAT_MIN_WIDTH), maxWidth());
 
 // The chat is the largest dependency of the webview: its chunk loads when the pane is first opened.
 const ChatPane = lazy(() => import('./chat/ChatPane'));
 
 /**
- * The graph with the chat pane docked on its right edge. The pane is resizable like the AI report
- * column (native `resize: horizontal` plus a `ResizeObserver`), and its width and open state persist
- * in the webview state, which VS Code keeps per workspace panel. Once opened it stays mounted while
- * collapsed, so a running turn keeps streaming into it.
+ * The graph with the chat pane docked on its right edge. A handle on the pane's left edge widens
+ * and narrows it (pointer drag or arrow keys; the pane sits on the window's right edge, so the
+ * native `resize` grip could only shrink it), and its width and open state persist in the webview
+ * state, which VS Code keeps per workspace panel. The width is one CSS variable; the stylesheet
+ * turns it into the rail the graph column leaves free and the pane fills (`--ln-chat-rail`). Once
+ * opened the pane stays mounted while collapsed, so a running turn keeps streaming into it. When
+ * the host says the chat is off (`dataLineageViz.ai.enabled`), only the graph renders.
  */
 export function ChatDock({ children }: { children: ReactNode }) {
+  return window.AI_CHAT_ENABLED === true ? <DockedChat>{children}</DockedChat> : <>{children}</>;
+}
+
+function DockedChat({ children }: { children: ReactNode }) {
   const vscodeApi = useVsCode();
   const paneId = useId();
   const saved = vscodeApi.getState();
@@ -28,8 +47,6 @@ export function ChatDock({ children }: { children: ReactNode }) {
     const value = saved?.[CHAT_WIDTH_STATE_KEY];
     return typeof value === 'number' && value > 0 ? value : CHAT_DEFAULT_WIDTH;
   });
-  const paneRef = useRef<HTMLElement | null>(null);
-
   const remember = useCallback((key: string, value: number | boolean) => {
     vscodeApi.setState({ ...(vscodeApi.getState() ?? {}), [key]: value });
   }, [vscodeApi]);
@@ -40,24 +57,43 @@ export function ChatDock({ children }: { children: ReactNode }) {
     remember(CHAT_OPEN_STATE_KEY, next);
   }, [remember]);
 
+  const [drag, setDrag] = useState<{ startX: number; startWidth: number } | null>(null);
+
+  const resize = useCallback((next: number) => {
+    const clamped = clampWidth(next);
+    setWidth(clamped);
+    return clamped;
+  }, []);
+
   useEffect(() => {
-    const el = paneRef.current;
-    if (!open || !el) return;
-    let settle: number | undefined;
-    const observer = new ResizeObserver(([entry]) => {
-      if (!entry) return;
-      const next = Math.round(entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width);
-      if (next <= 0) return;
-      setWidth(prev => (prev === next ? prev : next));
-      window.clearTimeout(settle);
-      settle = window.setTimeout(() => remember(CHAT_WIDTH_STATE_KEY, next), WIDTH_SETTLE_MS);
-    });
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-      window.clearTimeout(settle);
+    if (!drag) return;
+    const onMove = (e: globalThis.PointerEvent) => { resize(drag.startWidth + drag.startX - e.clientX); };
+    const onEnd = (e: globalThis.PointerEvent) => {
+      remember(CHAT_WIDTH_STATE_KEY, resize(drag.startWidth + drag.startX - e.clientX));
+      setDrag(null);
     };
-  }, [open, everOpened, remember]);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+    };
+  }, [drag, remember, resize]);
+
+  function handleHandlePointerDown(e: PointerEvent<HTMLElement>): void {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    setDrag({ startX: e.clientX, startWidth: clampWidth(width) });
+  }
+
+  function handleHandleKeyDown(e: KeyboardEvent<HTMLElement>): void {
+    const delta = e.key === 'ArrowLeft' ? CHAT_KEY_STEP : e.key === 'ArrowRight' ? -CHAT_KEY_STEP : 0;
+    if (delta === 0) return;
+    e.preventDefault();
+    remember(CHAT_WIDTH_STATE_KEY, resize(clampWidth(width) + delta));
+  }
 
   function handlePaneKeyDown(e: KeyboardEvent<HTMLElement>): void {
     if (e.key !== 'Escape') return;
@@ -65,9 +101,20 @@ export function ChatDock({ children }: { children: ReactNode }) {
     toggle(false);
   }
 
+  const railVars = {
+    '--ln-chat-width': `${width}px`,
+    '--ln-chat-min': `${CHAT_MIN_WIDTH}px`,
+    '--ln-chat-max': `${CHAT_MAX_WIDTH_VW}vw`,
+  } as CSSProperties;
+
   return (
-    <div className="ln-chat-dock-host" style={{ paddingRight: open ? width : 0 }}>
-      {children}
+    <div
+      className="ln-chat-dock-host"
+      data-open={open ? '' : undefined}
+      data-resizing={drag ? '' : undefined}
+      style={railVars}
+    >
+      <div className="ln-chat-dock-main">{children}</div>
       <button
         className={open ? 'ln-chat-dock-close' : 'ln-chat-dock-rail'}
         onClick={() => toggle(!open)}
@@ -80,12 +127,23 @@ export function ChatDock({ children }: { children: ReactNode }) {
       {everOpened && (
         <aside
           id={paneId}
-          ref={paneRef}
           className="ln-chat-dock-pane"
-          style={{ width, display: open ? undefined : 'none' }}
+          style={{ display: open ? undefined : 'none' }}
           aria-label="Chat"
           onKeyDown={handlePaneKeyDown}
         >
+          <div
+            className="ln-chat-dock-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize chat"
+            aria-valuenow={clampWidth(width)}
+            aria-valuemin={CHAT_MIN_WIDTH}
+            aria-valuemax={maxWidth()}
+            tabIndex={0}
+            onPointerDown={handleHandlePointerDown}
+            onKeyDown={handleHandleKeyDown}
+          />
           <Suspense fallback={null}>
             <ChatPane />
           </Suspense>

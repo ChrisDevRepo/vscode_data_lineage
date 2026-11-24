@@ -87,6 +87,13 @@
   --ln-ai-border: #8847ff;
   --ln-ai-icon: #8847ff;
 
+  /* SQL highlight colours that replace the Monaco tokens failing 4.5:1 on the code block
+     background (--ln-input-bg); each is mixed toward the foreground, the colour with the most
+     contrast against that background, so it holds in any theme. */
+  --ln-sql-keyword: color-mix(in srgb, var(--ln-text-link) 60%, var(--ln-fg));
+  --ln-sql-operator: color-mix(in srgb, var(--ln-fg-muted) 50%, var(--ln-fg));
+  --ln-sql-function: color-mix(in srgb, var(--ln-ai-icon) 35%, var(--ln-fg));
+
   /* Error foreground (inline text errors, delete confirmations) */
   --ln-error-fg: var(--vscode-editorError-foreground, var(--vscode-inputValidation-errorBorder, #be1100));
 
@@ -496,29 +503,73 @@ body.vscode-reduce-motion *::after {
   }
 }
 
-/* The graph with the chat pane docked on its right edge. The host pads itself by the pane's width,
-   so the canvas shrinks beside the pane. `resize: horizontal` on a right-anchored pane is the AI
-   report column's pattern. */
+/* The graph with the chat pane docked on its right edge. ChatDock sets --ln-chat-width (the
+   user's width) and the limits; the rail is that width held between them, and it is both the
+   space the graph column leaves free and the pane's width. The column scrolls when its content
+   is wider than the space left. */
 .ln-chat-dock-host {
+  --ln-chat-rail: clamp(var(--ln-chat-min), var(--ln-chat-width), var(--ln-chat-max));
   position: relative;
   height: 100vh;
-  overflow: hidden;
   box-sizing: border-box;
+}
+.ln-chat-dock-host[data-open] {
+  padding-right: var(--ln-chat-rail);
+}
+.ln-chat-dock-main {
+  height: 100%;
+  overflow: auto;
 }
 .ln-chat-dock-pane {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
-  min-width: 280px;
-  max-width: 75vw;
+  width: var(--ln-chat-rail);
   display: flex;
   flex-direction: column;
   background: var(--ln-bg);
   border-left: 1px solid var(--ln-border);
   z-index: 20;
-  resize: horizontal;
   overflow: hidden;
+}
+.ln-chat-dock-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  z-index: 22;
+  cursor: col-resize;
+  touch-action: none;
+}
+.ln-chat-dock-handle:hover,
+.ln-chat-dock-host[data-resizing] .ln-chat-dock-handle {
+  background: var(--ln-focus-border);
+}
+/* A drag over the graph must not select text or reach the canvas. */
+.ln-chat-dock-host[data-resizing] {
+  user-select: none;
+  cursor: col-resize;
+}
+.ln-chat-dock-host[data-resizing] .ln-chat-dock-main {
+  pointer-events: none;
+}
+/* The composer's border is the input boundary (3:1 against the pane, WCAG 1.4.11); the template's
+   own 10 % foreground tint is about 1.1:1. */
+.ln-chat-dock-pane [data-slot="aui_composer-shell"]:not([data-dragging="true"]) {
+  border-color: var(--ln-input-border);
+}
+.ln-chat-dock-pane [data-slot="aui_composer-shell"]:not([data-dragging="true"]):focus-within {
+  border-color: var(--ln-focus-border);
+}
+/* The working dot pulses between full and half opacity; at half the foreground drops below 3:1 on
+   the pane, so it pulses between full and three quarters. */
+.ln-chat-dock-pane [data-slot="aui_assistant-message-indicator"] {
+  animation-name: ln-chat-working-pulse;
+}
+@keyframes ln-chat-working-pulse {
+  50% { opacity: 0.75; }
 }
 /* The composer stays at the bottom of the pane also in an empty thread (the template centres it there). */
 .ln-chat-dock-pane .aui-thread-viewport-footer {
@@ -939,6 +990,14 @@ body.vscode-reduce-motion *::after {
   background: none;
   padding: 0;
 }
+/* Monaco's built-in themes name a token colour by its position in the theme's colour map
+   (monaco-editor 0.57): in vs-dark mtk8 is the keyword blue #569cd6, mtk17 the operator grey
+   #778899 and mtk18 the function magenta #ff00ff; in vs mtk18 is the operator grey. These fall
+   below 4.5:1 on the block, so the app's tokens stand in for them. */
+.ln-ai-description-md code.language-sql.vs-dark .mtk8 { color: var(--ln-sql-keyword); }
+.ln-ai-description-md code.language-sql.vs-dark .mtk17,
+.ln-ai-description-md code.language-sql.vs .mtk18 { color: var(--ln-sql-operator); }
+.ln-ai-description-md code.language-sql.vs-dark .mtk18 { color: var(--ln-sql-function); }
 .ln-ai-description-md table {
   border-collapse: collapse;
   width: 100%;
@@ -1344,19 +1403,14 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   border-color: var(--vscode-contrastBorder);
 }
 
-/* Toolbar bar */
+/* Toolbar bar: it never wraps or scrolls; the controls that do not fit move into the "…" menu
+   (see toolbarOverflow.tsx). */
 .ln-toolbar {
   background: var(--ln-toolbar-bg);
   border-bottom: 1px solid var(--ln-border);
   position: relative;
   z-index: 50;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ln-border) transparent;
 }
-.ln-toolbar::-webkit-scrollbar { height: 3px; }
-.ln-toolbar::-webkit-scrollbar-track { background: transparent; }
-.ln-toolbar::-webkit-scrollbar-thumb { background: var(--ln-border); border-radius: 2px; }
 
 /* Text utilities */
 .ln-text { color: var(--ln-fg); }

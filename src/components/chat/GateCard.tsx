@@ -61,13 +61,13 @@ export function GateCard({ args }: { args: GateArgs }) {
       ) : refining ? (
         <div className="mt-2 flex flex-col gap-2">
           <Textarea aria-label="Requested change" className="min-h-16 text-xs" value={change} onChange={e => setChange(e.target.value)} />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="primary" disabled={change.trim() === ''} onClick={() => decide('refine', change.trim())}>Send change</Button>
             <Button variant="secondary" onClick={() => setRefining(false)}>Back</Button>
           </div>
         </div>
       ) : (
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-wrap gap-2">
           <Button variant="primary" onClick={() => decide('approve')}>Approve</Button>
           <Button variant="secondary" onClick={() => setRefining(true)}>Refine</Button>
           <Button variant="secondary" onClick={() => decide('cancel')}>Cancel</Button>
