@@ -6,7 +6,7 @@
  * columns and foreign keys and normalises the DDL. Neighbours are not projected here; they are the
  * model's `neighborIndex`, which both surfaces already read directly.
  */
-import type { ColumnDef, ForeignKeyInfo, LineageNode } from './types';
+import type { ColumnDef, ForeignKeyInfo, LineageNode } from '../types';
 
 /**
  * The two high-fidelity reads taken from the engine's column store.

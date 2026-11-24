@@ -41,7 +41,7 @@ import {
 import { buildBareGraph } from '../ai/support/graphUtils';
 import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
-import { projectObject } from '../engine/objectDetail';
+import { projectObject } from '../engine/shared/objectDetail';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
 import { formatRenderConnectivity } from '../engine/renderConnectivity';
 import { formatScreenStateSections } from './debugDumpScreenState';

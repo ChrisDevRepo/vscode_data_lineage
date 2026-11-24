@@ -14,7 +14,7 @@ import type {
   LineageNode,
   ObjectType,
 } from '../../engine/types';
-import { projectObject, type NodeSnapshotStore } from '../../engine/objectDetail';
+import { projectObject, type NodeSnapshotStore } from '../../engine/shared/objectDetail';
 import { normalizeBodyScript } from '../../utils/sql';
 
 /**
