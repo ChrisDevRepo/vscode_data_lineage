@@ -8,13 +8,7 @@ import { loadRules } from '../../src/engine/sqlBodyParser';
 import { buildBareGraph } from '../../src/ai/support/graphUtils';
 import { AiSession } from '../../src/ai/session/session';
 import { EMPTY_AI_TEMPLATES, type AiOutputTemplates, type AiOutputTemplateSet } from '../../src/ai/session/types';
-import {
-  createTurnTokenBudget,
-  DEFAULT_DISCOVERY_NODE_CAP,
-  DEFAULT_DISCOVERY_TOKEN_BUDGET,
-  DISCOVERY_WINDOW_SHARE,
-  type TurnTokenBudget,
-} from '../../src/ai/support/tokenBudget';
+import { calibrateTurnBudget, type TurnTokenBudget } from '../../src/ai/support/tokenBudget';
 
 /** Repository root: launchers run with the repository as their working directory. */
 export function repoPath(...segments: string[]): string {
@@ -64,38 +58,11 @@ async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
   return { templates, sections: readAiOutputSections(parsed).sections };
 }
 
-/**
- * Builds the chat host's per-turn budget calibration for a lane of the given context window.
- *
- * @remarks
- * Mirrors the calibration the former chat participant performed. The configured ceilings arrive as the shipped
- * defaults because the headless shim answers `getConfiguration().get(key, default)` with that
- * default verbatim — reading them through the shim would produce the same numbers with more
- * indirection, so the constants are used directly and stay the single source of the ceiling.
- * The lane's window is the turn's `modelWindowTokens`, so the window-scaled prompt blocks size from
- * the model entry; a lane that passes `POSITIVE_INFINITY` runs with no window.
- *
- * @param contextWindow - Model input window in tokens; `POSITIVE_INFINITY` when unknown.
- * @returns The frozen budget the turn's model port carries.
- */
-function calibrateTokenBudgets(contextWindow: number): TurnTokenBudget {
-  const window = contextWindow > 0 ? contextWindow : Number.POSITIVE_INFINITY;
-  const settings = {
-    modelWindowTokens: window,
-    discoveryNodeCap: DEFAULT_DISCOVERY_NODE_CAP,
-    discoveryTokenBudget: Math.min(
-      DEFAULT_DISCOVERY_TOKEN_BUDGET,
-      Math.floor(window * DISCOVERY_WINDOW_SHARE),
-    ),
-  };
-  return createTurnTokenBudget(settings);
-}
-
 /** A fully loaded harness session plus the token budget calibrated for its lane. */
 export interface HarnessSession {
   /** A session in the state a completed model load leaves behind. */
   readonly session: AiSession;
-  /** The turn budget the caller's model port must carry ({@link calibrateTokenBudgets}). */
+  /** The turn budget the caller's model port must carry (`calibrateTurnBudget` over the lane window). */
   readonly budget: TurnTokenBudget;
 }
 
@@ -129,6 +96,6 @@ export async function createHarnessSession(options: HarnessSessionOptions): Prom
   }
   session.model = model;
   session.graph = buildBareGraph(model);
-  const budget = calibrateTokenBudgets(options.contextWindow);
+  const budget = calibrateTurnBudget(options.contextWindow);
   return { session, budget };
 }
