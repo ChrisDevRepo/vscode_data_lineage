@@ -1,7 +1,8 @@
 import { useState, useMemo, useDeferredValue, memo } from 'react';
-import type { ObjectType, ColumnDef } from '../engine/types';
+import { SCRIPT_TYPES, type ObjectType, type ColumnDef } from '../engine/types';
 import { SidePanel } from './SidePanel';
-import { searchBodyScripts, searchColumns } from '../utils/modelSearch';
+import { compileSearchRegex, scanBodyMatches, searchColumns, type BodyScanShape } from '../utils/modelSearch';
+import { escapeRegexLiteral } from '../utils/sql';
 import { highlightText } from './highlight';
 
 /** Search projection containing the node fields used by the detail sidebar. */
@@ -50,18 +51,17 @@ interface ResultRowProps {
 const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
   procedure: 'Procedures',
   view: 'Views',
+  function: 'Functions',
   table: 'Tables',
   external: 'External Tables',
 };
 
-/** Set of object types that typically contain a SQL body script. */
-const BODY_TYPES = new Set<ObjectType>(['procedure', 'view']);
-
 /**
- * Body matches this panel renders for one term. A display cap of this panel, stated here rather
- * than defaulted in `searchBodyScripts`, which the AI's grep tool shares and must never cap.
+ * How this panel shapes the shared body search (the engine's `scanBodyMatches`, also behind
+ * `lineage_search_ddl`): one row per object, a line windowed to the panel's width, and at most 100
+ * rows. These are display choices of this panel, never defaults of the engine.
  */
-const BODY_RESULT_LIMIT = 100;
+const BODY_ROW_SHAPE: BodyScanShape = { firstPerObject: true, lineCap: 50, limit: 100 };
 
 /** Groups search results by display label, preserving insertion order. */
 function groupByType(items: SearchResult[]): Map<string, SearchResult[]> {
@@ -150,7 +150,8 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
 
   const results = useMemo<SearchResult[]>(() => {
     const q = term;
-    const bodyResults = searchBodyScripts(allNodes, q, BODY_TYPES, undefined, BODY_RESULT_LIMIT);
+    const literal = q.length >= 2 ? compileSearchRegex(escapeRegexLiteral(q)) : null;
+    const bodyResults = literal?.ok ? scanBodyMatches(allNodes, literal.regex, SCRIPT_TYPES, () => true, BODY_ROW_SHAPE).matches : [];
     const colResults = searchColumns(allNodes, q);
     return [...bodyResults, ...colResults];
   }, [term, allNodes]);

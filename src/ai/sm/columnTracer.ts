@@ -1,10 +1,10 @@
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget } from './scalarReturnBinding';
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
-import type { DatabaseModel, LineageNode } from '../../engine/types';
+import { SCRIPT_TYPES, type DatabaseModel, type LineageNode } from '../../engine/types';
 import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { edgeApiType } from '../support/aiPresenter';
-import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
+import { getNodeColumns } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName, schemaKey } from '../../utils/sql';

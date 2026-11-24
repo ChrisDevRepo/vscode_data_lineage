@@ -51,11 +51,8 @@ export interface BodyMatch extends DdlMatch {
   enclosingPredicate?: string;
 }
 
-/** Context lines around a match from {@link searchBodyScripts}; one governor for both callers. */
+/** Context lines around a match from {@link scanBodyMatches}; one governor for every caller. */
 const DEFAULT_SNIPPET_CONTEXT_LINES = 2;
-
-/** Characters the detail sidebar renders on one line before a match needs a window. */
-const SIDEBAR_LINE_CAP = 50;
 
 /**
  * Prefix of a snippet line whose non-whitespace characters all sit inside a comment. `commented`
@@ -77,9 +74,10 @@ type SearchRegexResult =
 type SearchRegexRejection = Extract<SearchRegexResult, { ok: false }>;
 
 /**
- * Longest body line, in characters, served as result text. Matching runs over the whole line; a
- * longer matching line yields no row but an {@link OversizedLineHit} locator from
- * {@link scanBodyMatches}, so a line is never cut to an excerpt.
+ * Longest body line, in characters, served as result text. Matching runs over the whole line;
+ * when `shape.lineCap` is omitted (grep's contract), a longer matching line yields no row but an
+ * {@link OversizedLineHit} locator from {@link scanBodyMatches}, so a line is never cut to an
+ * excerpt.
  */
 export const SEARCH_LINE_MAX_CHARS = 1000;
 
@@ -224,57 +222,6 @@ export function searchCatalog(
   return matches.slice(0, limit).map(m => m.node);
 }
 
-/**
- * Searches SQL DDL body scripts for a term; `limit` omitted means unbounded.
- *
- * The two query forms are two contracts. A string is the detail sidebar's case-insensitive
- * substring: one match per object, the panel's line width and its own display cap. A RegExp is a
- * pattern `compileSearchRegex` accepted for `lineage_search_ddl`, with grep's contract: every match
- * in every body with its line number, no truncation. A matching line longer than
- * {@link SEARCH_LINE_MAX_CHARS} yields no row here; {@link scanBodyMatches} locates it.
- */
-export function searchBodyScripts(
-  nodes: SearchableNode[],
-  query: string | RegExp,
-  types?: Set<ObjectType>,
-  contextLines = DEFAULT_SNIPPET_CONTEXT_LINES,
-  limit?: number,
-): BodyMatch[] {
-  const regex = typeof query === 'string' ? null : query;
-  if (typeof query === 'string' && query.length < 2) return [];
-  const lower = typeof query === 'string' ? query.toLowerCase() : '';
-  const lineCap = regex === null ? SIDEBAR_LINE_CAP : Number.POSITIVE_INFINITY;
-  const cap = limit ?? Number.POSITIVE_INFINITY;
-  let filtered = nodes;
-  if (types && types.size > 0) filtered = filtered.filter(n => n.bodyScript && types.has(n.type));
-
-  const scanner = regex === null ? null : globalScanner(regex);
-
-  const matches: BodyMatch[] = [];
-  for (const node of filtered) {
-    const body = node.bodyScript;
-    if (!body) continue;
-    const matchAt = bodyMatcher(node, body, contextLines, lineCap);
-
-    if (scanner === null) {
-      const idx = body.toLowerCase().indexOf(lower);
-      if (idx < 0) continue;
-      matches.push(matchAt(idx, query as string));
-      if (matches.length >= cap) break;
-      continue;
-    }
-
-    let capped = false;
-    forEachLineMatch(scanner, body, (index, text) => {
-      matches.push(matchAt(index, text));
-      capped = matches.length >= cap;
-      return !capped;
-    });
-    if (capped) break;
-  }
-  return matches;
-}
-
 /** Complete DDL search result, including whole-line locators and admission counts. */
 export interface BodyScanResult {
   matches: BodyMatch[];
@@ -284,12 +231,37 @@ export interface BodyScanResult {
 }
 
 /**
+ * How a caller wants rows shaped; the sweep, masks and match semantics are the same for all.
+ * Omitted, the contract is grep's: every match in every body, no truncation.
+ */
+export interface BodyScanShape {
+  /** Lines of context around a match; defaults to {@link DEFAULT_SNIPPET_CONTEXT_LINES}. */
+  contextLines?: number;
+  /** One row per object, its first match; counts then count objects, not lines. */
+  firstPerObject?: boolean;
+  /**
+   * Width at which a snippet line is windowed around the match. Windowing is the caller's choice
+   * to show an excerpt, so a line over {@link SEARCH_LINE_MAX_CHARS} is matched and windowed
+   * rather than located; omitted, no line is cut and such a line is located instead.
+   */
+  lineCap?: number;
+  /** Stops the sweep once this many rows are built; counts then end at the same point. */
+  limit?: number;
+}
+
+/**
+ * The one SQL-body search: the Detail Search sidebar and `lineage_search_ddl` both sweep through
+ * here, and differ only in `shape` and in what they make of the rows.
+ *
  * Sweeps a compiled pattern over every body once, building rows only while `admits(count)` holds
  * and counting the rest. Once `admits` is `false` for a count it must be `false` for every larger
- * one.
+ * one. `types` empty or omitted admits every node that has a body. Each caller passes the body in
+ * `bodyScript`; where the host holds it apart from the node (the column store), the caller lays
+ * it there first.
  *
- * Returns the rows, the total match count, the number of objects with a match, and every matching
- * line longer than {@link SEARCH_LINE_MAX_CHARS} as a locator in `oversized` (no row, no count).
+ * Returns the rows, the total match count, the number of objects with a match, and, when
+ * `shape.lineCap` is omitted (grep's contract), every matching line longer than
+ * {@link SEARCH_LINE_MAX_CHARS} as a locator in `oversized` (no row, no count).
  * `matches` is complete exactly when `admits(total)` holds; otherwise it holds only the rows built
  * before the count failed and must not be served.
  *
@@ -299,9 +271,17 @@ export interface BodyScanResult {
 export function scanBodyMatches(
   nodes: SearchableNode[],
   regex: RegExp,
-  types: Set<ObjectType> | undefined,
+  types: ReadonlySet<ObjectType> | undefined,
   admits: (count: number) => boolean,
+  shape: BodyScanShape = {},
 ): BodyScanResult {
+  const {
+    contextLines = DEFAULT_SNIPPET_CONTEXT_LINES,
+    firstPerObject = false,
+    lineCap = Number.POSITIVE_INFINITY,
+    limit = Number.POSITIVE_INFINITY,
+  } = shape;
+  const maxLineChars = lineCap === Number.POSITIVE_INFINITY ? SEARCH_LINE_MAX_CHARS : Number.POSITIVE_INFINITY;
   const scanner = globalScanner(regex);
   const matches: BodyMatch[] = [];
   const oversized: { node: SearchableNode; lines: OversizedLineHit[] }[] = [];
@@ -309,16 +289,18 @@ export function scanBodyMatches(
   let total = 0;
   let objects = 0;
   for (const node of nodes) {
+    if (matches.length >= limit) break;
     const body = node.bodyScript;
     if (!body || (types && types.size > 0 && !types.has(node.type))) continue;
-    const matchAt = bodyMatcher(node, body, DEFAULT_SNIPPET_CONTEXT_LINES, Number.POSITIVE_INFINITY);
+    const matchAt = bodyMatcher(node, body, contextLines, lineCap);
     const before = total;
     const longLines: OversizedLineHit[] = [];
     forEachLineMatch(scanner, body, (index, text) => {
       total++;
       building &&= admits(total);
       if (building) matches.push(matchAt(index, text));
-    }, hit => longLines.push(hit));
+      return !firstPerObject && matches.length < limit;
+    }, maxLineChars, hit => longLines.push(hit));
     if (total > before) objects++;
     if (longLines.length > 0) oversized.push({ node, lines: longLines });
   }
@@ -364,13 +346,16 @@ function globalScanner(regex: RegExp): RegExp {
  * A zero-length match (`x*`, `^`) skips its position, not the line, or it would hide the real
  * matches later on that line.
  *
- * @param onOversized - Receives a locator for each matching line longer than
- * {@link   SEARCH_LINE_MAX_CHARS}; `visit` is not called for it.
+ * @param maxLineChars - Longest line `visit` is offered; a longer matching line is located
+ * instead.
+ * @param onOversized - Receives a locator for each matching line longer than `maxLineChars`;
+ * `visit` is not called for it.
  */
 function forEachLineMatch(
   scanner: RegExp,
   body: string,
   visit: (index: number, text: string) => boolean | void,
+  maxLineChars: number,
   onOversized?: (hit: OversizedLineHit) => void,
 ): void {
   let lineStart = 0;
@@ -378,7 +363,7 @@ function forEachLineMatch(
     const newline = body.indexOf('\n', lineStart);
     const lineEnd = newline < 0 ? body.length : newline;
     const length = lineEnd - lineStart;
-    const oversized = length > SEARCH_LINE_MAX_CHARS;
+    const oversized = length > maxLineChars;
     const segment = body.slice(lineStart, lineEnd);
     scanner.lastIndex = 0;
     let hit: RegExpExecArray | null;

@@ -12,6 +12,7 @@
 - Database connect waits for an idle Azure SQL database to resume, with progress, retry and cancel.
 - Saved connections and column-trace edges.
 - AI analysis: indirect lineage in answers, neighbor questions and column roles.
+- Detail Search also finds matches in function bodies, the same objects `lineage_search_ddl` finds.
 
 ### Dependencies
 - Build and test tooling: Vite 8, TypeScript 6, Vitest 5.

@@ -12,7 +12,6 @@ import type {
   ColumnDef,
   DatabaseModel,
   LineageNode,
-  ObjectType,
 } from '../../engine/types';
 import { projectObject, type NodeSnapshotStore } from '../../engine/shared/objectDetail';
 import { normalizeBodyScript } from '../../utils/sql';
@@ -68,13 +67,3 @@ export function getNodeDdl(
   const raw = projectObject(nodeMap.get(nodeId) ?? { id: nodeId }, store).ddl;
   return raw ? normalizeBodyScript(raw) : undefined;
 }
-
-/**
- * Object types whose body is the source of lineage information — view / procedure / function.
- *
- * @remarks
- * Drives DDL-vs-columns selection in the hop focus node and search-target filtering in the DDL
- * search tool (`tools/tools.ts`), and bodied-node accounting in the navigation engine. Tables and
- * external references are intentionally excluded — they expose columns + foreign keys, not bodies.
- */
-export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);

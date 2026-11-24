@@ -14,6 +14,7 @@ import {
   type LineageNode,
   type ObjectType,
   type AnalysisType,
+  SCRIPT_TYPES,
 } from '../../engine/types';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { schemaKey } from '../../utils/sql';
@@ -43,7 +44,7 @@ import {
 } from '../support/tokenBudget';
 import { checkScopeText, countTokens } from '../support/tokenCount';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
-import { buildBareGraph, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
+import { buildBareGraph, getNodeColumns, getNodeDdl } from '../support/graphUtils';
 import { projectObject } from '../../engine/shared/objectDetail';
 import { getModelNodeMap } from './handlers/toolServices';
 import { REJECTION_CODES } from '../support/rejectionCodes';

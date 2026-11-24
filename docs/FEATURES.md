@@ -145,7 +145,7 @@ Right-click a node and select **Find Path**, then type the name of a second node
 
 ## Detail search
 
-Case-insensitive search inside SQL bodies (procedures, views) and column names (tables, external tables). Toolbar search icon. This is distinct from **Quick Jump** (<kbd>/</kbd>), which matches object names only, and from Command Palette **Data Lineage: Search Objects**, which opens a VS Code Quick Pick over loaded object names.
+Case-insensitive search inside SQL bodies (views, procedures, functions) and column names (tables, external tables). Toolbar search icon. This is distinct from **Quick Jump** (<kbd>/</kbd>), which matches object names only, and from Command Palette **Data Lineage: Search Objects**, which opens a VS Code Quick Pick over loaded object names.
 
 ---
 

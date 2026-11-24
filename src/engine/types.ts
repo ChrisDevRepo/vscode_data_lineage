@@ -12,6 +12,17 @@ export const OBJECT_TYPES = ['table', 'view', 'procedure', 'function', 'external
 export type ObjectType = typeof OBJECT_TYPES[number];
 
 /**
+ * Object types whose body is the source of lineage information — view / procedure / function.
+ *
+ * @remarks
+ * The one set every body reader shares: hop focus (DDL vs columns), the navigation engine's
+ * bodied-node accounting, and SQL-body search for both the Detail Search sidebar and
+ * `lineage_search_ddl`. Tables and external references are excluded: they expose columns and
+ * foreign keys, not bodies.
+ */
+export const SCRIPT_TYPES: ReadonlySet<ObjectType> = new Set<ObjectType>(['view', 'procedure', 'function']);
+
+/**
  * A single node in the lineage graph: a physical table, view, procedure, or a virtual object such
  * as a cross-database reference or an external file.
  */

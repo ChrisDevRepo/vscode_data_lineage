@@ -5,12 +5,12 @@ import {
   regexRejectHint,
   scanBodyMatches,
   SEARCH_LINE_MAX_CHARS,
-  searchBodyScripts,
   searchCatalog,
   searchColumns,
   type SearchableNode,
 } from '../../../src/utils/modelSearch';
-import type { ColumnDef } from '../../../src/engine/types';
+import { SCRIPT_TYPES, type ColumnDef, type ObjectType } from '../../../src/engine/types';
+import { escapeRegexLiteral } from '../../../src/utils/sql';
 
 /**
  * Whether this runner's V8 implements ES2025 regexp modifier groups (`(?i:…)`, `(?-i:…)`).
@@ -34,6 +34,15 @@ const column = (name: string, type = 'int'): ColumnDef => ({
   nullable: 'NOT NULL',
   extra: '',
 });
+
+/** Every row of the one body search, with the rows only (grep's contract). */
+const bodyRows = (searched: SearchableNode[], regex: RegExp, types?: ReadonlySet<ObjectType>) =>
+  scanBodyMatches(searched, regex, types, () => true).matches;
+
+/** The rows the Detail Search sidebar shows for a literal term: its shape of the one search. */
+const sidebarRows = (searched: SearchableNode[], term: string) =>
+  scanBodyMatches(searched, new RegExp(escapeRegexLiteral(term), 'im'), SCRIPT_TYPES, () => true,
+    { firstPerObject: true, lineCap: 50, limit: 100 }).matches;
 
 const nodes: SearchableNode[] = [
   {
@@ -179,15 +188,14 @@ describe('model search', () => {
   });
 
   it('searches procedure and view bodies with useful snippets', () => {
-    const procedure = searchBodyScripts(nodes, 'totalquantity');
+    const procedure = sidebarRows(nodes, 'totalquantity');
     expect(procedure).toHaveLength(1);
     expect(procedure[0].node.id).toBe('dbo.getorderssummary');
     expect(procedure[0].snippet).toContain('TotalQuantity');
 
-    const view = searchBodyScripts(nodes, 'ACTIVE');
+    const view = sidebarRows(nodes, 'ACTIVE');
     expect(view).toHaveLength(1);
     expect(view[0].node.id).toBe('dbo.activecustomersview');
-    expect(searchBodyScripts(nodes, 'A')).toEqual([]);
   });
 
   it('matches a compiled regex against bodies — the lineage_search_ddl contract', () => {
@@ -195,18 +203,18 @@ describe('model search', () => {
       const compiled = compileSearchRegex(pattern);
       expect(compiled.ok).toBe(true);
       if (!compiled.ok) return;
-      const hits = searchBodyScripts(nodes, compiled.regex);
+      const hits = bodyRows(nodes, compiled.regex);
       expect(hits.map(h => h.node.id)).toEqual(['dbo.getorderssummary']);
       expect(hits[0].snippet).toContain('TotalQuantity');
     }
     const none = compileSearchRegex('no.such.token');
-    expect(none.ok && searchBodyScripts(nodes, none.regex)).toEqual([]);
+    expect(none.ok && bodyRows(nodes, none.regex)).toEqual([]);
   });
 
   it('reports every match in a body with its 1-based line and matched line text', () => {
     const compiled = compileSearchRegex('OrderID');
     if (!compiled.ok) throw new Error('OrderID must compile');
-    const hits = searchBodyScripts(nodes, compiled.regex, new Set(['procedure'] as const));
+    const hits = bodyRows(nodes, compiled.regex, new Set(['procedure'] as const));
     expect(hits.map(h => h.line), 'line 3 once, line 5 twice').toEqual([3, 5, 5]);
     expect(hits[0].text).toBe('SELECT o.OrderID, SUM(d.Quantity) AS TotalQuantity');
     expect(hits[2].text).toBe('JOIN Sales.OrderDetail d ON o.OrderID = d.OrderID');
@@ -216,8 +224,6 @@ describe('model search', () => {
     const compiled = compileSearchRegex('OrderID|Customer');
     if (!compiled.ok) throw new Error('the pattern must compile');
     const all = scanBodyMatches(nodes, compiled.regex, undefined, () => true);
-    expect(all.matches, 'an admitted count builds exactly what searchBodyScripts builds')
-      .toEqual(searchBodyScripts(nodes, compiled.regex));
     expect([all.total, all.objects], '3 OrderID hits in the procedure, 3 Customer hits in the view').toEqual([6, 2]);
 
     const capped = scanBodyMatches(nodes, compiled.regex, undefined, count => count <= 2);
@@ -229,7 +235,7 @@ describe('model search', () => {
     const count = (pattern: string): number => {
       const compiled = compileSearchRegex(pattern);
       if (!compiled.ok) throw new Error(`${pattern} must compile`);
-      return searchBodyScripts(nodes, compiled.regex, new Set(['procedure'] as const)).length;
+      return bodyRows(nodes, compiled.regex, new Set(['procedure'] as const)).length;
     };
     expect(count('^CREATE'), '^ matches the first line start').toBe(1);
     expect(count('^SELECT'), '^ matches a line start inside the body').toBe(1);
@@ -246,7 +252,7 @@ describe('model search', () => {
     }];
     const compiled = compileSearchRegex('x*');
     if (!compiled.ok) throw new Error('x* must compile');
-    const hits = searchBodyScripts(body, compiled.regex);
+    const hits = bodyRows(body, compiled.regex);
     expect(hits.length, 'the node is scanned, not skipped').toBeGreaterThan(0);
     expect(hits.some(h => h.text.includes('xTable')), 'the real match is reported').toBe(true);
   });
@@ -259,22 +265,22 @@ describe('model search', () => {
     }];
     const compiled = compileSearchRegex('TotalQuantity');
     if (!compiled.ok) throw new Error('TotalQuantity must compile');
-    const [regexHit] = searchBodyScripts(body, compiled.regex);
+    const [regexHit] = bodyRows(body, compiled.regex);
     expect(regexHit.snippet, 'a tool result is never elided').not.toContain('\u2026');
     expect(regexHit.snippet).toContain(wide);
 
-    const [stringHit] = searchBodyScripts(body, 'TotalQuantity');
+    const [stringHit] = sidebarRows(body, 'TotalQuantity');
     expect(stringHit.snippet, 'the sidebar still windows to its panel width').toContain('\u2026');
   });
 
   it('applies body type, context, and result limits', () => {
-    const procedures = searchBodyScripts(
+    const procedures = scanBodyMatches(
       nodes,
-      'SELECT',
+      /SELECT/im,
       new Set(['procedure'] as const),
-      1,
-      1,
-    );
+      () => true,
+      { contextLines: 1, limit: 1 },
+    ).matches;
     expect(procedures).toHaveLength(1);
     expect(procedures[0].node.type).toBe('procedure');
     expect(procedures[0].snippet.split('\n').length).toBeLessThanOrEqual(2);
@@ -316,7 +322,7 @@ describe('model search — commented matches', () => {
     const body: SearchableNode[] = [{
       id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript,
     }];
-    return searchBodyScripts(body, compiled.regex).map(h => [h.line, h.commented === true]);
+    return bodyRows(body, compiled.regex).map(h => [h.line, h.commented === true]);
   }
 
   it('marks a hit inside a block comment and leaves a live hit unmarked', () => {
@@ -338,7 +344,7 @@ describe('model search — commented matches', () => {
     const compiled = compileSearchRegex('DELETE');
     if (!compiled.ok) throw new Error('DELETE must compile');
     const lines = ['/* OLD DEDUP APPROACH (pre v2.0)', 'a', 'b', 'c', 'd', 'e', 'DELETE d1', 'f', '*/'];
-    const [match] = searchBodyScripts(
+    const [match] = bodyRows(
       [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: lines.join('\n') }],
       compiled.regex,
     );
@@ -400,7 +406,7 @@ describe('model search — commented matches', () => {
   it('leaves a live match byte-identical to the shape before the marker existed', () => {
     const compiled = compileSearchRegex('Target');
     if (!compiled.ok) throw new Error('Target must compile');
-    const [live] = searchBodyScripts(
+    const [live] = bodyRows(
       [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: 'SELECT Target' }],
       compiled.regex,
     );
@@ -424,7 +430,7 @@ describe('model search — enclosing predicate', () => {
     const body: SearchableNode[] = [{
       id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript,
     }];
-    return searchBodyScripts(body, compiled.regex).map(h => [h.line, h.enclosingPredicate]);
+    return bodyRows(body, compiled.regex).map(h => [h.line, h.enclosingPredicate]);
   }
 
   it('ignores block keywords inside string literals', () => {
@@ -551,7 +557,7 @@ describe('model search — enclosing predicate', () => {
   it('leaves a hit with no governing block byte-identical to the shape before the field existed', () => {
     const compiled = compileSearchRegex('Target');
     if (!compiled.ok) throw new Error('Target must compile');
-    const [live] = searchBodyScripts(
+    const [live] = bodyRows(
       [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: 'SELECT Target' }],
       compiled.regex,
     );
@@ -606,7 +612,7 @@ describe('model search — per-line matching', () => {
 
   it('never lets a pattern match across a line break', () => {
     const procedure = new Set(['procedure'] as const);
-    expect(searchBodyScripts(nodes, regexFor('AS\\s+SELECT'), procedure), '\\s never consumes a newline').toEqual([]);
+    expect(bodyRows(nodes, regexFor('AS\\s+SELECT'), procedure), '\\s never consumes a newline').toEqual([]);
     expect(scanBodyMatches(nodes, regexFor('AS[^x]*SELECT'), procedure, () => true).total, 'a negated class never spans lines').toBe(0);
   });
 
