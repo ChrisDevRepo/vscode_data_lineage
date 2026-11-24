@@ -8,6 +8,9 @@ import { sanitizeProviderErrorDiagnostic } from '../../src/ai/support/text';
 import { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
 import { parseModelEntries, type OpenAiModelEntry } from '../../src/ai/providers/modelEntries';
 import { createProviderModelPort } from '../../src/ai/providers/openAiTransport';
+import { RUN_TRACE_TRIGGER, expandRunTracePrompt } from '../../src/ai/prompting/prompts';
+import type { AiSession } from '../../src/ai/session/session';
+import { followupButtons } from '../../src/bridge/followupButtons';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
 import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
 import { loadDmvQueries } from '../../src/host/dbHost';
@@ -24,7 +27,7 @@ import { setShimLogSink, Uri } from './vscodeHostShim';
 
 const DEFAULT_PROMPT = 'Summarize the loaded database and its main dependencies.';
 const HELP = `Optional testing toolset (no scoring):
-  npm run test:ai:headless -- [--dacpac FILE] [--prompt TEXT] [--followup TEXT ...]
+  npm run test:ai:headless -- [--dacpac FILE] [--prompt TEXT] [--followup TEXT|click:LABEL ...]
                             [--gate JSON] [--cards open|closed]
                             [--timeout-ms N] [--langfuse] [--trace-verbose]
   npm run test:db:smoke -- [--timeout-ms N]
@@ -44,6 +47,10 @@ card is approved and the miss recorded. Others: {"kind":"deny"} and
 {"kind":"refine","instruction":"..."}. Without --gate every card is approved.
 --cards closed (default) stops before the next --followup once a card is held open (run.json
 stoppedAfterTurn, stopReason unanswered_card); --cards open continues with it.
+--followup click:LABEL is the user's click on the chat panel's follow-up button LABEL: the session must
+offer that button after the previous turn (else the run fails as a harness error naming the label), and
+the button's prompt is sent as the panel does. Only the Run trace button ("Start deeper hop-by-hop
+analysis") is supported; the other buttons take panel paths this runner does not run.
 This runner does not test interactive VS Code consent.`;
 
 /** Parses bounded runner options; rejects unknown flags before any service call. */
@@ -82,6 +89,16 @@ export function parseOptions(kind: string, args: readonly string[]) {
     }
   }
   return { dacpac, prompt, followups, gate, cards, timeoutMs, langfuse, verbose };
+}
+
+/** The text a follow-up step sends: the step itself, or for `click:LABEL` the prompt of the panel button LABEL that the session offers (followupButtons), expanded as the panel's turn expands it. */
+export function followupPrompt(step: string, session: AiSession): string {
+  if (!step.startsWith('click:')) return step;
+  const label = step.slice('click:'.length).trim();
+  const button = followupButtons(session).find(candidate => candidate.label === label);
+  if (!button) throw new Error(`Harness error: follow-up click "${label}" is not offered by the session.`);
+  if (button.prompt !== RUN_TRACE_TRIGGER) throw new Error(`Harness error: follow-up click "${label}" is not supported by this runner.`);
+  return expandRunTracePrompt(button.prompt, session);
 }
 
 /** Resolves SQL-login configuration without provisioning a database or persisting credentials. */
@@ -221,7 +238,8 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       result.apiType = entry!.apiType;
       const turns: Array<{ outcome: string; modelCalls: number; gates: unknown; unansweredCard?: true }> = [];
       let answeredCards = 0;
-      for (const [index, prompt] of [options.prompt, ...options.followups].entries()) {
+      for (const [index, step] of [options.prompt, ...options.followups].entries()) {
+        const prompt = index === 0 ? step : followupPrompt(step, session);
         const requestId = randomUUID();
         const port = createProviderModelPort(entry!, process.env.AI_TEST_API_KEY!.trim(), {
           requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); },
