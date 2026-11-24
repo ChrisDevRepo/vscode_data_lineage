@@ -4,6 +4,8 @@
  */
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
+import { isRecord } from '../model/modelPort';
+import { schemaBranches, type JsonSchemaShape } from '../tools/jsonSchema';
 
 /**
  * Re-exported so AI callers keep importing node-id resolution from here; the implementation lives
@@ -163,15 +165,6 @@ export function normalizeSearchQueryInput(raw: string, catalog?: SearchQueryCata
   return { query: input };
 }
 
-/** JSON Schema fragment the coercion reads. */
-interface JsonSchemaNode {
-  type?: string | string[];
-  anyOf?: JsonSchemaNode[];
-  oneOf?: JsonSchemaNode[];
-  properties?: Record<string, JsonSchemaNode>;
-  items?: JsonSchemaNode;
-}
-
 /** Result of coercing one tool-argument payload. */
 export interface StringifiedArgumentsResult {
   /** The payload with every stringified structure decoded; the input object if nothing changed. */
@@ -180,16 +173,8 @@ export interface StringifiedArgumentsResult {
   readonly paths: string[];
 }
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-function branches(schema: JsonSchemaNode | undefined): JsonSchemaNode[] {
-  if (!schema) return [];
-  return [schema, ...(schema.anyOf ?? []).flatMap(branches), ...(schema.oneOf ?? []).flatMap(branches)];
-}
-
-function declaredTypes(schema: JsonSchemaNode | undefined): Set<string> {
-  return new Set(branches(schema).flatMap((node) => (node.type === undefined ? [] : [node.type].flat())));
+function declaredTypes(schema: JsonSchemaShape | undefined): Set<string> {
+  return new Set(schemaBranches(schema).flatMap((node) => (node.type === undefined ? [] : [node.type].flat())));
 }
 
 /** Parses a JSON text with the platform parser; `undefined` when the text is not valid JSON. */
@@ -276,13 +261,13 @@ export function locateJsonTextFault(text: string): string | undefined {
     : undefined;
 }
 
-function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string, paths: string[]): unknown {
+function coerce(value: unknown, schema: JsonSchemaShape | undefined, path: string, paths: string[]): unknown {
   const types = declaredTypes(schema);
   if (typeof value === 'string' && !types.has('string') && (types.has('array') || types.has('object'))) {
     const decoded: unknown = parseJson(value);
     if (
       (Array.isArray(decoded) && types.has('array')) ||
-      (isPlainObject(decoded) && types.has('object')) ||
+      (isRecord(decoded) && types.has('object')) ||
       (decoded === null && value.trim() === 'null' && types.has('null'))
     ) {
       paths.push(path);
@@ -291,13 +276,13 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
     return value;
   }
   if (Array.isArray(value)) {
-    const items = branches(schema).find((node) => node.items)?.items;
+    const items = schemaBranches(schema).find((node) => node.items)?.items;
     return items ? value.map((item, index) => coerce(item, items, `${path}.${index}`, paths)) : value;
   }
-  if (isPlainObject(value)) {
-    const properties = branches(schema).flatMap((node) => Object.entries(node.properties ?? {}));
+  if (isRecord(value)) {
+    const properties = schemaBranches(schema).flatMap((node) => Object.entries(node.properties ?? {}));
     if (properties.length === 0) return value;
-    const declared = new Map<string, JsonSchemaNode>();
+    const declared = new Map<string, JsonSchemaShape>();
     for (const [key, node] of properties) if (!declared.has(key)) declared.set(key, node);
     return Object.fromEntries(Object.entries(value).map(([key, child]) => [
       key,
@@ -321,6 +306,6 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
  */
 export function coerceStringifiedArguments(input: unknown, jsonSchema: unknown): StringifiedArgumentsResult {
   const paths: string[] = [];
-  const value = coerce(input, jsonSchema as JsonSchemaNode, '', paths);
+  const value = coerce(input, jsonSchema as JsonSchemaShape, '', paths);
   return { value: paths.length > 0 ? value : input, paths };
 }

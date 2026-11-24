@@ -17,8 +17,6 @@ export interface ToolDefinition {
   readonly name: string;
   /** The single Zod source for this tool's model-facing JSON Schema AND runtime validation. */
   readonly inputSchema: z.ZodType;
-  /** Grouping labels; the model description's fallback when it is empty. */
-  readonly tags?: readonly string[];
   /** Human-readable name an MCP client shows. */
   readonly title?: string;
   /** Detailed model-facing selection guidance. */

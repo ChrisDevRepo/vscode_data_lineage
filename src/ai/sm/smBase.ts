@@ -23,20 +23,18 @@ import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session
 import { CLASSIFICATION_KEPT_ANGLES, sectionField, type ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
+import { isRecord } from '../model/modelPort';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ColumnFlowEntry, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnEdge, ColumnFlowEntry, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, NavigationInitParams, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmResult, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import type { ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
+import type { ColumnCarry, EngineInitSnapshot, EngineInternalsSnapshot, InvestigationTask, PendingLead, SmNodeAction, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmState, SmStatus } from './navigationSnapshotSchema';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { combineToolRejections, ISSUES, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * A served item object in Zod strip mode: surplus keys are dropped here; the strict parse reports
@@ -125,71 +123,6 @@ type HeldDraftAuthorization = {
   readonly hop: number;
   readonly mode: 'bb' | 'ct';
 };
-
-/** Defines the core interface for the state machine handling exploration modes. */
-export interface IHopStateMachine {
-  /** The current status of the state machine. */
-  readonly status: SmStatus;
-  readonly scopeSize: number;
-  /** Count of bodied (view/proc/function) nodes in scope — the true hop denominator. */
-  readonly bodiedScopeSize: number;
-  /** The percentage of nodes in scope that have been covered. */
-  readonly coveragePct: number;
-  readonly columnAspect: ColumnAspect | null;
-  /** Analysis mode locked at `init`; every hop runs under its contract (a CT run has no BB hop). */
-  readonly currentAnalysisMode: 'bb' | 'ct';
-  /** Out-of-approved-scope routes deferred during the SM session. */
-  readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
-  /** Typed investigation tasks owned by the engine. */
-  readonly investigationTasks: ReadonlyArray<InvestigationTask>;
-  /** Valuable out-of-scope routes available for a later user-approved supplement. */
-  readonly pendingLeads: ReadonlyArray<PendingLead>;
-  /** Current focus node id (node the AI must analyse this hop) — null before the first hop. */
-  readonly currentFocus: string | null;
-  /** Live hop progress: completed AI hops, queued nodes, and total acknowledged nodes. */
-  readonly hopProgress: HopProgress;
-
-  /** Publishes validated isolated engine memory into the session's stable memory object. */
-  publishMemoryTo(target: AiMemoryManager): void;
-
-  getHopContext(): HopContext;
-
-  /** Submits the findings for the current step and calculates the next state. */
-  submitFindings(params: HopSubmission): SubmitResult;
-
-  /** Final result of the exploration session. */
-  getResult(): SmResult;
-
-  /** Serializes the current state machine data to JSON. */
-  toJSON(): SmState;
-
-  /** Structured tasks assigned to the current focus node. */
-  getCurrentTasks(): ReadonlyArray<InvestigationTask>;
-
-  /** Current hop index (1-based; 0 before the first hop). */
-  readonly currentHop: number;
-
-  /** Snapshot of per-hop diagnostics (focus, depth, routing counts, tally). */
-  getHopDiagnostics(): DiagnosticsSnapshot;
-
-  /** Every captured detail slot in insertion order — diagnostics / telemetry use. */
-  getDetailSlots(): DetailSlot[];
-
-  /** Cumulative detail + summary char count across all hops. */
-  getArchiveChars(): number;
-
-  /**
-   * Extends a completed exploration with more nodes. Valid only when `status === 'complete'`;
-   * re-enters `awaiting_findings` and merges new `DetailSlot` entries without resetting prior
-   * analysis.
-   *
-   * @param nodeIds - Non-bodied ids follow the bipartite contraction rule (`enqueueHop`); ids
-   *   outside the graph are dropped.
-   * @returns Counts agendaed, contracted and skipped, plus `skippedDetails` naming each dropped id
-   *   and why.
-   */
-  supplementAgenda(nodeIds: string[], leadIds?: string[], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection;
-}
 
 /**
  * The write path a border test serves. Every purpose tests the exclusion sets; `route` and
@@ -296,7 +229,7 @@ interface ValidatedHop {
  * Unified navigation engine: owns the topological map (visited/current/agenda); the AI proposes
  * hops, the engine validates them before advancing.
  */
-export class NavigationEngine implements IHopStateMachine {
+export class NavigationEngine {
   /** The database model containing nodes and edges. */
   protected readonly model: DatabaseModel;
   /** The graphology instance for topological operations. */
@@ -662,14 +595,14 @@ export class NavigationEngine implements IHopStateMachine {
       if (resolved) endpoints.push(resolved);
     };
     for (const entry of rawFlow) {
-      if (!isPlainRecord(entry)) continue;
+      if (!isRecord(entry)) continue;
       if (Array.isArray(entry.upstream_columns)) {
         for (const ref of entry.upstream_columns) {
-          if (isPlainRecord(ref)) addNode(ref.node);
+          if (isRecord(ref)) addNode(ref.node);
         }
       }
-      if (isPlainRecord(entry.writes_to)) addNode(entry.writes_to.node);
-      if (isPlainRecord(entry.returns_to)) addNode(entry.returns_to.node);
+      if (isRecord(entry.writes_to)) addNode(entry.writes_to.node);
+      if (isRecord(entry.returns_to)) addNode(entry.returns_to.node);
     }
     return endpoints;
   }
@@ -778,8 +711,7 @@ export class NavigationEngine implements IHopStateMachine {
         const ddl = getNodeDdl(focusId, this.nodeMap, this.store ?? undefined);
         if (!target || target.node !== focusId || !callerTask || !ddl || !this.scopeNodeIds.has(focusId)) {
           const activeOutputs = [...new Set(this.getCurrentTasks()
-            .filter(task => task.kind === 'column_lineage' && task.nodeId === focusId)
-            .flatMap(task => task.activeColumns))];
+            .flatMap(task => task.kind === 'column_lineage' && task.nodeId === focusId ? task.activeColumns : []))];
           invalidRoutes.push({
             kind: 'bad_caller_context',
             id: nid,
@@ -818,7 +750,7 @@ export class NavigationEngine implements IHopStateMachine {
    * focus as {@link holdRejectedSubmission} does); a mismatched focus leaves routes unchecked.
    */
   public submissionRouteFaults(input: unknown): InvalidRoute[] {
-    if (!isPlainRecord(input) || !this.currentFocusNodeId || !this.nodeMap.has(this.currentFocusNodeId)) return [];
+    if (!isRecord(input) || !this.currentFocusNodeId || !this.nodeMap.has(this.currentFocusNodeId)) return [];
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
     const rawFocus = input.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
     if (typeof rawFocus !== 'string') return [];
@@ -1693,7 +1625,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Target columns captured at {@link init} (null when no column-trace aspect). */
   public get currentTargetColumns(): string[] | null {
-    return this.initSnapshot?.targetColumns ?? null;
+    return this.initSnapshot?.analysisMode === 'ct' ? this.initSnapshot.targetColumns : null;
   }
 
   /**
@@ -2219,17 +2151,10 @@ export class NavigationEngine implements IHopStateMachine {
     this.log('debug', `[Contract] hash=${contractHash} origin=${originNode.id} scope=${this.scopeNodeIds.size} filters=${filtersDigest} nl_interp=${nlInterp}`);
 
     this._direction = direction;
-    this.initSnapshot = {
-      question: params.question,
-      origin: originNode.id,
-      analysisMode,
-      ...(analysisMode === 'ct' && effectiveTargetColumns?.length
-        ? { targetColumns: [...effectiveTargetColumns] as [string, ...string[]] }
-        : {}),
-      direction: this._direction,
-      depthIntent,
-      mission_brief: params.mission_brief,
-    };
+    const { question, mission_brief } = params;
+    this.initSnapshot = analysisMode === 'ct' && effectiveTargetColumns?.length
+      ? { question, origin: originNode.id, analysisMode, targetColumns: [...effectiveTargetColumns] as [string, ...string[]], direction: this._direction, depthIntent, mission_brief }
+      : { question, origin: originNode.id, analysisMode: 'bb', direction: this._direction, depthIntent, mission_brief };
     const rootTask = this.taskLedger.ensureTask(this.taskInputFor({
       source: 'mission',
       question: params.question,

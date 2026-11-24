@@ -1,12 +1,12 @@
 /**
- * Host wrapper for the production native LangGraph runtime. LangGraph owns workflow state,
+ * Host wrapper for the production LangGraph runtime. LangGraph owns workflow state,
  * conditional routing and consent interrupts. Its checkpointing is in-process only
  * (`buildAgentGraph` compiles against a fresh in-memory saver per graph): enough to pause at a
  * consent interrupt and resume through `Command({ resume })` **within a single turn**, nothing
  * more; no state survives a host restart or outlives the turn. Cross-turn state is `AiSession` by
  * design.
  *
- * This wrapper owns only platform-facing turn lifecycle: `thread_id`, native gate event emission,
+ * This wrapper owns only platform-facing turn lifecycle: `thread_id`, gate event emission,
  * user resume delivery, cancellation, and the single terminal result the {@link TurnEventSink}
  * claims exactly once (`sink.result` / `sink.fail`).
  */
@@ -110,7 +110,7 @@ function assertExternalTracingDisabled(): void {
   }
 }
 
-/** Production LangGraph runtime facade used by the native host path. */
+/** Production LangGraph runtime facade used by the host. */
 export class AgentRuntime {
   private readonly threadId: string;
   private readonly getSession: () => AiSession;

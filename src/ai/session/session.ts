@@ -11,7 +11,7 @@ import type { SerializedFilterState } from '../../engine/projectStore';
 import { ColumnStore } from '../../engine/columnStore';
 import { AiMemoryManager } from '../session/memoryManager';
 import { type ResultGraph, type AiOutputTemplates, type AiOutputSections, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS } from '../session/types';
-import type { IHopStateMachine } from '../sm/smBase';
+import type { NavigationEngine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
@@ -79,7 +79,7 @@ interface MemoryWipeEvent {
 
 /** Outcome of attempting to start or resume a navigation engine session. */
 export type ExplorationActivationOutcome =
-  | { kind: 'accepted'; engine: IHopStateMachine }
+  | { kind: 'accepted'; engine: NavigationEngine }
   | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number }
   | { kind: 'rejected'; reason: string };
 
@@ -183,7 +183,7 @@ export class AiSession {
   public columnStore: ColumnStore;
 
   /** The active state machine controlling the exploration loop (hop-by-hop). */
-  public stateMachine: IHopStateMachine | null = null;
+  public stateMachine: NavigationEngine | null = null;
   /** Latest AI/user-refined proposal awaiting approval; never an active RuntimeFrame. */
   public pendingExploration: PendingExplorationProposal | null = null;
   public resultGraph: ResultGraph | null = null;
@@ -795,7 +795,7 @@ export class AiSession {
   public activatePendingExploration(
     expectedRevision: number,
     token: number,
-    factory: (proposal: PendingExplorationProposal) => IHopStateMachine | ToolRejection,
+    factory: (proposal: PendingExplorationProposal) => NavigationEngine | ToolRejection,
   ): ExplorationActivationOutcome {
     const guard = this.guardTurnWrite(token, 'activatePendingExploration');
     if (guard.kind !== 'accepted') return guard;

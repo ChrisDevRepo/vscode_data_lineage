@@ -8,8 +8,8 @@ export type TurnStatusPhase = Extract<TurnEvent, { type: 'status' }>['phase'];
 /** Terminal status of a graph-owned turn. */
 export type TurnResultStatus = Extract<TurnEvent, { type: 'terminal' }>['status'];
 
-/** Provider-neutral payload for a native consent gate; `gateId` is what a user's decision carries. */
-export type NativeGateEvent = Omit<Extract<TurnEvent, { type: 'gate' }>, 'type'>;
+/** Provider-neutral payload for a consent gate; `gateId` is what a user's decision carries. */
+export type GateEvent = Omit<Extract<TurnEvent, { type: 'gate' }>, 'type'>;
 
 /** Callback that receives each accepted turn event. */
 export type TurnEventConsumer = (event: TurnEvent) => void;
@@ -50,8 +50,8 @@ export class TurnEventSink {
     return this.emit({ type: 'text', delta });
   }
 
-  /** Emits a native consent gate unless the turn is closed. */
-  public gate(gate: NativeGateEvent): boolean {
+  /** Emits a consent gate unless the turn is closed. */
+  public gate(gate: GateEvent): boolean {
     return this.emit({ type: 'gate', ...gate });
   }
 

@@ -1,6 +1,6 @@
 import Graph from 'graphology';
 import { stronglyConnectedComponents } from 'graphology-components';
-import type { ColumnCarry } from './smTypes';
+import type { ColumnCarry } from './navigationSnapshotSchema';
 import { uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { schemaKey } from '../../utils/sql';
 

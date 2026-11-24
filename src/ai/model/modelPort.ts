@@ -226,7 +226,7 @@ export interface ToolGenerationInput {
   readonly onTextDelta?: (text: string) => void;
 }
 
-/** A registered native tool call ready for argument validation at its execution boundary. */
+/** A registered tool call ready for argument validation at its execution boundary. */
 export interface ValidGeneratedToolCall {
   readonly valid: true;
   /** Provider call identifier, echoed into the paired tool-result message. */
@@ -280,7 +280,7 @@ export type ToolGenerationContent =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'tool-call'; readonly call: GeneratedToolCall };
 
-/** Stable metadata copied from the exact model selected for the native request. */
+/** Stable metadata copied from the exact model selected for the request. */
 export interface ModelIdentity {
   /** Model identifier as the hosting platform reports it. */
   readonly id: string;

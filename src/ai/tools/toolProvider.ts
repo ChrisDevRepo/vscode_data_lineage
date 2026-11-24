@@ -1,6 +1,6 @@
 /**
  * Canonical AI tool registry and handlers; the Zod boundary between untrusted LM tool input and the
- * engine. The native AI runtime and the local MCP server both dispatch through
+ * engine. The AI runtime and the local MCP server both dispatch through
  * {@link buildAiToolRegistry}. Read-only tools wrap provider-neutral functions in
  * [`tools.ts`](./tools.ts); mutating tools live in `handlers/`; this module owns their shared host
  * services, registry binding, turn-lease checks and effect serialization.
@@ -503,7 +503,7 @@ type ToolExecutor = (input: unknown, context?: ToolCallContext) => LineageToolOu
 
 /**
  * Builds the shared lineage {@link ToolRegistry}, the single authoritative dispatch surface
- * (`invoke`) for names, handlers, ordering, authorization and labels. The native runtime calls this
+ * (`invoke`) for names, handlers, ordering, authorization and labels. The runtime calls this
  * directly; the MCP server serves the titled entries ({@link MCP_TOOL_DEFS}).
  *
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).

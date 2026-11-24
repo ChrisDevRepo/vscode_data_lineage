@@ -1,7 +1,7 @@
 /**
  * Pure markdown renderers for the `confirm_sm_start` gate: the full plan with its scope tree, and
  * the compact card the approval shows first. No `vscode` import, so unit tests run without the VS
- * Code module surface; the single source of truth for the native gate markdown.
+ * Code module surface; the single source of truth for the gate markdown.
  */
 
 import type { ScopeExclusionGroup, ScopeSummary } from '../sm/smTypes';

@@ -34,7 +34,7 @@ import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolReje
 import { quoteIds } from '../../support/text';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
-import type { SmState } from '../../sm/smTypes';
+import type { SmState } from '../../sm/navigationSnapshotSchema';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { isCancellationOutcome } from '../../support/cancellation';
 import { RepairDraftStore } from '../../support/repairDraftStore';

@@ -54,7 +54,7 @@ export type RuntimeLifecycleRecord =
     }
   | {
       /**
-       * Outcome of one native consent-card action, written by the chat host because the command
+       * Outcome of one consent-card action, written by the chat host because the command
        * handler runs outside the turn's event stream. Enumerated values only; no run scope, so no
        * `runFingerprint`.
        */

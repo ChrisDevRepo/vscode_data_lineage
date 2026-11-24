@@ -15,8 +15,7 @@ import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import type { TurnOutcome } from '../core/agentCore';
-import type { ToolRejection } from '../support/toolErrorEnvelope';
-import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import { readToolErrorText, isConsentGateRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { describeTurnStop } from '../support/text';
 
@@ -32,10 +31,10 @@ interface LineageRuntimeRequest {
 
 /** Request-scoped dependencies required to execute one lineage turn. */
 export interface LineageRuntimeRunInput {
-  /** The exact native request model, already wrapped as a provider-neutral port. */
+  /** The exact request model, already wrapped as a provider-neutral port. */
   readonly model: ModelPort;
   readonly request: LineageRuntimeRequest;
-  /** Native event sink that receives this turn's events and its one terminal result. */
+  /** Event sink that receives this turn's events and its one terminal result. */
   readonly sink: TurnEventSink;
   /** Optional abort signal cancelling the turn; rides the captured turn lease. */
   readonly signal?: AbortSignal;
@@ -66,7 +65,7 @@ export interface LineageRuntimeDeps {
 }
 
 /**
- * Single production facade for native lineage turns: owns turn setup and active-request
+ * Single production facade for lineage turns: owns turn setup and active-request
  * coordination, while the outer LangGraph owns phase/hop routing and `AgentRuntime` owns
  * interrupt/resume and the one terminal event.
  */
@@ -302,7 +301,7 @@ function instrumentRegistry(
       };
       try {
         const result = await registry.invoke(name, payload, callId, context);
-        const rejection = parseRejection(result);
+        const rejection = readToolErrorText(result);
         const issuePaths = rejection?.issuePaths ?? [];
         void instrumentation.writer.write({
           ...base,
@@ -327,11 +326,3 @@ function instrumentRegistry(
   };
 }
 
-function parseRejection(result: string): ToolRejection | null {
-  try {
-    const parsed: unknown = JSON.parse(result);
-    return readToolError(parsed);
-  } catch {
-    return null;
-  }
-}
