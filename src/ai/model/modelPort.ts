@@ -41,7 +41,8 @@ export function messageProviderParts(message: BaseMessage): readonly unknown[] {
 /**
  * The assistant turn to append for one generation: its message unchanged, plus each call it lacks
  * (a call whose input was no JSON object) with empty arguments, so every call keeps the tool result
- * that answers it.
+ * that answers it. The turn keeps `response_metadata`: it names the endpoint and response the
+ * transport chains the next request on, and it is the only mark of a turn the endpoint owns.
  */
 export function transcriptTurn(message: AIMessage, calls: readonly GeneratedToolCall[]): AIMessage {
   const kept = message.tool_calls ?? [];
@@ -51,6 +52,7 @@ export function transcriptTurn(message: AIMessage, calls: readonly GeneratedTool
   return new AIMessage({
     content: message.content,
     additional_kwargs: message.additional_kwargs,
+    response_metadata: message.response_metadata,
     tool_calls: [
       ...kept,
       ...missing.map((call) => ({ id: call.callId, name: call.toolName, args: {}, type: 'tool_call' as const })),

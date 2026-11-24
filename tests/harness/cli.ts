@@ -6,13 +6,14 @@ import type * as vscode from 'vscode';
 import { z } from 'zod';
 import { sanitizeProviderErrorDiagnostic } from '../../src/ai/support/text';
 import { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
+import { parseModelEntries, type ModelEntry } from '../../src/ai/providers/modelEntries';
+import { createProviderModelPort } from '../../src/ai/providers/openAiTransport';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
 import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
 import { loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/connectionManager';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
 import { exportRunToLangfuse, resolveLangfuseConfig } from './langfuseExport';
-import { OpenAiCompatiblePort, type FetchLike } from './openAiCompatiblePort';
 import { runHarnessTurn } from './runTurn';
 import { createHarnessSession, repoPath } from './sessionFactory';
 import { parseTrace } from './traceModel';
@@ -23,9 +24,12 @@ const HELP = `Optional testing toolset (no scoring):
   npm run test:ai:headless -- [--dacpac FILE] [--prompt TEXT] [--followup TEXT ...]
                             [--timeout-ms N] [--langfuse] [--trace-verbose]
   npm run test:db:smoke -- [--timeout-ms N]
-AI uses AI_TEST_* provider profiles. DB uses DB_TEST_SERVER, DB_TEST_DATABASE,
-DB_TEST_USER, DB_TEST_PASSWORD, optional DB_TEST_PORT, DB_TEST_ENCRYPT and
-DB_TEST_TRUST_SERVER_CERTIFICATE. Langfuse uses LANGFUSE_BASE_URL,
+AI runs one model entry on the product provider port: AI_TEST_ENDPOINT (the entry url),
+AI_TEST_API_KEY, AI_TEST_MODEL, AI_TEST_API_TYPE (chat-completions|responses),
+AI_TEST_MAX_INPUT_TOKENS, AI_TEST_MAX_OUTPUT_TOKENS, optional AI_TEST_REASONING_EFFORT,
+AI_TEST_FORCED_TOOL_CHOICE (false sends auto) and AI_TEST_REQUEST_BODY (JSON).
+DB uses DB_TEST_SERVER, DB_TEST_DATABASE, DB_TEST_USER, DB_TEST_PASSWORD, optional
+DB_TEST_PORT, DB_TEST_ENCRYPT and DB_TEST_TRUST_SERVER_CERTIFICATE. Langfuse uses LANGFUSE_BASE_URL,
 LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY. All services require explicit setup.
 Artifacts are written only under ignored test-results/headless. AI gates are
 simulated approvals; this runner does not test interactive VS Code consent.`;
@@ -75,26 +79,47 @@ export function databaseConfig(env: NodeJS.ProcessEnv) {
   });
 }
 
+/**
+ * The model entry the AI_TEST_* variables describe, read by the product's own entry schema (the
+ * same validation `ai.models` gets). Faults name the variable, never a value.
+ */
+export function aiTestEntry(env: NodeJS.ProcessEnv): ModelEntry {
+  const text = (key: string) => env[key]?.trim() || undefined;
+  const missing = ['AI_TEST_ENDPOINT', 'AI_TEST_MODEL', 'AI_TEST_API_TYPE', 'AI_TEST_MAX_INPUT_TOKENS', 'AI_TEST_MAX_OUTPUT_TOKENS']
+    .filter(key => !text(key));
+  if (missing.length) throw new Error(`Set ${missing.join(', ')} for the AI smoke.`);
+  if (!text('AI_TEST_API_KEY')) throw new Error('Set AI_TEST_API_KEY for the AI smoke.');
+  const forced = text('AI_TEST_FORCED_TOOL_CHOICE');
+  if (forced !== undefined && forced !== 'true' && forced !== 'false') throw new Error('AI_TEST_FORCED_TOOL_CHOICE must be true or false.');
+  let requestBody: unknown;
+  try {
+    requestBody = text('AI_TEST_REQUEST_BODY') === undefined ? undefined : JSON.parse(text('AI_TEST_REQUEST_BODY')!);
+  } catch {
+    throw new Error('AI_TEST_REQUEST_BODY must be JSON.');
+  }
+  const { entries, invalid } = parseModelEntries([{
+    id: 'headless', name: 'Headless', url: text('AI_TEST_ENDPOINT'), model: text('AI_TEST_MODEL'), apiType: text('AI_TEST_API_TYPE'),
+    maxInputTokens: Number(text('AI_TEST_MAX_INPUT_TOKENS')), maxOutputTokens: Number(text('AI_TEST_MAX_OUTPUT_TOKENS')),
+    ...(text('AI_TEST_REASONING_EFFORT') ? { reasoningEffort: text('AI_TEST_REASONING_EFFORT') } : {}),
+    ...(forced === undefined ? {} : { forcedToolChoice: forced === 'true' }),
+    ...(requestBody === undefined ? {} : { requestBody }),
+  }]);
+  if (!entries.length) throw new Error(`Invalid model entry: ${invalid.flatMap(entry => entry.issues).join('; ')}. Use --help.`);
+  return entries[0];
+}
+
 /** Runs one selected smoke with explicit configuration and independent runtime/export outcomes. */
 export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<number> {
   if (args.includes('--help')) { console.log(HELP); return 0; }
   let options: ReturnType<typeof parseOptions>;
-  let provider: { provider: string; model: string } | undefined;
+  let entry: ModelEntry | undefined;
   let db: ReturnType<typeof databaseConfig> | undefined;
   let langfuse: ReturnType<typeof resolveLangfuseConfig>;
   try {
     options = parseOptions(kind, args);
     if (kind === 'db') db = databaseConfig(process.env);
     else {
-      provider = {
-        provider: z.enum(['azure', 'fireworks', 'openrouter', 'openai-compatible']).parse(process.env.AI_TEST_PROVIDER),
-        model: z.string().trim().min(1).parse(process.env.AI_TEST_MODEL),
-      };
-      z.string().trim().min(1).parse(process.env.AI_TEST_API_KEY);
-      const endpoint = new URL(process.env.AI_TEST_ENDPOINT!);
-      if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
-        throw new Error('AI_TEST_ENDPOINT must use HTTP(S) without embedded credentials.');
-      }
+      entry = aiTestEntry(process.env);
     }
     langfuse = options.langfuse ? resolveLangfuseConfig(process.env) : null;
     if (options.langfuse && !langfuse) throw new Error('Set all LANGFUSE_* connection variables for --langfuse.');
@@ -166,26 +191,15 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       traceWriter = new AiTraceWriter();
       const tracePath = await traceWriter.enable(runDir, { origin: 'headless-harness', verbose: options.verbose });
       const { session, budget } = await createHarnessSession({ dacpacPath: options.dacpac, contextWindow: Infinity });
-      const { providerEndpoint } = require(repoPath('tests', 'fixtures', 'lm-provider-extension', 'live-provider-adapter.js')) as {
-        providerEndpoint: (endpoint: string, provider: string, model: string) => string;
-      };
-      const endpoint = providerEndpoint(process.env.AI_TEST_ENDPOINT!, provider!.provider, provider!.model);
-      const fetchImpl: FetchLike = (_url, init) => fetch(endpoint, {
-        ...init, body: process.env.AI_TEST_REASONING_EFFORT
-          ? JSON.stringify({ ...JSON.parse(init.body), reasoning_effort: process.env.AI_TEST_REASONING_EFFORT }) : init.body,
-        headers: provider!.provider === 'azure'
-          ? { 'content-type': 'application/json', 'api-key': process.env.AI_TEST_API_KEY! }
-          : init.headers,
-      });
-      result.provider = provider!.provider;
-      result.model = provider!.model;
+      result.provider = process.env.AI_TEST_PROVIDER?.trim() || undefined;
+      result.model = entry!.model;
+      result.apiType = entry!.apiType;
       const turns: Array<{ outcome: string; modelCalls: number }> = [];
       for (const [index, prompt] of [options.prompt, ...options.followups].entries()) {
         const requestId = randomUUID();
-        const port = new OpenAiCompatiblePort({
-          baseUrl: process.env.AI_TEST_ENDPOINT!, apiKey: process.env.AI_TEST_API_KEY!,
-          model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.timeoutMs,
-        }, { requestId, budget, fetchImpl, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
+        const port = createProviderModelPort(entry!, process.env.AI_TEST_API_KEY!.trim(), {
+          requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); },
+        });
         const turn = await runHarnessTurn({ session, model: port, requestId, prompt, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter });
         turns.push({ outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls });
         if (turn.outcome.outcome !== 'ok') break;
