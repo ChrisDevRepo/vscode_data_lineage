@@ -96,7 +96,7 @@ const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
  * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn
  * history by turn count, independently of how large any single turn is.
  */
-export const MAX_DISCOVERY_TRANSCRIPT_TURNS = 20;
+const MAX_DISCOVERY_TRANSCRIPT_TURNS = 20;
 
 /** Provider-neutral accepted discovery result eligible for cross-turn grounding. */
 export interface DiscoveryEvidenceObservation {
@@ -259,7 +259,7 @@ export class AiSession {
   /**
    * Reason the current turn's synthesis rendered the model's held text without a working
    * preview/panel step, or `null` when the last render was clean. Set by
-   * {@link markSynthesisRenderDegraded}; read and cleared once by the participant's one-shot
+   * {@link markSynthesisRenderDegraded}; read and cleared once by the chat host's one-shot
    * warning toast via {@link consumeSynthesisRenderDegraded}.
    */
   private _synthesisRenderDegradedReason: string | null = null;
@@ -890,7 +890,7 @@ export class AiSession {
 
   /**
    * Clears the single-shot `present_result` guard for the current follow-up turn. It persists from
-   * synthesis into the completed phase so the participant can stream the summary afterwards;
+   * synthesis into the completed phase so the chat host can stream the summary afterwards;
    * `followUpNode` clears it at the start of each follow-up turn so a Route A `present_result`
    * adjust fires fresh. Assign only through this method.
    */

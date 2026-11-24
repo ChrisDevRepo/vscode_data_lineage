@@ -173,7 +173,6 @@ function buildDiscoveryPrompt(filterHidesObjects: boolean): string {
   ].join('\n');
 }
 
-
 /**
  * The active hop's task and deliverable. Field meanings (verdict words, `prune_neighbors`,
  * `questions`, the CT carry) live in the `submit_findings` schema. The CT column aspect renders
@@ -192,7 +191,6 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
       + (analysisMode === 'ct' ? ' A neighbor with `in_approved_scope: false` lies outside the approved scope: `column_flow` names it neither as an `upstream_columns` source nor as `writes_to`. In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in the section fields; further work on it is a `questions` follow-up.' : ''),
   ].join('\n');
 }
-
 
 /**
  * Builds the presentation contract shared by every stage that authors a `present_result` payload.
@@ -260,7 +258,6 @@ function buildVisualPreviewPrompt(): string {
   ].join('\n');
 }
 
-
 /**
  * Synthesis-phase task block: the task, evidence surfaces, authored fields and the cross-field
  * rules the validator enforces at this stage. Single-field meaning lives in the
@@ -303,7 +300,6 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   ].join('\n');
 }
 
-
 /**
  * Prompt for the Follow-Up phase (`sess.phase.kind === 'completed'`, a later user turn). History
  * replay carries earlier user turns and the assistant's markdown only; the per-node archive and
@@ -342,30 +338,6 @@ function buildFollowUpPrompt(): string {
     '',
     buildPresentationDetailContract(undefined, 'completed'),
   ].join('\n');
-}
-
-/**
- * Sentinel prompt carried by the post-discovery "deeper analysis" follow-up pill.
- *
- * @remarks Kept short because a chat surface shows it verbatim as the pill label. It never reaches
- *   the model: {@link expandRunTracePrompt} replaces it with the seeded envelope before the turn
- *   starts.
- */
-export const RUN_TRACE_TRIGGER = 'Run trace';
-
-/** Post-discovery action that asks the semantic router for a bounded graph preview. */
-export const SHOW_GRAPH_PREVIEW_TRIGGER = 'Show graph preview';
-
-/**
- * Internal routing prompt for a validated **Approve & Proceed** or **Cancel** button action. The
- * gate turn ends when the card renders, so a button re-enters as a fresh chat turn showing only the
- * action label; the host projects its request-owned action into this prompt, which
- * `detectEntryNode` resolves against the held proposal ({@link parseGateTrigger}) without a model
- * call. The revision ties the click to the plan the user saw, so a stale card never acts on a newer
- * plan.
- */
-export function gateTriggerPrompt(action: 'approve' | 'cancel', revision: number): string {
-  return `${action === 'approve' ? 'Approve' : 'Cancel'} exploration plan revision ${revision}`;
 }
 
 const GATE_TRIGGER_PATTERN = /^(Approve|Cancel) exploration plan revision (\d+)$/;
@@ -418,100 +390,12 @@ export function buildGateReplyUserPrompt(scopeMd: string, reply: string): string
 export const PREVIEW_REQUEST_MARKER = 'The user clicked the post-discovery "Show graph preview" link.';
 
 /**
- * Sentinel prompt of the "Show full description" follow-up pill. Recognized and answered before any
- * model round: the reply is the cached synthesized description, replayed verbatim, so the full
- * answer is reachable without the model choosing to narrate it again after `present_result`.
- */
-export const SHOW_FULL_DESCRIPTION_TRIGGER = 'Show the full description';
-
-/**
- * Prompt of the approval card's **Show full plan** follow-up. The participant answers it from the
- * held proposal without a model call and without resolving the gate.
- */
-export const SHOW_FULL_PLAN_TRIGGER = 'Show the full exploration plan';
-
-/**
  * Stable first line of the seeded trace envelope, matched by the graph to route straight to SM.
  *
  * @remarks Matches our own generated prefix, never user text, so the re-entry is deterministic and
  *   needs no entry-detector model call.
  */
 export const TRACE_REQUEST_MARKER = 'The user clicked the post-discovery "Run trace" link.';
-
-/**
- * The captured discovery context the pill expansion reads.
- *
- * @remarks
- * Structural on purpose — any object carrying the three captured fields satisfies it, which is what
- * lets `AiSession` be passed directly without this module importing it.
- */
-interface DiscoveryPillContext {
-  /** First node walked during the captured discovery turn; `null` when no walk was captured. */
-  readonly lastDiscoveryOrigin: string | null;
-  /** The user's verbatim discovery question; `null` when none captured. */
-  readonly lastDiscoveryQuestion: string | null;
-  /** The AI's discovery chat answer (Markdown); `null` when none captured. */
-  readonly lastDiscoveryAnswer: string | null;
-}
-
-/**
- * Expands the preview badge into an explicit visual request grounded in the captured BFS question.
- */
-export function expandShowGraphPreviewPrompt(prompt: string, ctx: DiscoveryPillContext): string {
-  if (prompt !== SHOW_GRAPH_PREVIEW_TRIGGER) return prompt;
-  if (!ctx.lastDiscoveryOrigin || !ctx.lastDiscoveryQuestion) return prompt;
-  return [
-    PREVIEW_REQUEST_MARKER,
-    `Show a bounded lineage graph preview for ${ctx.lastDiscoveryOrigin}.`,
-    `Preserve the direction and depth requested in this original question: ${JSON.stringify(ctx.lastDiscoveryQuestion)}.`,
-  ].join(' ');
-}
-
-/**
- * Expands the SM-offer pill sentinel into the seeded trace prompt from captured discovery context.
- * Living here keeps the pill label and routing marker from drifting. Any other prompt passes
- * through unchanged, and so does the sentinel when the walk was never captured, so the graph routes
- * that turn normally rather than seeding a half-built envelope.
- *
- * @returns The seeded trace prompt when the sentinel and full context are present; else `prompt`.
- */
-export function expandRunTracePrompt(prompt: string, ctx: DiscoveryPillContext): string {
-  if (prompt !== RUN_TRACE_TRIGGER) return prompt;
-  if (ctx.lastDiscoveryOrigin && ctx.lastDiscoveryQuestion && ctx.lastDiscoveryAnswer) {
-    return buildRunTraceTriggerPrompt(ctx.lastDiscoveryQuestion, ctx.lastDiscoveryAnswer);
-  }
-  return prompt;
-}
-
-/**
- * Builds the User-message envelope that asks the SM-entry turn for a `lineage_start_exploration`
- * call.
- *
- * @param question - The user's verbatim discovery question.
- * @param answer - The AI's discovery chat answer (Markdown).
- * @returns Effective-prompt text fed into the next LM round.
- */
-function buildRunTraceTriggerPrompt(
-  question: string,
-  answer: string,
-): string {
-  return [
-    TRACE_REQUEST_MARKER,
-    'Call `lineage_start_exploration` once this turn — the tool call is the only valid action; no prose, no other tools.',
-    '',
-    '## Inputs to lineage_start_exploration',
-    '',
-    '- Every field, including **origin** and **mission_brief**: derive from <original_question> and <discovery_answer>, as each field\'s description says.',
-    '',
-    '## Discovery context',
-    '',
-    `<original_question>${escapePromptText(question)}</original_question>`,
-    '',
-    '<discovery_answer>',
-    escapePromptText(answer),
-    '</discovery_answer>',
-  ].join('\n');
-}
 
 /**
  * System prompt for the discovery-summary composition round. The memo it produces rides every later
@@ -612,8 +496,6 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
   ].join('\n');
 }
 
-
-
 /**
  * Renders the `<mission_brief>` XML block: session-stable content, set once at `start_exploration`,
  * so the service-side prompt cache covers it across every hop. Scope notes ride here for the same
@@ -700,7 +582,6 @@ export function buildCurrentTaskBlock(
   lines.push('</current_task>');
   return lines.join('\n');
 }
-
 
 /**
  * Renders the `<short_term_memory>` block (selected neighbor summaries) plus, when present, a

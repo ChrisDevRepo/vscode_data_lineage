@@ -5,9 +5,7 @@
 ![Status](https://img.shields.io/badge/status-stable-green.svg)
 
 Visualise SQL dependencies right inside VS Code. Browse your lineage graph with
-search, trace, and Schema View — and, with a VS Code Language Model Chat
-provider such as GitHub Copilot, ask `@lineage` to explore the loaded model in
-natural language.
+search, trace, and Schema View.
 
 Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
@@ -33,7 +31,7 @@ Live projects read database metadata for lineage and can optionally profile tabl
 
 ## Explore your lineage
 
-Once your model loads, the visual graph is ready to use — no Copilot required:
+Once your model loads, the visual graph is ready to use:
 
 - **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly and focuses it in the graph.
 - **Trace dependencies** — follow sources upstream or consumers downstream from any node.
@@ -42,37 +40,17 @@ Once your model loads, the visual graph is ready to use — no Copilot required:
 
 ![Interactive dependency graph with schema-coloured nodes](images/viz-screenshot.png)
 
-## Optional AI lineage with `@lineage`
+## AI model endpoints
 
-With a VS Code Language Model Chat provider, `@lineage` adds natural-language
-exploration on top of the visual graph. The extension passes exactly the model
-selected for the chat request and constrains the assistant to the loaded data
-model.
+The AI assistant is being rebuilt on its own panel, replacing the `@lineage` Copilot chat participant because Microsoft [deprecated chat participants](https://code.visualstudio.com/api/extension-guides/ai/chat).
+What ships now is the model setup it will run on, and the read-only lineage tools:
 
-```text
-@lineage trace from Sales.SalesOrderDetail upstream to the source tables
-@lineage how is sales calculated — show me the lineage in the app
-@lineage which objects are hubs with the most connections?
-```
+- **`dataLineageViz.ai.models`** lists OpenAI-compatible endpoints (Chat Completions or Responses; an Azure `/openai/v1/` base URL or Anthropic's `/v1/` chat-completions URL works like any other).
+  An invalid entry is named and not offered; `dataLineageViz.ai.defaultModel` names the one to use.
+- **Data Lineage: Set API key** stores the key of one entry in VS Code's secret storage. A key is never written to settings, logs or the webview.
+- **Lineage tools over MCP** — set `dataLineageViz.mcp.enabled` to serve the read-only lineage tools to local MCP clients such as Copilot, Claude Code, Cursor or Codex CLI.
 
-Use it to ask dependency questions, preview graph scopes, save useful previews as
-bookmarks, ask about what is on screen (*"explain this trace"*),
-recall what an earlier analysis found from its saved AI bookmark, and — where the
-metadata allows — follow column mappings or explain SQL logic.
-
-![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
-
-`@lineage` has three user-visible paths:
-
-- **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered in chat by the selected model from read tools over the loaded model. `/search` pins this path. An explicit graph/render request is answered here too; **Show graph preview** draws it.
-- **Graph preview** — the **Show graph preview** follow-up opens a bounded transient preview in the graph view. Save it explicitly if you want a bookmark.
-- **Structured walkthrough** — `/trace`, a discovery scope that exceeds the configured budget, or the **Start deeper hop-by-hop analysis** follow-up first shows the planned scope and asks for confirmation. Once approved, the assistant walks the graph hop-by-hop and colours source / transform / target nodes in the result.
-
-Only the `@lineage` chat experience requires a VS Code Language Model Chat
-provider, such as
-[GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
-or a compatible BYOK provider. The visual graph, search, trace, SQL preview,
-demo data, profiling, and export features work without one.
+The visual graph, search, trace, SQL preview, demo data, profiling, and export features work without any of this.
 
 ## Features
 
@@ -80,7 +58,7 @@ demo data, profiling, and export features work without one.
 - **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
 - **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
 - **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
-- **Optional `@lineage` AI** — use VS Code Chat to ask lineage questions, preview graph scopes, save previews as bookmarks, and follow column mappings where the metadata allows. The assistant can read what is currently on screen, and a bookmark saved from an AI-authored view keeps that run's findings so a later question can recall them.
+- **AI model endpoints** — configure OpenAI-compatible endpoints and store their keys securely; the assistant panel builds on them.
 - **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).
@@ -116,12 +94,12 @@ Unqualified names depend on caller default schema and context. Schema-qualified 
 ## Documentation
 
 - [`docs/FEATURES.md`](docs/FEATURES.md) — full feature catalogue, settings, customisation paths.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the lineage graph is built and how `@lineage` fits in.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the lineage graph is built and where the optional AI fits in.
 - [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — toolchain, build and run, ingestion and parsing overview.
 - [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) — DBA contract for live-database ingestion (no black box).
 - [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) — generated SQL for table profiling.
 - [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) — YAML reference for the SQL parser.
-- [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — YAML reference for `@lineage` output templates.
+- [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — YAML reference for the AI output templates.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common issues.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — bug reports and forking.
 

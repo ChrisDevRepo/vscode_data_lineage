@@ -1,12 +1,12 @@
 # Changelog
 
-## [1.2.7] - Unreleased
+## [1.3.0] - Unreleased
 
 ### Changed
-- Copilot tools moved to the MCP server: enable `dataLineageViz.mcp.enabled`.
+- AI: the `@lineage` Copilot chat participant is replaced, because Microsoft deprecated chat participants ([VS Code docs](https://code.visualstudio.com/api/extension-guides/ai/chat)). Models are OpenAI-compatible endpoints in `dataLineageViz.ai.models`; keys via **Data Lineage: Set API key**.
+- MCP: a local MCP server gives AI clients read access to the loaded project; enable `dataLineageViz.mcp.enabled`.
 - Column traces show join and filter columns as indirect sources.
 - AI follow-ups that name a border table bring in its next-level objects.
-- AI chat: an error that ends a request is one line naming its source (model provider, network or Data Lineage) with the provider's own message.
 
 ### Fixed
 - Database connect waits for an idle Azure SQL database to resume, with progress, retry and cancel.

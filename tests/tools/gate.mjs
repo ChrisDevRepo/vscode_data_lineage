@@ -106,7 +106,7 @@ process.stdout.write(
 process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; nothing here infers.\n');
 process.stdout.write(
   'Additional checks: npm run test:edh exercises the VS Code host with fixed responses; '
-  + 'npm run test:ai:smoke optionally calls a configured provider through that host. '
+  + 'npm run test:ai:headless optionally calls a configured provider. '
   + 'Review model answer correctness against the source SQL and graph. See docs/DEVELOPER_GUIDE.md.\n',
 );
 

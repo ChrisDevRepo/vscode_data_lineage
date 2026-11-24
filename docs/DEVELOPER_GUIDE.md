@@ -17,8 +17,8 @@ Files you can edit without touching TypeScript:
 | [VS Code](https://code.visualstudio.com/) | `^1.101.0` | `engines.vscode` in [`package.json`](../package.json) |
 
 The CI workflow runs on Node 22. No database, model provider or credentials
-are needed to build, run or test. A VS Code chat model provider such as GitHub
-Copilot is only needed to try `@lineage`.
+are needed to build, run or test. A model endpoint and its API key are only
+needed to try the AI.
 
 ## Clone and install
 
@@ -83,7 +83,7 @@ Extension Development Host.
 | [`src/engine/db/`](../src/engine/db/) | Database sessions on the built-in `tedious` driver, sign-in and connection settings. |
 | [`src/components/`](../src/components/), [`src/hooks/`](../src/hooks/), [`src/contexts/`](../src/contexts/) | The React webview: graph canvas (React Flow), toolbar, filters, side panels. |
 | [`src/detail/`](../src/detail/) | The detail panel with the Monaco SQL viewer. |
-| [`src/ai/`](../src/ai/) | The `@lineage` chat participant, agent graph, exploration state machine, tools, prompts and session memory. |
+| [`src/ai/`](../src/ai/) | The AI agent graph, exploration state machine, tools, prompts and session memory. |
 | [`src/export/`](../src/export/) | draw.io export. |
 | [`src/utils/`](../src/utils/) | Logging, notifications, redaction, layout worker, helpers. |
 | [`src/index.tsx`](../src/index.tsx), [`src/index.html`](../src/index.html) | Webview entry points. |
@@ -182,14 +182,14 @@ there.
 this. Engine code reaches the webview log through a callback the webview
 entry point installs, not through `window`.
 
-## The AI participant
+## The AI
 
-What `@lineage` may and may not do:
+What the AI may and may not do:
 [`ARCHITECTURE.md`](ARCHITECTURE.md#architectural-boundaries). Entry points:
 
 | File or folder | Role |
 |----------------|------|
-| [`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts) | Adapts VS Code chat requests, history, cancellation and buttons. |
+| [`src/ai/model/providerModelPort.ts`](../src/ai/model/providerModelPort.ts) | The model port over the OpenAI-compatible transport in `src/ai/providers/`. |
 | [`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts) | Phases, retries and the final answer. |
 | [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) | Hop-by-hop exploration: which object is read next, validation, stop conditions. |
 | [`src/ai/tools/`](../src/ai/tools/) | The tool registry and handlers. |
@@ -199,8 +199,8 @@ What `@lineage` may and may not do:
 Prompts and templates: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 Tool names, descriptions and input schemas are defined once in
-`src/ai/tools/toolDefs.ts`. The `@lineage` participant and the local MCP server
-([`src/ai/mcp/mcpServer.ts`](../src/ai/mcp/mcpServer.ts)) both serve them from there.
+`src/ai/tools/toolDefs.ts`. The local MCP server
+([`src/ai/mcp/mcpServer.ts`](../src/ai/mcp/mcpServer.ts)) serves them from there.
 The MCP-only tools (trace, path and graph preview) are defined in `mcpServer.ts` itself.
 
 ## Test
@@ -214,7 +214,7 @@ No VS Code window opens.
 | `npm run test:core` | Parser, engine and webview tests. |
 | `npm run test:parser` | SQL parser, DACPAC and DMV extraction. Run it after any parse-rule change. |
 | `npm run test:bfs` | Graph engine tests (`tests/unit/engine`). |
-| `npm run test:runtime` | `@lineage` runtime, tools and security tests (`tests/unit/ai-core`). |
+| `npm run test:runtime` | AI runtime, tools and security tests (`tests/unit/ai-core`). |
 | `npm run coverage:core` | `test:core` with the coverage floors. |
 | `npm run typecheck:tests` | Type-checks the unit tests. |
 | `npm run test:scale` | Layout of a 1,500-node graph. |
@@ -230,7 +230,6 @@ Optional checks run only when you start them:
 | Command | Needs |
 |---------|-------|
 | `npm run test:edh` | A real VS Code host, downloaded on first run (needs network and a display). Runs the `bare-environment` and `kill-switch` lanes. `npm run test:bare-environment` runs one lane. |
-| `npm run test:ai:smoke` | The VS Code host plus a model provider configured in `.env`. |
 | `npm run test:ai:headless` | A model provider configured in `.env`. |
 | `npm run test:db:smoke` | A disposable database configured in `.env`. |
 | `npm run test:gui:host`, `npm run test:gui:smoke` | Playwright against an isolated VS Code window. |

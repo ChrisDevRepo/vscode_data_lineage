@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent } from '@langchain/core/messages';
 import {
   type CompleteTextInput,
@@ -8,7 +7,6 @@ import {
   type ModelIdentity,
   ModelPortError,
   type ModelToolChoice,
-  type ModelToolDefinition,
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
@@ -21,7 +19,6 @@ import {
   messageContentToText,
   messageProviderParts,
 } from './modelPort';
-import { VscodeLangChainBridge, type VscodeBridgeRunnable } from './vscodeLangChainBridge';
 import { systemPromptHash, type TokenUsage, type WireEvent, type WireRecord } from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
 import {
@@ -35,16 +32,86 @@ import { toolCallNotationFault } from '../support/toolCallNotation';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
+  STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
   StructuredOutputError,
   structuredRejectReason,
 } from '../providers/structuredOutput';
 
+/** One tool offered on a generation, as the transport sends it. */
+export interface TransportTool {
+  readonly name: string;
+  readonly description: string;
+  /** JSON Schema object of the tool input ({@link toModelJsonSchema}). */
+  readonly inputSchema: Record<string, unknown>;
+}
+
+/** One generation as a transport receives it. */
+export interface TransportRequest {
+  /** The conversation, system instruction first. */
+  readonly messages: readonly BaseMessage[];
+  readonly tools: readonly TransportTool[];
+  /**
+   * `'auto'`, `'any'` (a tool call is required), `'none'` or the one tool the model must call;
+   * absent when the request binds no tools.
+   */
+  readonly toolChoice?: string;
+  readonly signal?: AbortSignal;
+  /** Wire capture, present only while session trace logging is on. */
+  readonly wire?: (event: WireEvent) => void;
+}
+
 /**
- * Request-scoped model port over the exact native model selected in Chat UI. LangChain
- * `BaseMessage` instances are the only history representation; the port performs no model
- * selection, fallback, tool execution or lifecycle routing.
+ * The provider connection behind a port: the only code that knows one wire. It owns cancellation,
+ * error classification (every failure is a {@link ModelPortError}) and the wire events of its own
+ * request.
  */
-export class VscodeModelPort implements ModelPort {
+export interface ModelTransport {
+  /** Port identifier derived from the model. */
+  readonly id: string;
+  readonly identity: ModelIdentity;
+  /** Token count of one text; may reject, the port then estimates. */
+  countTokens(text: string): Promise<number>;
+  /**
+   * Streams one generation as LangChain chunks. A stream seen to its end finishes with one chunk
+   * whose `response_metadata.streamEnd` is true; a failure throws a {@link ModelPortError}.
+   */
+  stream(request: TransportRequest): AsyncIterable<AIMessageChunk>;
+}
+
+/** What a port reports to: logs, wire capture and the turn's token budget. */
+export interface ProviderModelPortOptions {
+  readonly debugLog?: (message: string) => void;
+  /** Native request identifier shared by wire and runtime lifecycle records. */
+  readonly requestId?: string;
+  /**
+   * Debug wire sink, supplied only when session trace logging is enabled. Unlike
+   * {@link debugLog} it carries model content (prompts, tool payloads, SQL), so it never
+   * reaches the output channel and is absent unless the user opted in.
+   */
+  readonly wireLog?: (record: WireRecord) => void;
+  /**
+   * Whether the active trace captures the verbatim system instruction as its own field. Off by
+   * default, so the `wire-request` `system` field carries the prompt's hash only. This does
+   * **not** make the trace prompt-free: a transport may carry the system instruction inside
+   * the message array, which is recorded with `messages[]` either way, deliberately, since the
+   * message array makes a bad turn reconstructable from the trace alone. The privacy control
+   * is the opt-in plus the owner-only file mode, not partial redaction.
+   */
+  readonly traceVerbose?: boolean;
+  /**
+   * Token budget the owning turn resolved from this model's window and the workspace settings.
+   * Absent only where a caller builds a port outside a turn, which leaves the shipped defaults
+   * and ceilings in force.
+   */
+  readonly budget?: TurnTokenBudget;
+}
+
+/**
+ * Request-scoped model port over one {@link ModelTransport}. LangChain `BaseMessage` instances are
+ * the only history representation; the port performs no model selection, fallback, tool execution
+ * or lifecycle routing.
+ */
+export class ProviderModelPort implements ModelPort {
   /** Request-scoped adapter identifier derived from the selected model ID. */
   public readonly id: string;
 
@@ -57,66 +124,28 @@ export class VscodeModelPort implements ModelPort {
   public readonly budget: TurnTokenBudget;
 
   public constructor(
-    private readonly model: vscode.LanguageModelChat,
-    private readonly options: {
-      readonly debugLog?: (message: string) => void;
-      /** Native request identifier shared by wire and runtime lifecycle records. */
-      readonly requestId?: string;
-      /**
-       * Debug wire sink, supplied only when session trace logging is enabled. Unlike
-       * {@link debugLog} it carries model content (prompts, tool payloads, SQL), so it never
-       * reaches the output channel and is absent unless the user opted in.
-       */
-      readonly wireLog?: (record: WireRecord) => void;
-      /**
-       * Whether the active trace captures the verbatim system instruction as its own field. Off by
-       * default, so the `wire-request` `system` field carries the prompt's hash only. This does
-       * **not** make the trace prompt-free: `vscode.lm` has no system role, so the bridge
-       * downgrades the system instruction into the first User turn and it is recorded with
-       * `messages[]` either way, deliberately, since the message array makes a bad turn
-       * reconstructable from the trace alone. The privacy control is the opt-in plus the owner-only
-       * file mode, not partial redaction.
-       *
-       * The port never captures provider bodies (`vscode.lm` yields a stream of parts, not an HTTP
-       * payload), so `provider-raw` has no emitter here.
-       */
-      readonly traceVerbose?: boolean;
-      /**
-       * Token budget the owning turn resolved from this model's window and the workspace settings.
-       * Absent only where a caller builds a port outside a turn, which leaves the shipped defaults
-       * and ceilings in force.
-       */
-      readonly budget?: TurnTokenBudget;
-    } = {},
+    private readonly transport: ModelTransport,
+    private readonly options: ProviderModelPortOptions = {},
   ) {
     this.budget = options.budget ?? DEFAULT_TURN_TOKEN_BUDGET;
-    this.id = `vscode-lm:${model.id}`;
-    this.identity = {
-      id: model.id,
-      name: model.name,
-      vendor: model.vendor,
-      family: model.family,
-      version: model.version,
-    };
-    this.options.debugLog?.(
-      `[AI] model id=${model.id} vendor=${model.vendor} family=${model.family} version=${model.version}`,
-    );
+    this.id = transport.id;
+    this.identity = transport.identity;
+    const { id, vendor, family, version } = this.identity;
+    this.options.debugLog?.(`[AI] model id=${id} vendor=${vendor} family=${family} version=${version}`);
   }
 
   /**
-   * {@link SingleGenerationModelPort.getNumTokens}; delegates to the selected model's
-   * `countTokens`. Carries no cancellation token: the caller is `trimMessages`' counter, run
-   * outside any generation's request-scoped `CancellationTokenSource`. A rejecting `countTokens` (a
-   * BYOK provider whose counter throws) falls back to the shared chars-per-token estimate rather
-   * than failing the node.
+   * {@link SingleGenerationModelPort.getNumTokens}; delegates to the transport's counter. Carries
+   * no cancellation: the caller is `trimMessages`' counter, run outside any generation. A rejecting
+   * counter falls back to the shared chars-per-token estimate rather than failing the node.
    */
   public async getNumTokens(content: MessageContent): Promise<number> {
     const text = messageContentToText(content);
     try {
-      return await this.model.countTokens(text);
+      return await this.transport.countTokens(text);
     } catch (error) {
       this.options.debugLog?.(
-        `[AI] count-tokens-fallback model=${this.model.id}`
+        `[AI] count-tokens-fallback model=${this.identity.id}`
         + ` error=${error instanceof Error ? error.message : String(error)}`,
       );
       return estimateTokens(text.length);
@@ -145,7 +174,11 @@ export class VscodeModelPort implements ModelPort {
       const { message, toolCalls: emittedCalls, nonTextChars, finishReason, usage } = await this.collectGeneration(
         input.messages,
         input.system,
-        definitions,
+        definitions.map((definition) => ({
+          name: definition.name,
+          description: definition.description,
+          inputSchema: toModelJsonSchema(definition.inputSchema),
+        })),
         input.toolChoice,
         input.signal,
         input.onTextDelta,
@@ -225,7 +258,7 @@ export class VscodeModelPort implements ModelPort {
     }
   }
 
-  /** Generates a schema-constrained result through the bridge's forced structured-output tool. */
+  /** Generates a schema-constrained result through a forced structured-output tool. */
   public async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<T> {
     if (input.signal?.aborted) throw cancelledError();
     this.modelCalls += 1;
@@ -233,12 +266,11 @@ export class VscodeModelPort implements ModelPort {
     const { toolCalls } = await this.collectGeneration(
       input.messages,
       input.system,
-      [],
-      undefined,
+      [{ name: STRUCTURED_OUTPUT_TOOL, description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION, inputSchema: outputSchema }],
+      { type: 'tool', toolName: STRUCTURED_OUTPUT_TOOL },
       input.signal,
       undefined,
       input.phase,
-      (bridge) => bridge.bindStructuredOutputTool(outputSchema, STRUCTURED_OUTPUT_TOOL),
     );
     const calls = toolCalls.filter((call) => call.name === STRUCTURED_OUTPUT_TOOL);
     const decoded = calls.length === 1
@@ -299,17 +331,11 @@ export class VscodeModelPort implements ModelPort {
   private async collectGeneration(
     history: readonly BaseMessage[],
     system: string | undefined,
-    definitions: readonly ModelToolDefinition[],
+    tools: readonly TransportTool[],
     choice: ModelToolChoice | undefined,
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
     phase?: string,
-    /**
-     * Overrides the bound runnable this streams, for a caller (structured output) whose tool
-     * binding the bridge already owns ({@link VscodeLangChainBridge.bindStructuredOutputTool});
-     * `definitions`/`choice` are unused when supplied.
-     */
-    buildRunnable?: (bridge: VscodeLangChainBridge) => VscodeBridgeRunnable,
   ): Promise<{
     message: AIMessageChunk;
     /** The message's tool calls, each verified to carry a call ID. */
@@ -319,7 +345,6 @@ export class VscodeModelPort implements ModelPort {
     /** Provider-reported usage of the last readable 'usage' stream part; absent when none. */
     usage?: TokenUsage;
   }> {
-    const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
     const generation = this.modelCalls;
     let requestEmitted = false;
@@ -340,39 +365,34 @@ export class VscodeModelPort implements ModelPort {
     });
     const startedAt = Date.now();
     try {
-      const bridge = new VscodeLangChainBridge({
-        model: this.model,
-        token: cancellation.source.token,
-        wire: emitWire,
-      });
-      const tools = definitions.map((definition) => ({
-        name: definition.name,
-        description: definition.description,
-        inputSchema: toModelJsonSchema(definition.inputSchema),
-      }));
       const requiresTool = choice === 'required' || typeof choice === 'object';
-      const runnable = buildRunnable
-        ? buildRunnable(bridge)
-        : tools.length > 0 || requiresTool
-          ? bridge.bindTools(tools, {
-              tool_choice: toLangChainToolChoice(choice),
-            })
-          : bridge;
+      if (typeof choice === 'object' && !tools.some((tool) => tool.name === choice.toolName)) {
+        throw new ModelPortError('invalid_request', `Required tool is not available: ${choice.toolName}.`);
+      }
+      if (requiresTool && tools.length === 0) {
+        throw new ModelPortError('invalid_request', 'Required tool mode requires at least one tool.');
+      }
       const messages = system
         ? [new SystemMessage(system), ...history]
         : [...history];
       let message = new AIMessageChunk({ content: '' });
       let nonTextChars = 0;
-      let usageReceived = false;
+      let streamEnded = false;
       let usage: TokenUsage | undefined;
-      const stream = await runnable.stream(messages, { signal });
+      const stream = this.transport.stream({
+        messages,
+        tools,
+        toolChoice: tools.length > 0 || requiresTool ? toTransportToolChoice(choice, tools) : undefined,
+        signal,
+        wire: emitWire,
+      });
       for await (const chunk of stream) {
         if (signal?.aborted) throw cancelledError();
         message = message.concat(chunk);
         if (typeof chunk.content === 'string' && chunk.content) onTextDelta?.(chunk.content);
         const streamedNonText = chunk.response_metadata?.nonTextChars;
         if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
-        if (chunk.response_metadata?.usageParts) usageReceived = true;
+        if (chunk.response_metadata?.streamEnd) streamEnded = true;
         const streamedUsage = chunk.response_metadata?.providerUsage;
         if (streamedUsage) usage = streamedUsage as TokenUsage;
       }
@@ -391,10 +411,10 @@ export class VscodeModelPort implements ModelPort {
           'Language model returned an incomplete tool call.',
         );
       }
-      const finishReason = observedFinishReason(usageReceived, toolCalls.length);
+      const finishReason = observedFinishReason(streamEnded, toolCalls.length);
       emitWire?.({
         type: 'generation',
-        modelId: this.model.id,
+        modelId: this.identity.id,
         finishReason,
         latencyMs: Date.now() - startedAt,
         ...(usage ? { usage } : {}),
@@ -408,19 +428,16 @@ export class VscodeModelPort implements ModelPort {
         });
       }
       throw error;
-    } finally {
-      cancellation.dispose();
     }
   }
 }
 
 /**
- * The finish the trace states. `vscode.lm` passes no provider finish reason; a usage data part is
- * the one sign the provider ended the stream itself. Without it the stream may have been cut, so
- * the call count alone must not name a finish.
+ * The finish the trace states. The transport ends a stream it saw to its end with one `streamEnd`
+ * chunk. Without it the stream may have been cut, so the call count alone must not name a finish.
  */
-function observedFinishReason(usageReceived: boolean, toolCallCount: number): 'tool-calls' | 'stop' | 'unknown' {
-  if (!usageReceived) return 'unknown';
+function observedFinishReason(streamEnded: boolean, toolCallCount: number): 'tool-calls' | 'stop' | 'unknown' {
+  if (!streamEnded) return 'unknown';
   return toolCallCount > 0 ? 'tool-calls' : 'stop';
 }
 
@@ -439,30 +456,19 @@ function isEmptyRecord(value: unknown): value is Record<string, never> {
   return isRecord(value) && Object.keys(value).length === 0;
 }
 
-function toLangChainToolChoice(
+/**
+ * The transport's choice. A required call with exactly one tool names that tool: the one form
+ * every wire carries (MAIN does the same). With several tools it stays `'any'` and the transport
+ * writes the form its API takes.
+ */
+function toTransportToolChoice(
   choice: ModelToolChoice | undefined,
+  tools: readonly TransportTool[],
 ): 'auto' | 'any' | 'none' | string {
-  if (choice === 'required') return 'any';
+  if (choice === 'required') return tools.length === 1 ? tools[0].name : 'any';
   if (choice === 'none') return 'none';
   if (typeof choice === 'object') return choice.toolName;
   return 'auto';
-}
-
-function bindCancellation(signal?: AbortSignal): {
-  readonly source: vscode.CancellationTokenSource;
-  dispose(): void;
-} {
-  const source = new vscode.CancellationTokenSource();
-  const abort = (): void => source.cancel();
-  signal?.addEventListener('abort', abort, { once: true });
-  if (signal?.aborted) source.cancel();
-  return {
-    source,
-    dispose: () => {
-      signal?.removeEventListener('abort', abort);
-      source.dispose();
-    },
-  };
 }
 
 function isCancellation(error: unknown): boolean {

@@ -67,7 +67,7 @@ function hasValue(value) {
 function applyProviderProfile(env, required) {
   const provider = env.AI_TEST_PROVIDER?.trim().toLowerCase();
   if (!provider) {
-    if (required) throw new Error('Set AI_TEST_PROVIDER before running npm run test:ai:smoke.');
+    if (required) throw new Error('Set AI_TEST_PROVIDER before running npm run test:ai:headless.');
     return undefined;
   }
 

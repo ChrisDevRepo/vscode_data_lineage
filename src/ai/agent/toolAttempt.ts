@@ -7,7 +7,7 @@
  *   advance, retry, gate, reroute, or terminate and stores only accepted observations, the
  *   append-only provider-native transcript, and bounded rejection bookkeeping.
  *
- * The retry history is the transcript, never a rebuild: every attempt appends the bridge's own
+ * The retry history is the transcript, never a rebuild: every attempt appends the port's own
  * `AIMessage` (text, every tool call with its own arguments, provider parts) exactly as the model
  * returned it, followed by one `ToolMessage` per call in call order — the accepted result, or the
  * rejection (reason and hint as text, the whole rejection in `artifact`). A reply with no tool call

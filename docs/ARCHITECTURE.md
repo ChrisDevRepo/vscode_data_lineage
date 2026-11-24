@@ -1,18 +1,17 @@
 # Architecture
 
 The extension builds an object-level lineage graph from a DACPAC file or a live
-database and draws it in a webview. The optional `@lineage` chat participant
-answers questions about the loaded graph with the language model selected in
-VS Code.
+database and draws it in a webview. The optional AI works on the loaded graph
+through read-only tools and the OpenAI-compatible model endpoints the user configures.
 
 Build, ingestion, and host/webview details: [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md).
 Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 ## Architectural boundaries
 
-- `@lineage` is the AI chat participant. Each request uses the model that VS Code
-  passes with the chat request; the extension has no provider, endpoint,
-  credential, model-picker, or fallback setting.
+- The AI uses one provider kind: an OpenAI-compatible endpoint (Chat Completions
+  or Responses) listed in `dataLineageViz.ai.models`. Its API key is kept in VS Code
+  secret storage under the entry id, never in settings, logs or the webview.
 - AI code works on the loaded lineage model. It can read object and SQL
   definitions. It cannot connect to a database, run SQL, start an import, or
   start table statistics.
@@ -29,7 +28,7 @@ flowchart LR
     DB[(SQL database)] -->|catalog queries| ING
     ING --> MODEL[(Lineage graph)]
     MODEL --> VIEW[Graph view]
-    MODEL -.->|read-only tools| AGENT["@lineage (optional AI)"]
+    MODEL -.->|read-only tools| AGENT["AI (optional)"]
     AGENT -.->|result graph| VIEW
 ```
 
@@ -37,9 +36,9 @@ flowchart LR
   bodies with the YAML parse rules, and builds one directed object graph.
 - **Graph view.** A webview draws the graph. Search, tracing, path finding,
   graph analysis and table statistics work without AI.
-- **`@lineage`.** An optional chat helper on top of the loaded graph.
+- **AI.** An optional helper on top of the loaded graph.
 
-## Optional AI: `@lineage`
+## Optional AI
 
 ```mermaid
 flowchart LR
@@ -65,7 +64,7 @@ flowchart LR
 - **Hop-by-hop exploration.** One procedure, view or function is read per step.
   The model records findings and the extension decides which objects come
   next. Column mappings are the model's reading of the SQL, best-effort and not
-  complete. What the plan shows: [`FEATURES.md`](FEATURES.md#lineage-ai).
+  complete. What the plan shows: [`FEATURES.md`](FEATURES.md#ai).
 - **Memory.** Findings are kept per chat session; a bookmark saved from an AI
   view keeps them for later questions.
 
@@ -80,17 +79,16 @@ Sign-in methods, credential storage and connection settings are in
 | DACPAC | Local unzip and parse of `model.xml` | Opening the file; no connection |
 | Database import | Built-in read-only catalog (DMV) queries, listed in [`DMV_QUERIES.md`](DMV_QUERIES.md); a custom DMV file runs as written | When an import starts |
 | Table statistics | Row-count and aggregate `SELECT` queries ([`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md)) | When requested for one table, on its own connection |
-| `@lineage` | Nothing against a database; its tools read the loaded model | Optional, per chat request |
+| AI | Nothing against a database; its tools read the loaded model | Optional, per request |
 
 ## History, privacy, and no-egress boundary
 
-- Chat history is projected as ordered user and assistant text, bounded by turn
-  count and bytes. Tool calls and results are not replayed across turns or
-  stored in the VS Code chat store; a later turn reads facts again through the
-  read tools.
+- Conversation history is ordered user and assistant text, bounded by turn
+  count and bytes. Tool calls and results are not replayed across turns; a later
+  turn reads facts again through the read tools.
 - The extension sends data only to the databases the user connects to and, for
-  `@lineage`, to the model selected in VS Code. A hosted model receives the
-  prompt, the chat history, and the object metadata and SQL the tools return.
+  AI, to the endpoint of the model entry in use. A hosted model receives the
+  prompt, the conversation history, and the object metadata and SQL the tools return.
   Entra sign-in contacts Microsoft through VS Code and also calls Azure Resource
   Manager to list directories ([`SECURITY.md`](../SECURITY.md#connections)).
 - The extension has no telemetry and makes no other network calls. LangChain's

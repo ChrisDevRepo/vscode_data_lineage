@@ -10,7 +10,6 @@ import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } f
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
 import { buildAiToolRegistry } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
-import { LineageParticipant } from './ai/participant/lineageParticipant';
 import { registerMcp } from './ai/mcp/mcpServer';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
@@ -114,12 +113,10 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     .get<boolean>('enabled', DEFAULT_AI_ENABLED);
 
   const missingAiApis = [
-    typeof vscode.chat?.createChatParticipant === 'function' ? '' : 'chat participants (vscode.chat)',
     typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function' ? '' : 'MCP server definitions (vscode.lm)',
   ].filter(Boolean);
 
   let lineageRuntime: LineageRuntime | undefined;
-  let participant: LineageParticipant | undefined;
 
   try {
     if (aiEnabled && missingAiApis.length > 0) {
@@ -145,24 +142,15 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       },
     });
 
-    participant = new LineageParticipant(
-      context,
-      getSession,
-      outputChannel,
-      lineageRuntime,
-      traceWriter,
-    );
-    participant.register();
     registerMcp(context, { getSession, outputChannel, getPanel: getActivePanel, host: aiToolHost });
     } else {
       logger.info(
-        'AI surface disabled — dataLineageViz.ai.enabled is false; the @lineage participant, ' +
-        'the MCP server and the AI runtime were not loaded.',
+        'AI surface disabled — dataLineageViz.ai.enabled is false; the MCP server and ' +
+        'the AI runtime were not loaded.',
       );
     }
   } catch (err) {
     lineageRuntime = undefined;
-    participant = undefined;
     const detail = err instanceof Error ? err.message : String(err);
     notifyWarning(
       logger,
@@ -260,14 +248,13 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   return {
     getSession,
     getActivePanel,
-    participant,
     lineageRuntime,
   };
 }
 
 /**
  * Deactivation needs no cleanup: every disposable from {@link activateRuntime} (output channel,
- * commands, tree provider, chat participant, config listener, MCP server) is on
+ * commands, tree provider, config listener, MCP server) is on
  * `context.subscriptions` and torn down by VS Code. Panel resources such as database connections
  * are released by each panel's own `onDidDispose`.
  */

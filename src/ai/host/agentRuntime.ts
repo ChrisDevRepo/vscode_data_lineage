@@ -86,7 +86,7 @@ export interface AgentRuntimeDeps {
 }
 
 /**
- * Environment flags that make LangChain construct a LangSmith tracer. `@lineage` has no external
+ * Environment flags that make LangChain construct a LangSmith tracer. The AI runtime has no external
  * telemetry integration, so failing closed keeps that boundary explicit without declaring LangSmith
  * as a dependency or mutating process-wide environment variables shared with the extension host.
  */
@@ -105,7 +105,7 @@ function assertExternalTracingDisabled(): void {
   });
   if (enabled.length > 0) {
     throw new Error(
-      `External LangChain tracing is not supported by @lineage; unset ${enabled.join(', ')}.`,
+      `External LangChain tracing is not supported by Data Lineage; unset ${enabled.join(', ')}.`,
     );
   }
 }
@@ -217,7 +217,7 @@ export class AgentRuntime {
         await this.dispatchSettled();
         return this.close('cancelled');
       }
-      // The error line is the participant's; a thrown text or stack can echo content: debug only.
+      // The error line is the chat host's; a thrown text or stack can echo content: debug only.
       if (!(err instanceof ModelPortError)) this.logger?.debug(`[AI] LangGraph turn failed — ${err instanceof Error ? err.stack : String(err)}`);
       const stop = classifyTurnStop(err, sanitizeProviderErrorDiagnostic(err, 'turn'));
       return this.close('error', err instanceof GraphRecursionError ? { ...stop, code: 'recursion_limit' } : stop);

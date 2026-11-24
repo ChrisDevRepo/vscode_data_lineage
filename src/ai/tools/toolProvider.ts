@@ -1,6 +1,6 @@
 /**
  * Canonical AI tool registry and handlers; the Zod boundary between untrusted LM tool input and the
- * engine. The native `@lineage` runtime and the local MCP server both dispatch through
+ * engine. The native AI runtime and the local MCP server both dispatch through
  * {@link buildAiToolRegistry}. Read-only tools wrap provider-neutral functions in
  * [`tools.ts`](./tools.ts); mutating tools live in `handlers/`; this module owns their shared host
  * services, registry binding, turn-lease checks and effect serialization.
@@ -105,7 +105,7 @@ export function classifyRejectionCode(code: string): RejectionChatGroup {
 /**
  * Reveals the result panel and posts one preview, naming the outcome: `no_panel`, `delivered`, or
  * `post_failed` (the validated send was dropped or refused). A transport throw propagates. A schema
- * drop is only a log line here; the participant's failed-render toast is the one user-visible
+ * drop is only a log line here; the AI host's failed-render notice is the one user-visible
  * notice.
  */
 export async function deliverToPanel(
@@ -522,7 +522,7 @@ export function buildAiToolRegistry(
 }
 
 /**
- * The tools the local MCP server serves: the read-only catalog. An MCP client has no `@lineage`
+ * The tools the local MCP server serves: the read-only catalog. An MCP client has no AI
  * turn behind it; reads are safe there, but every other effect class commits session lifecycle
  * state only the owning turn may advance, and exposing them would let a third party drive the
  * state machine. `lineage_get_neighbor_columns` is the one read left out: it answers only inside

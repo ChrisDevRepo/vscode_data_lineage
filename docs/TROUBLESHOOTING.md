@@ -18,13 +18,11 @@
 - **Blank or stuck graph.** Reload the window. If it stays blank, run **Developer: Open Webview Developer Tools** and include the console error in a bug report.
 - **"Render limit reached".** Narrow the filters, or raise `dataLineageViz.renderLimit` (default 750, maximum 1500). Loaded objects stay searchable. A selection above `dataLineageViz.maxNodes` (default 2,000, maximum 5,000) is refused at import.
 
-## `@lineage` chat participant
+## AI model endpoints
 
-- **No response.** Load a graph first. Then check that a VS Code chat model provider, such as [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot), is installed and available to Chat.
-- **"Analysis cannot start" or the scope is over budget.** Narrow the scope, or raise `dataLineageViz.ai.maxRounds`, `dataLineageViz.ai.maxTraceColumns`, `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget`. A new value applies from the next request.
-- **The response ends when I click Change scope.** This is by design. Type the change into the prefilled chat input, for example `remove DimCalendar`, and send it.
-- **Deep analysis stops early.** A provider or network failure, or three model replies that are not accepted, ends a run. The chat line names the source and quotes the provider's message; rejected replies name the object. Ask again, or exclude that object.
-- **Long silence during deep analysis.** The model is usually still generating; the hop counter advances as hops finish. Use the chat **Stop** button for a hung request.
+- **A model entry is not offered.** The warning names the entry in `dataLineageViz.ai.models` and what is wrong with it: an `https` URL (or `http` on `127.0.0.1`, `localhost` or `[::1]`), an `apiType` of `chat-completions` or `responses`, and token limits are required. Keys never belong in an entry.
+- **"No API key is stored".** Run **Data Lineage: Set API key** and pick the entry.
+- **An endpoint rejects a forced tool call.** Set `forcedToolChoice` to `false` on that entry; the extension then sends `auto`.
 
 ## Table statistics
 
