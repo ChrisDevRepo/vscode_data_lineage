@@ -12,8 +12,8 @@ test-results/
 .vscode-test/
 
 # IDE / local
-# Keep the repository workspace settings tracked: they deliberately disable unrelated
-# MCP servers so @lineage remains the only AI tool surface while developing this solution.
+# Keep the repository workspace settings tracked: they deliberately set chat.mcp.access to
+# none, so no MCP server reaches VS Code chat while developing this solution.
 tmp/
 PLAN*.md
 TASKLIST*

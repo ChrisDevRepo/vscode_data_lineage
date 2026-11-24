@@ -325,7 +325,8 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         <p className="text-sm mb-3 ln-text-muted">
           Run <span className="font-bold font-mono ln-text-link">Data Lineage: Add AI Model</span> (or <strong>Add model</strong> in the chat) to pick a provider, enter the endpoint, model and key, and test the connection. Models are kept in <code>dataLineageViz.ai.models</code>; the key is kept in VS Code secret storage, never in settings.
         </p>
-        <p className="text-xs mt-3 ln-text-muted">The lineage tools read only the loaded graph and are inactive when none is loaded. Local MCP clients such as Copilot can call them when <code>dataLineageViz.mcp.enabled</code> is on (run <strong>Data Lineage: Enable MCP Server</strong>).</p>
+        <p className="text-xs mt-3 ln-text-muted">Open the chat with <strong>Chat</strong> on the right edge of the graph. Type <code>/</code> for <code>/search</code>, <code>/trace</code> and <code>/clear</code>; pick the model and effort in the composer.</p>
+        <p className="text-xs mt-3 ln-text-muted">The lineage tools read only the loaded graph and are inactive when none is loaded. Local MCP clients such as Claude Code or Copilot agent mode can call them when <code>dataLineageViz.mcp.enabled</code> is on (run <strong>Data Lineage: Enable MCP Server</strong>). The MCP server does not need the chat panel.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -347,7 +348,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
           <li><span className="font-medium ln-text">AI lineage guidance.</span> Ask the assistant where a field comes from, then verify with your database DDL.</li>
           <li><span className="font-medium ln-text">Trace a column.</span> Ask &quot;where does <code>TotalDue</code> on <code>Sales.SalesOrderHeader</code> come from?&quot; — triggers column-level tracing through views and procedures.</li>
           <li><span className="font-medium ln-text">Create a focused view.</span> Ask to see an object&apos;s lineage as a graph, then choose <em>Save as Bookmark</em> on the AI Preview.</li>
-          <li><span className="font-medium ln-text">Refine a plan.</span> Before approving a deep analysis, choose <em>Change scope</em> or reply in words, for example &quot;go upstream only&quot;.</li>
+          <li><span className="font-medium ln-text">Refine a plan.</span> Before a deep analysis runs, the approval card offers <em>Approve</em>, <em>Refine</em> or <em>Cancel</em>; <em>Show full plan</em> lists every object. With <em>Refine</em>, describe the change, for example &quot;go upstream only&quot;, then choose <em>Send change</em>.</li>
           <li><span className="font-medium ln-text">Column detail.</span> When an AI preview or AI bookmark carries column findings, switch its banner from <em>Objects</em> to <em>Detail</em> to see the traced columns on the graph.</li>
           <li><span className="font-medium ln-text">Recall an analysis.</span> With an AI bookmark applied, ask &quot;what did you find about X?&quot; to recall the saved run instead of repeating it.</li>
           <li><span className="font-medium ln-text">Use context questions.</span> Try &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
@@ -357,7 +358,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
       </div>
 
       <p className="text-xs ln-text-muted">
-        Turn AI features off with <code>dataLineageViz.ai.enabled</code> in VS Code Settings, then reload the window.
+        Turn the chat panel off with <code>dataLineageViz.ai.enabled</code> in VS Code Settings, then reload the window. The MCP server has its own setting, <code>dataLineageViz.mcp.enabled</code>.
       </p>
     </div>
   );

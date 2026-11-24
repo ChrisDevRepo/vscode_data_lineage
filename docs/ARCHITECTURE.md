@@ -49,7 +49,7 @@ flowchart LR
     Q([User request]) --> D[Discovery]
     D -->|direct answer| END(((End)))
     D -->|over budget or deeper-analysis follow-up| G[/Approval/]
-    G -->|change scope| G
+    G -->|refine| G
     G -->|cancel| END
     G -->|approve| A[Hop-by-hop exploration]
     A --> S[Written result] --> C[Completed result]

@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# AI Output Specification — what @lineage writes, and how.
+# AI Output Specification — what the AI chat writes, and how.
 #
 # EDIT `instruction:` — it is the only text sent to the AI. In every block below:
 #   instruction:  sent to the AI. Change this to change the output.
