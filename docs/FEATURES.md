@@ -297,3 +297,5 @@ Database import only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 | `ai.discoveryNodeCap` | 10 (1–30) | Scope nodes a discovery answer may pull in one request before it is offered as a deep analysis for approval. |
 | `ai.discoveryTokenBudget` | 10000 (1000–32000) | Estimated DDL tokens for one discovery request, capped at one eighth of the selected model's input window. Exceeding it or the node cap offers a deep analysis for approval. |
 | `ai.outputTemplateFile` | empty | Custom output templates YAML; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |
+| `mcp.enabled` | off | Serves the lineage tools to local AI clients over MCP on 127.0.0.1; needs `ai.enabled`. Run **Data Lineage: Copy MCP Config** for clients outside VS Code: the config contains the access token, so the client writes it into its own config file. **Data Lineage: Rotate MCP Token** replaces it. |
+| `mcp.port` | 47633 (1024–65535) | Port of the local MCP server. The first VS Code window takes it; other windows report that it is in use. |

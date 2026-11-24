@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { rootPath } from '../helpers/testUtils';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { DEFAULT_AI_ENABLED } from '../../../src/configCore';
+import { DEFAULT_MCP_ENABLED, DEFAULT_MCP_PORT } from '../../../src/ai/mcp/mcpServer';
 import { DEFAULT_MAX_ROUNDS } from '../../../src/ai/core/agentCore';
 import {
   DEFAULT_DISCOVERY_NODE_CAP,
@@ -54,6 +55,8 @@ const runtimeDefaults: Record<string, unknown> = {
   'dataLineageViz.ai.discoveryNodeCap': DEFAULT_DISCOVERY_NODE_CAP,
   'dataLineageViz.ai.discoveryTokenBudget': DEFAULT_DISCOVERY_TOKEN_BUDGET,
   'dataLineageViz.ai.outputTemplateFile': '',
+  'dataLineageViz.mcp.enabled': DEFAULT_MCP_ENABLED,
+  'dataLineageViz.mcp.port': DEFAULT_MCP_PORT,
 };
 
 function manifestSettings(): Record<string, Setting> {

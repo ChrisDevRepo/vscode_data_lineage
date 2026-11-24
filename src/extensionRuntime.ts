@@ -11,6 +11,7 @@ import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet
 import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
 import { LineageParticipant } from './ai/participant/lineageParticipant';
+import { registerMcp } from './ai/mcp/mcpServer';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
@@ -156,6 +157,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       traceWriter,
     );
     participant.register();
+    registerMcp(context, outputChannel);
     } else {
       logger.info(
         'AI surface disabled — dataLineageViz.ai.enabled is false; the @lineage participant, ' +

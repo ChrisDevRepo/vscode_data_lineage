@@ -63,6 +63,9 @@
       ]
     }
   },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -163,6 +166,14 @@
         "command": "dataLineageViz.updateDatabasePassword",
         "title": "Update Database Password",
         "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.mcp.copyConfig",
+        "title": "Data Lineage: Copy MCP Config"
+      },
+      {
+        "command": "dataLineageViz.mcp.rotateToken",
+        "title": "Data Lineage: Rotate MCP Token"
       }
     ],
     "keybindings": [],
@@ -172,6 +183,16 @@
           "command": "dataLineageViz.open",
           "when": "view == dataLineageViz.quickActions",
           "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dataLineageViz.mcp.copyConfig",
+          "when": "config.dataLineageViz.ai.enabled && config.dataLineageViz.mcp.enabled"
+        },
+        {
+          "command": "dataLineageViz.mcp.rotateToken",
+          "when": "config.dataLineageViz.ai.enabled && config.dataLineageViz.mcp.enabled"
         }
       ]
     },
@@ -563,6 +584,20 @@
             "type": "string",
             "default": "",
             "markdownDescription": "Path to a custom AI output templates YAML file; empty uses the built-in templates. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md)"
+          },
+          "dataLineageViz.mcp.enabled": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "markdownDescription": "Serve the read-only lineage tools to local AI clients (VS Code Copilot, Claude Code, Cursor, Codex CLI) over a local MCP server on 127.0.0.1. Has an effect only while `dataLineageViz.ai.enabled` is on. Use **Data Lineage: Copy MCP Config** for clients outside VS Code."
+          },
+          "dataLineageViz.mcp.port": {
+            "type": "integer",
+            "default": 47633,
+            "minimum": 1024,
+            "maximum": 65535,
+            "scope": "application",
+            "markdownDescription": "Port of the local MCP server. The first VS Code window takes it; other windows report that it is in use."
           }
         }
       }
@@ -869,6 +904,12 @@
           "additionalProperties": false
         }
       }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "dataLineageViz.mcp",
+        "label": "Data Lineage"
+      }
     ]
   },
   "scripts": {
@@ -912,6 +953,8 @@
     "@langchain/core": "1.5.0",
     "@langchain/langgraph": "1.7.5",
     "@microsoft/vscode-azext-azureauth": "5.1.1",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "13.0.2",
     "comlink": "4.4.2",
