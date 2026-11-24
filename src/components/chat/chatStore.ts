@@ -12,7 +12,7 @@ export type GateDecision = Extract<ChatToExtensionMsg, { type: 'chat.gate' }>['d
 export type ChatPart =
   | { type: 'text'; text: string }
   | { type: 'status'; phase: string; label: string }
-  | { type: 'gate'; gateId: string; gate: string; summary: string; fullPlan?: GateFullPlan; classes?: readonly string[]; replacesAnalysis?: boolean; decision: GateDecision | undefined }
+  | { type: 'gate'; gateId: string; gate: string; summary: string; fullPlan?: GateFullPlan; replacesAnalysis?: boolean; decision: GateDecision | undefined }
   | { type: 'error'; message: string };
 
 export interface ChatMessage {
@@ -83,7 +83,7 @@ function applyEvent(state: ChatState, turnId: string, event: TurnEvent, replaces
     case 'gate':
       return updateTurn(state, turnId, parts => [
         ...withoutStatus(parts),
-        { type: 'gate', gateId: event.gateId, gate: event.gate, summary: event.summary, fullPlan: event.fullPlan, classes: event.classes, replacesAnalysis, decision: undefined },
+        { type: 'gate', gateId: event.gateId, gate: event.gate, summary: event.summary, fullPlan: event.fullPlan, replacesAnalysis, decision: undefined },
       ]);
     case 'error':
       return updateTurn(state, turnId, parts => [...withoutStatus(parts), { type: 'error', message: event.message }]);

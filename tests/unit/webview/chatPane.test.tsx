@@ -18,7 +18,7 @@ import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const gate = { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3', classes: ['table'], decision: undefined } as const;
+const gate = { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3', decision: undefined } as const;
 
 describe('toContent', () => {
   it('maps text to a text part and a status to a status tool call keyed by the turn', () => {
@@ -32,7 +32,7 @@ describe('toContent', () => {
     const [part] = toContent([gate], 't1');
     expect(part).toMatchObject({
       type: 'tool-call', toolCallId: 'g1', toolName: 'lineage_gate',
-      args: { turnId: 't1', gateId: 'g1', gate: 'scope', summary: 'Trace 3', classes: ['table'] },
+      args: { turnId: 't1', gateId: 'g1', gate: 'scope', summary: 'Trace 3' },
     });
     expect(part).not.toHaveProperty('result');
   });

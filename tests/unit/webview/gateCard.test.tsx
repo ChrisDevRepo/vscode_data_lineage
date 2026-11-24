@@ -16,7 +16,7 @@ import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const api: VsCodeAPI = { postMessage: () => undefined, getState: () => undefined, setState: () => undefined };
-const args: GateArgs = { turnId: 't1', gateId: 'g1', gate: 'scope', summary: 'Trace **3** objects', classes: ['table'] };
+const args: GateArgs = { turnId: 't1', gateId: 'g1', gate: 'scope', summary: 'Trace **3** objects', classes: ['sliding_memory'] };
 
 let root: Root | undefined;
 let host: HTMLElement | undefined;
@@ -45,22 +45,17 @@ afterEach(() => {
 });
 
 describe('GateCard', () => {
-  it('shows the summary as markdown, the class chips and the full plan in a collapsed disclosure', () => {
+  it('shows the summary as markdown and the full plan in a collapsed disclosure, never the object classes', () => {
     const { rerender } = mount({ ...args, fullPlan: { markdown: '**Goal:** every object', objects: 6 } });
     expect(host?.querySelector('strong')?.textContent).toBe('3');
-    expect(host?.textContent).toContain('table');
+    expect(host?.querySelector('[aria-label="Object classes"]')).toBeNull();
+    expect(host?.textContent).not.toContain('sliding_memory');
     const details = host?.querySelector('details');
     expect(details?.open).toBe(false);
     expect(details?.querySelector('summary')?.textContent).toBe('Show full plan (6 objects)');
     expect(details?.querySelectorAll('strong')[0]?.textContent).toBe('Goal:');
     rerender(args);
     expect(host?.querySelector('details')).toBeNull();
-  });
-
-  it('caps the class chips at eight and counts the rest', () => {
-    mount({ ...args, classes: Array.from({ length: 11 }, (_, i) => `c${i}`) });
-    expect(host?.querySelectorAll('li')).toHaveLength(9);
-    expect(host?.textContent).toContain('+3 more');
   });
 
   it.each([['Approve', 'approve'], ['Cancel', 'cancel']] as const)('%s posts once and hides the buttons', (label, decision) => {

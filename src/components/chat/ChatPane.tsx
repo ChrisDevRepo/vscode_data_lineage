@@ -59,7 +59,6 @@ export function toContent(parts: readonly ChatPart[], turnId: string): Exclude<T
             gate: part.gate,
             summary: part.summary,
             ...(part.fullPlan ? { fullPlan: part.fullPlan } : {}),
-            ...(part.classes ? { classes: part.classes } : {}),
             ...(part.replacesAnalysis ? { replacesAnalysis: true } : {}),
             ...(part.decision ? { decision: part.decision } : {}),
           },

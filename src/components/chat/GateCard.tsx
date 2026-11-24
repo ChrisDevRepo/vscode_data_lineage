@@ -13,15 +13,11 @@ export interface GateArgs extends Record<string, unknown> {
   gate: string;
   summary: string;
   fullPlan?: GateFullPlan;
-  classes?: readonly string[];
   replacesAnalysis?: boolean;
   decision?: GateDecision;
 }
 
 const DECIDED_LABEL: Record<GateDecision, string> = { approve: 'Approved', refine: 'Change requested', cancel: 'Cancelled' };
-
-/** Class chips shown before "+N more". */
-const MAX_CLASS_CHIPS = 8;
 
 /** Host markdown as the chat shows it: one pipeline, links handled by the shared hook. */
 function Markdown({ text }: { text: string }) {
@@ -39,7 +35,7 @@ function Markdown({ text }: { text: string }) {
 
 /**
  * The approval card a turn waits on: the host's scope card (markdown), the full plan behind a
- * disclosure, the object-class chips, and the three decisions. Refine asks for the change as text
+ * disclosure, and the three decisions. Refine asks for the change as text
  * first. Once decided, the buttons give way to the outcome, so a second click cannot post a second
  * decision.
  */
@@ -48,8 +44,6 @@ export function GateCard({ args }: { args: GateArgs }) {
   const [refining, setRefining] = useState(false);
   const [change, setChange] = useState('');
   const decide = (decision: GateDecision, text?: string): void => actions.decideGate(args.turnId, args.gateId, decision, text);
-  const chips = args.classes?.slice(0, MAX_CLASS_CHIPS) ?? [];
-  const hidden = (args.classes?.length ?? 0) - chips.length;
 
   return (
     <section aria-label="Approval needed" className="bg-popover text-popover-foreground border-border my-2 rounded-md border p-3">
@@ -61,14 +55,6 @@ export function GateCard({ args }: { args: GateArgs }) {
           </summary>
           <Markdown text={args.fullPlan.markdown} />
         </details>
-      )}
-      {chips.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1" aria-label="Object classes">
-          {chips.map(name => (
-            <li key={name} className="border-border rounded-full border px-2 py-0.5 text-xs">{name}</li>
-          ))}
-          {hidden > 0 && <li className="text-muted-foreground px-2 py-0.5 text-xs">+{hidden} more</li>}
-        </ul>
       )}
       {args.replacesAnalysis && args.decision === undefined && (
         <p className="text-muted-foreground mt-2 text-xs">Approving replaces the analysis shown now.</p>

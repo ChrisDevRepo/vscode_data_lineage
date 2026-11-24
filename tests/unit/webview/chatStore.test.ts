@@ -41,9 +41,9 @@ describe('chatReducer — turn events to messages', () => {
 
   it('turns a gate event into an open gate card part', () => {
     let state = sent('hi');
-    state = event(state, 't1', { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3 objects', classes: ['table'] });
+    state = event(state, 't1', { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3 objects', classes: ['sliding_memory'] });
     expect(state.messages[1].parts).toEqual([
-      { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3 objects', classes: ['table'], replacesAnalysis: undefined, decision: undefined },
+      { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3 objects', replacesAnalysis: undefined, decision: undefined },
     ]);
   });
 
