@@ -15,8 +15,11 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 - AI code works on the loaded lineage model. It can read object and SQL
   definitions. It cannot connect to a database, run SQL, start an import, or
   start table statistics.
-- Model tools go through one local registry. Read-only tools are also
-  registered with VS Code for other agents.
+- Model tools go through one local registry. The chat panel and the MCP server
+  share the read tools' definitions, schemas, handlers, registry and rejection
+  text; trace, path and graph preview are MCP-only today. The MCP server is a
+  plain server for external clients (loopback only, bearer token): approval and
+  hop-by-hop analysis belong to the chat panel.
 - The model reads the SQL and writes the column mappings, so results are its
   reading of the SQL, best-effort and not complete.
 
