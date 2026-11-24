@@ -42,7 +42,7 @@ Once your model loads, the visual graph is ready to use:
 
 ## AI model endpoints
 
-The AI assistant is being rebuilt on its own panel.
+The AI assistant is being rebuilt on its own panel, replacing the `@lineage` Copilot chat participant because Microsoft [deprecated chat participants](https://code.visualstudio.com/api/extension-guides/ai/chat).
 What ships now is the model setup it will run on, and the read-only lineage tools:
 
 - **`dataLineageViz.ai.models`** lists OpenAI-compatible endpoints (Chat Completions or Responses; an Azure `/openai/v1/` base URL or Anthropic's `/v1/` chat-completions URL works like any other).
