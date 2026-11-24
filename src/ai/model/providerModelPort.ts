@@ -18,7 +18,6 @@ import {
   isRecord,
   messageContentToText,
   messageProviderParts,
-  recordStreamedToolArguments,
 } from './modelPort';
 import { systemPromptHash, type TokenUsage, type WireEvent, type WireRecord } from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
@@ -402,14 +401,11 @@ export class ProviderModelPort implements ModelPort {
       // `tool_calls` when its text cannot be completed to JSON, and completes a cut text into
       // `tool_calls`; the chunks carry the text as streamed. A text that is no JSON stays that text,
       // and the receiving boundary rejects the call by its ID instead of the turn failing.
-      const notObjects: Record<string, string> = {};
-      const toolCalls: Array<{ id?: string; name: string; args: unknown }> = (message.tool_call_chunks ?? []).map((chunk) => {
-        const args = chunk.args ? parseStreamedArguments(chunk.args) : {};
-        // A text that is no JSON object cannot ride `tool_calls` as it was sent: the transport replays it from here.
-        if (chunk.id && chunk.args && !isRecord(args)) notObjects[chunk.id] = chunk.args;
-        return { id: chunk.id, name: chunk.name ?? '', args };
-      });
-      recordStreamedToolArguments(message, notObjects);
+      const toolCalls: Array<{ id?: string; name: string; args: unknown }> = (message.tool_call_chunks ?? []).map((chunk) => ({
+        id: chunk.id,
+        name: chunk.name ?? '',
+        args: parseStreamedArguments(chunk.args),
+      }));
       if (!toolCalls.every(hasCallId)) {
         throw new ModelPortError(
           'unsupported_response',
@@ -446,8 +442,9 @@ function observedFinishReason(streamEnded: boolean, toolCallCount: number): 'too
   return toolCallCount > 0 ? 'tool-calls' : 'stop';
 }
 
-/** The streamed arguments as JSON, or the text itself when it is not valid JSON. */
-function parseStreamedArguments(text: string): unknown {
+/** The streamed arguments as JSON, the text itself when it is not valid JSON, `{}` when none streamed. */
+export function parseStreamedArguments(text: string | undefined): unknown {
+  if (!text) return {};
   const parsed = parseJson(text);
   return parsed === undefined ? text : parsed;
 }

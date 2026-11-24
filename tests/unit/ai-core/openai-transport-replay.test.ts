@@ -9,14 +9,16 @@ import { createProviderModelPort } from '../../../src/ai/providers/openAiTranspo
 
 /**
  * Pins the wire shape of a replayed assistant turn: a call whose streamed arguments are no JSON
- * object goes out as the text the model sent (`function.arguments` / `function_call.arguments`),
- * not as LangChain's completed object and not JSON-quoted, on both API types.
+ * object goes out with empty JSON-object arguments (`function.arguments` / `function_call.arguments`),
+ * never the model's cut text (providers reject a history call whose arguments are no JSON) and never
+ * LangChain's completed object; the rejection result carries the fault to the model. Both API types,
+ * an own turn and another endpoint's turn.
  */
 const CUT = '{"sections":{"technical":"cu';
 const schema = z.object({ sections: z.object({ technical: z.string() }) });
 const tools = [{ name: 'lineage_present_result', description: 'd', inputSchema: schema }];
 
-async function history() {
+async function history(own = false) {
   const source: ModelTransport = {
     id: 'src',
     identity: { id: 'm', name: 'm', vendor: 'v', family: 'f', version: '1' },
@@ -34,6 +36,7 @@ async function history() {
   };
   const result = await new ProviderModelPort(source).generateToolTurn({ messages: [], tools, phase: 'test' });
   if (result.status !== 'completed') throw new Error('turn failed');
+  if (own) result.message.response_metadata = { ...result.message.response_metadata, entryId: 'e' };
   return [
     new HumanMessage('go'),
     transcriptTurn(result.message, result.toolCalls),
@@ -42,35 +45,35 @@ async function history() {
   ];
 }
 
-async function sentBody(apiType: 'chat-completions' | 'responses'): Promise<Record<string, unknown>> {
+async function sentBody(apiType: 'chat-completions' | 'responses', own = false): Promise<Record<string, unknown>> {
   const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType, maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
   let body: Record<string, unknown> = {};
   vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: { body: string }) => {
     body = JSON.parse(init.body) as Record<string, unknown>;
     return new Response('{"error":{"message":"stop"}}', { status: 400, headers: { 'content-type': 'application/json' } });
   }));
-  await createProviderModelPort(entry, 'key').generateToolTurn({ messages: await history(), tools, phase: 'test' });
+  await createProviderModelPort(entry, 'key').generateToolTurn({ messages: await history(own), tools, phase: 'test' });
   return body;
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('OpenAI transport replay of a malformed tool call', () => {
-  it('chat completions sends the streamed text bare, beside the valid call', async () => {
-    const body = await sentBody('chat-completions');
+  it.each([false, true])('chat completions replays a cut call with empty object arguments, beside the valid call (own turn: %s)', async (own) => {
+    const body = await sentBody('chat-completions', own);
     const assistant = (body.messages as Array<{ role: string; tool_calls?: unknown }>).find((message) => message.role === 'assistant');
     expect(assistant?.tool_calls).toEqual([
       { id: 'call_ok', type: 'function', function: { name: 'lineage_present_result', arguments: '{"sections":{"technical":"x"}}' } },
-      { id: 'call_cut', type: 'function', function: { name: 'lineage_present_result', arguments: CUT } },
+      { id: 'call_cut', type: 'function', function: { name: 'lineage_present_result', arguments: '{}' } },
     ]);
   });
 
-  it('responses sends the streamed text bare, beside the valid call', async () => {
-    const body = await sentBody('responses');
+  it.each([false, true])('responses replays a cut call with empty object arguments, beside the valid call (own turn: %s)', async (own) => {
+    const body = await sentBody('responses', own);
     const calls = (body.input as Array<{ type: string; call_id?: string; arguments?: string }>).filter((item) => item.type === 'function_call');
     expect(calls.map((call) => [call.call_id, call.arguments])).toEqual([
       ['call_ok', '{"sections":{"technical":"x"}}'],
-      ['call_cut', CUT],
+      ['call_cut', '{}'],
     ]);
   });
 
@@ -101,5 +104,29 @@ describe('OpenAI transport replay of a malformed tool call', () => {
     const traced = (request as unknown as { messages: Array<{ role: string; parts: Array<{ type: string; input?: unknown }> }> }).messages
       .find((message) => message.role === 'assistant')?.parts.find((part) => part.type === 'tool-call');
     expect(traced?.input).toEqual({ sections: { technical: 'x' } });
+  });
+
+  it('the wire-response record carries the streamed text of a cut call, not the completed object', async () => {
+    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'chat-completions', maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
+    const delta = (index: number, id: string, args: string) => ({
+      choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index, id, type: 'function', function: { name: 'lineage_present_result', arguments: args } }] }, finish_reason: null }],
+    });
+    const frames = [
+      delta(0, 'call_ok', '{"sections":{"technical":"x"}}'),
+      delta(1, 'call_cut', CUT),
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      `${frames.map((frame) => `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', model: 'gpt-x', ...frame })}\n\n`).join('')}data: [DONE]\n\n`,
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    )));
+    const records: WireRecord[] = [];
+    await createProviderModelPort(entry, 'key', { wireLog: (record) => records.push(record) })
+      .generateToolTurn({ messages: [new HumanMessage('go')], tools, phase: 'test' });
+    const response = records.find((record) => record.type === 'wire-response');
+    expect(response?.type === 'wire-response' ? response.toolCalls : []).toEqual([
+      { callId: 'call_ok', name: 'lineage_present_result', input: { sections: { technical: 'x' } } },
+      { callId: 'call_cut', name: 'lineage_present_result', input: CUT },
+    ]);
   });
 });

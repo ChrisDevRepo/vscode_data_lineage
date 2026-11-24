@@ -1,7 +1,7 @@
 import { AIMessageChunk } from '@langchain/core/messages';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { messageStreamedToolArguments, transcriptTurn } from '../../../src/ai/model/modelPort';
+import { transcriptTurn } from '../../../src/ai/model/modelPort';
 import { STRUCTURED_OUTPUT_TOOL, StructuredOutputError } from '../../../src/ai/providers/structuredOutput';
 import { ProviderModelPort, type ModelTransport } from '../../../src/ai/model/providerModelPort';
 import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
@@ -54,7 +54,7 @@ describe('ProviderModelPort streamed tool-call arguments', () => {
     expect(result.toolCalls[0]).toMatchObject({ valid: true, callId: 'call_1', input: { sections: { technical: 'x' } } });
   });
 
-  it('replays a malformed call as streamed, not as LangChain completes it, and a valid call unchanged', async () => {
+  it('replays a malformed call with empty arguments, not as LangChain completes it, and a valid call unchanged', async () => {
     const cut = '{"sections":{"technical":"cu';
     const result = await turn(portStreaming([cut]));
     if (result.status !== 'completed') throw new Error('turn failed');
@@ -62,17 +62,15 @@ describe('ProviderModelPort streamed tool-call arguments', () => {
     expect(result.message.tool_calls?.[0]?.args).toEqual({ sections: { technical: 'cu' } });
     const replayed = transcriptTurn(result.message, result.toolCalls);
     expect(replayed.tool_calls).toEqual([{ id: 'call_1', name: 'lineage_present_result', args: {}, type: 'tool_call' }]);
-    expect(messageStreamedToolArguments(replayed)).toEqual({ call_1: cut });
 
     const valid = await turn(portStreaming(['{"sections":{"technical":"x"}}']));
     if (valid.status !== 'completed') throw new Error('turn failed');
     expect(transcriptTurn(valid.message, valid.toolCalls)).toBe(valid.message);
-    expect(messageStreamedToolArguments(valid.message)).toEqual({});
 
-    // A JSON string literal parses, but is no object: the text is still what the model sent.
+    // A JSON string literal parses, but is no object: it replays as empty arguments too.
     const literal = await turn(portStreaming(['"abc"']));
     if (literal.status !== 'completed') throw new Error('turn failed');
-    expect(messageStreamedToolArguments(literal.message)).toEqual({ call_1: '"abc"' });
+    expect(transcriptTurn(literal.message, literal.toolCalls).tool_calls?.[0]?.args).toEqual({});
   });
 
   it('files a structured output with malformed arguments as a structured rejection, not a SyntaxError', async () => {

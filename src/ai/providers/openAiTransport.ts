@@ -10,13 +10,14 @@ import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from '@langc
 import { ChatOpenAI, messageToOpenAIRole } from '@langchain/openai';
 import type { ModelEntry } from './modelEntries';
 import {
+  parseStreamedArguments,
   ProviderModelPort,
   type ModelTransport,
   type ProviderModelPortOptions,
   type TransportRequest,
   type TransportTool,
 } from '../model/providerModelPort';
-import { cancelledError, messageStreamedToolArguments, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
+import { cancelledError, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
 import { systemPromptHash, type TokenUsage, type WireMessage, type WirePart } from '../observability/wireLog';
 import { sanitizeProviderError } from '../support/text';
 import { countTokens } from '../support/tokenCount';
@@ -113,7 +114,11 @@ function projectMessages(
   messages: readonly BaseMessage[],
   entry: ModelEntry,
 ): { readonly messages: BaseMessage[]; readonly previousResponseId?: string } {
-  const projected = messages.map((message) => (AIMessage.isInstance(message) ? projectTurn(message, entry) : message));
+  const projected = messages.map((message) => (
+    AIMessage.isInstance(message) && !isOwnTurn(message, entry)
+      ? new AIMessage({ content: message.content, tool_calls: message.tool_calls, name: message.name })
+      : message
+  ));
   if (entry.apiType !== 'responses' || entry.requestBody?.store === false) return { messages: projected };
   let last = messages.length - 1;
   while (last >= 0 && !(AIMessage.isInstance(messages[last]) && isOwnTurn(messages[last], entry))) last -= 1;
@@ -123,50 +128,8 @@ function projectMessages(
     : { messages: projected };
 }
 
-/**
- * One assistant turn as the request sends it. A turn another endpoint produced loses its provider
- * state. A call whose streamed text is no JSON object goes with that text as its `function.arguments`:
- * the client's converters send `additional_kwargs.tool_calls` bare, but only while the message has no
- * `tool_calls`, which would JSON-quote the text, so such a turn sends all its calls that way.
- */
-function projectTurn(message: AIMessage, entry: ModelEntry): AIMessage {
-  const own = isOwnTurn(message, entry);
-  const streamed = messageStreamedToolArguments(message);
-  const calls = message.tool_calls ?? [];
-  if (!calls.some((call) => streamed[call.id ?? ''] !== undefined)) {
-    return own ? message : new AIMessage({ content: message.content, tool_calls: message.tool_calls, name: message.name });
-  }
-  return new AIMessage({
-    content: message.content,
-    name: message.name,
-    tool_calls: [],
-    additional_kwargs: {
-      ...(own ? message.additional_kwargs : {}),
-      tool_calls: calls.map((call) => ({
-        id: call.id ?? '',
-        type: 'function',
-        function: { name: call.name, arguments: streamed[call.id ?? ''] ?? JSON.stringify(call.args) },
-      })),
-    },
-    ...(own ? { response_metadata: message.response_metadata } : {}),
-  });
-}
-
 function toWirePart(value: unknown): WirePart {
   return { type: 'text', value: typeof value === 'string' ? value : JSON.stringify(value) };
-}
-
-/**
- * The calls of one assistant turn as the trace states them, from the list the client sends: its
- * `tool_calls`, else (when that is empty) `additional_kwargs.tool_calls`. A bare-text call shows its text.
- */
-function wireToolCalls(message: AIMessage): WirePart[] {
-  const calls = message.tool_calls ?? [];
-  const bare = message.additional_kwargs.tool_calls ?? [];
-  return (calls.length > 0
-    ? calls.map((call) => ({ callId: call.id ?? '', name: call.name, input: call.args }))
-    : bare.map((call) => ({ callId: call.id, name: call.function.name, input: call.function.arguments }))
-  ).map((call) => ({ type: 'tool-call' as const, ...call }));
 }
 
 /** The request as the trace states it: role and parts per message, never a header. */
@@ -181,7 +144,9 @@ function toWireMessage(message: BaseMessage): WireMessage {
     role: messageToOpenAIRole(message),
     parts: [
       ...content.filter((part) => part !== '').map(toWirePart),
-      ...(AIMessage.isInstance(message) ? wireToolCalls(message) : []),
+      ...(AIMessage.isInstance(message) ? message.tool_calls ?? [] : []).map((call) => (
+        { type: 'tool-call' as const, callId: call.id ?? '', name: call.name, input: call.args }
+      )),
     ],
   };
 }
@@ -272,7 +237,12 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
         wire?.({
           type: 'wire-response',
           text: typeof total?.content === 'string' ? total.content : '',
-          toolCalls: (total?.tool_calls ?? []).map((call) => ({ callId: call.id ?? '', name: call.name, input: call.args })),
+          // The streamed text, not LangChain's completed `tool_calls`: a cut call shows what the model sent.
+          toolCalls: (total?.tool_call_chunks ?? []).map((call) => ({
+            callId: call.id ?? '',
+            name: call.name ?? '',
+            input: parseStreamedArguments(call.args),
+          })),
           finishReason: typeof total?.response_metadata?.finish_reason === 'string' ? total.response_metadata.finish_reason : undefined,
           usage,
         });
