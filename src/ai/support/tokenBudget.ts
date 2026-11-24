@@ -197,6 +197,26 @@ export function storedEvidenceKindBytes(budget: TurnTokenBudget): number {
  */
 export const DISCOVERY_WINDOW_SHARE = 0.125;
 
+/**
+ * One turn's budget for a model of `windowTokens`: the window rides the budget and the discovery
+ * token budget is the smaller of the setting and {@link DISCOVERY_WINDOW_SHARE} of the window.
+ * A non-positive window means unknown: no window cap.
+ */
+export function calibrateTurnBudget(
+  windowTokens: number,
+  settings: Omit<NonNullable<Parameters<typeof createTurnTokenBudget>[0]>, 'modelWindowTokens'> = {},
+): TurnTokenBudget {
+  const window = windowTokens > 0 ? windowTokens : Number.POSITIVE_INFINITY;
+  return createTurnTokenBudget({
+    ...settings,
+    modelWindowTokens: window,
+    discoveryTokenBudget: Math.min(
+      settings.discoveryTokenBudget ?? DEFAULT_DISCOVERY_TOKEN_BUDGET,
+      Math.floor(window * DISCOVERY_WINDOW_SHARE),
+    ),
+  });
+}
+
 /** What the admission check measures of one proposed scope. */
 export interface ProposedScope {
   /** Every node in the scope, tables included. */

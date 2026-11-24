@@ -7,6 +7,7 @@ import { getNonce } from './utils/getNonce';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
 import { postToWebview, summarizeZodError } from './bridge/host';
 import { createMessageHandlers, PROJECT_STORE_KEY, type ReportDocumentRef } from './bridge/messageHandlers';
+import type { ChatController } from './bridge/chatHandlers';
 import {
   MainPanelToExtensionMsgSchema,
   type MainPanelToExtensionMsg,
@@ -43,7 +44,8 @@ export function openPanel(
   saveProjectStore: (context: vscode.ExtensionContext, store: any) => Promise<void>,
   migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
   loadDemo = false,
-  replace = false
+  replace = false,
+  chat?: ChatController,
 ) {
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
 
@@ -54,7 +56,7 @@ export function openPanel(
         bridgeLogger.info('Reload requested — replacing the existing panel.');
         const disposed = new Promise<void>((resolve) => existing.onDidDispose(() => resolve()));
         existing.dispose();
-        void disposed.then(() => openPanel(context, title, getSession, outputChannel, loadProjectStore, saveProjectStore, migrateFromWorkspaceState));
+        void disposed.then(() => openPanel(context, title, getSession, outputChannel, loadProjectStore, saveProjectStore, migrateFromWorkspaceState, false, false, chat));
         return;
       }
       bridgeLogger.info('Open Wizard invoked with a panel open — asking the view to go back.');
@@ -92,8 +94,11 @@ export function openPanel(
   /** Disposables scoped to this panel instance, released when the panel closes. */
   const panelDisposables: vscode.Disposable[] = [];
 
+  const chatView = chat?.attachView({ post: (msg) => { void postToWebview(panel, msg, bridgeLogger); } });
+
   panel.onDidDispose(() => {
     bridgeLogger.info('Panel disposed');
+    chatView?.dispose();
     activePanel = undefined;
     activeTriggerDemo = undefined;
     detailPanel?.dispose();
@@ -120,7 +125,8 @@ export function openPanel(
     migrateFromWorkspaceState,
     loadDemo,
     (dp) => detailPanel = dp,
-    reportDocumentRef
+    reportDocumentRef,
+    chat,
   );
 
   activeTriggerDemo = triggerDemoLoad;

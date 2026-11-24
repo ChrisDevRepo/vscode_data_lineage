@@ -1,40 +1,15 @@
+import type { TurnEvent } from '../../engine/shared/chatContract';
+
+export type { TurnEvent };
+
 /** Non-terminal progress phases exposed to native chat surfaces. */
-export type TurnStatusPhase = 'thinking' | 'scoping' | 'tool' | 'synthesizing';
+export type TurnStatusPhase = Extract<TurnEvent, { type: 'status' }>['phase'];
 
 /** Terminal status of a graph-owned turn. */
-export type TurnResultStatus = 'ok' | 'error' | 'cancelled';
+export type TurnResultStatus = Extract<TurnEvent, { type: 'terminal' }>['status'];
 
-/** Provider-neutral payload for a native consent gate. */
-export interface NativeGateEvent {
-  /** Identifier the user's decision reply carries so the paused turn can be resumed. */
-  readonly gateId: string;
-  /** Engine consent gate that fired, as named by the engine's gate envelope. */
-  readonly gate: string;
-  /** One-line human-readable summary of what needs the user's approval. */
-  readonly summary: string;
-  /** Optional exposure classes from the gate payload; an approve decision echoes them back. */
-  readonly classes?: readonly string[];
-}
-
-/** Native, provider-neutral output events emitted by one graph-owned turn. */
-export type TurnEvent =
-  | {
-      readonly type: 'status';
-      readonly phase: TurnStatusPhase;
-      readonly label: string;
-    }
-  | { readonly type: 'text'; readonly delta: string }
-  | ({ readonly type: 'gate' } & NativeGateEvent)
-  | {
-      readonly type: 'error';
-      readonly message: string;
-      readonly recoverable?: boolean;
-    }
-  | {
-      readonly type: 'terminal';
-      readonly status: TurnResultStatus;
-      readonly error?: string;
-    };
+/** Provider-neutral payload for a native consent gate; `gateId` is what a user's decision carries. */
+export type NativeGateEvent = Omit<Extract<TurnEvent, { type: 'gate' }>, 'type'>;
 
 /** Callback that receives each accepted turn event. */
 export type TurnEventConsumer = (event: TurnEvent) => void;

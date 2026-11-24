@@ -10,6 +10,10 @@ export default tseslint.config(
       'out/**',
       'test-results/**',
       '.vscode-test/**',
+      // Registry source kept as shipped (src/components/chat/vendor/SOURCE.md); its comments name rules this repo does not load.
+      'src/components/chat/vendor/**/*.{ts,tsx}',
+      // ...except the one file we own.
+      '!src/components/chat/vendor/components/assistant-ui/elements/markdown-text.tsx',
     ],
   },
   {

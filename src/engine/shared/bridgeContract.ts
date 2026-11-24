@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ChatToExtensionMsgSchemas, ChatToWebviewMsgSchemas } from './chatContract';
 import { ExplorationDepthSelectionSchema } from './explorationDepthContract';
 import { OBJECT_TYPES, type ExtensionConfig, type SchemaPreview, type TraceAffordanceSnapshot } from '../types';
 
@@ -762,6 +763,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request-back') }),
   z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
   z.object({ type: z.literal('ai-view-clear') }),
+  ...ChatToWebviewMsgSchemas,
 ]);
 
 export type ExtensionToWebviewMsg = z.infer<typeof ExtensionToWebviewMsgSchema>;
@@ -821,6 +823,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   WebviewErrorMessageSchema,
   WebviewWarningMessageSchema,
   z.object({ type: z.literal('view-render-result'), rendered: z.number(), of: z.number(), unresolved: z.array(z.string()) }),
+  ...ChatToExtensionMsgSchemas,
 ]);
 
 /** Messages sent from the main lineage-graph webview to the extension host. */

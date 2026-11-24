@@ -45,8 +45,8 @@ export default defineConfig({
   resolve: {
     // Prefer TypeScript source when generated JavaScript artifacts are present locally.
     extensions: ['.ts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
-    alias: {
-      '@': resolve(__dirname, 'src'),
-    },
+    // `@/` is the shadcn alias the vendored chat registry files use (`components.json`); `tsconfig.json`
+    // `paths` maps it to the vendor directory only, so it cannot collide with `src/components/ui`.
+    tsconfigPaths: true,
   },
 });

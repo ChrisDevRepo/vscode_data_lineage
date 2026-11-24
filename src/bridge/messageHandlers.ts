@@ -59,6 +59,8 @@ import {
 import { summarizeZodError, postToDetail } from './host';
 import { readDeclaredNumericSetting } from '../configCore';
 import { quoteIdentifier } from '../utils/sql';
+import type { ChatToExtensionMsg } from '../engine/shared/chatContract';
+import type { ChatController } from './chatHandlers';
 
 /**
  * Handler per main-panel message type, with `msg` narrowed to the matching
@@ -234,7 +236,8 @@ export function createMessageHandlers(
   migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
   loadDemoFlag: boolean,
   setDetailPanel: (panel: vscode.WebviewPanel | undefined) => void,
-  reportDocumentRef: ReportDocumentRef = {}
+  reportDocumentRef: ReportDocumentRef = {},
+  chat?: ChatController,
 ): MessageHandlerBundle {
 
   type DacpacPreview = Awaited<ReturnType<typeof extractSchemaPreview>>;
@@ -454,6 +457,11 @@ export function createMessageHandlers(
     (model: DatabaseModel): void => { if (!token.isCancellationRequested) fn(model); };
 
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
+  /** A chat frame reaches the controller; without one (AI disabled) it is logged and dropped. */
+  const chatFrame = (msg: ChatToExtensionMsg): Promise<void> | void => {
+    if (chat) return chat.receive(msg);
+    bridgeLogger.warn(`Chat frame "${msg.type}" rejected — the AI assistant is not running`);
+  };
   const handlers: WebviewMessageHandlers = {
     'ready': async () => {
       host.log('info', 'Bridge', 'Webview ready');
@@ -986,6 +994,13 @@ export function createMessageHandlers(
         logger.debug(`AI view unresolved ids: ${trunc(msg.unresolved.join(', '), 200)}`);
       }
     },
+    'chat.send': chatFrame,
+    'chat.cancel': chatFrame,
+    'chat.gate': chatFrame,
+    'chat.newChat': chatFrame,
+    'chat.selectModel': chatFrame,
+    'chat.selectEffort': chatFrame,
+    'chat.ready': chatFrame,
   };
 
   return {

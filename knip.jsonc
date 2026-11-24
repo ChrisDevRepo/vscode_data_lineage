@@ -23,8 +23,6 @@
     "tests/harness/vscodeHostShim.ts",
     // Imported by external consumers (@ext alias / createRequire), which knip cannot trace.
     "tests/harness/scriptedModelPort.ts",
-    // The model-port factory: its callers are outside the extension bundle.
-    "src/ai/providers/modelPortFactory.ts",
     // Comment-batch proof tool invoked by CI, not the public gate.
     "tests/tools/assert-comment-only.mjs",
   ],
@@ -34,6 +32,8 @@
     "scripts/*.mjs",
     "*.{ts,mjs}",
   ],
+  // Registry source kept as shipped: its unused exports are upstream's, not ours (see vendor/SOURCE.md).
+  "ignore": ["src/components/chat/vendor/**", "!src/components/chat/vendor/components/assistant-ui/elements/markdown-text.tsx"],
   // Exports tagged @internal are test seams, not product API.
   "tags": ["-internal"],
   // VS Code supplies this module; @types/vscode provides the build-time API.

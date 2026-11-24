@@ -5,9 +5,9 @@ import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { AI_SECTION_ID_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
-import { FOCUS_NODE_HREF_PREFIX } from '../engine/shared/bridgeContract';
+import { useMarkdownLinks } from './markdown/useMarkdownLinks';
+import { useSqlColorizing } from './markdown/useSqlColorizing';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
-import { errorMessage } from '../utils/errorMessage';
 
 /** Which edge of the canvas the report column is docked against. */
 export type AiDockPosition = 'right' | 'left' | 'bottom';
@@ -152,40 +152,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     onFocusSection?.(sections[nextIdx].n);
   }
 
-  function focusNodeFromHref(href: string): (() => void) | null {
-    if (!href.startsWith(FOCUS_NODE_HREF_PREFIX) || !onFocusNode) return null;
-    const encoded = href.slice(FOCUS_NODE_HREF_PREFIX.length);
-    let nodeId = encoded;
-    try {
-      nodeId = decodeURIComponent(encoded);
-    } catch (err) {
-      vscodeApi.postMessage({ type: 'log', level: 'debug', text: `[AI] focus link decode failed: ${encoded} (${errorMessage(err)})` });
-    }
-    return () => onFocusNode(nodeId);
-  }
-
-  function activateMarkdownLink(e: React.SyntheticEvent<HTMLDivElement>): void {
-    const anchor = (e.target as HTMLElement | null)?.closest('a');
-    const href = anchor?.getAttribute('href');
-    if (!href) return;
-    e.preventDefault();
-    const focus = focusNodeFromHref(href);
-    if (focus) {
-      focus();
-      return;
-    }
-    if (/^https?:\/\//i.test(href)) {
-      vscodeApi.postMessage({ type: 'open-external', url: href });
-    }
-  }
-
-  function handleMarkdownClick(e: React.MouseEvent<HTMLDivElement>) {
-    activateMarkdownLink(e);
-  }
-
-  function handleMarkdownKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.key === ' ') activateMarkdownLink(e);
-  }
+  const markdownLinks = useMarkdownLinks(onFocusNode);
 
   function handleCollapse() {
     setMaximized(false);
@@ -202,21 +169,8 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
 
   const html = useMemo(() => renderAiMarkdown(description), [description]);
   const mdRef = useRef<HTMLDivElement | null>(null);
-  // SQL blocks are colored by the Monaco tokenizer already bundled for the detail view, loaded only when a block exists.
-  // The body mounts only while expanded, so expanding re-runs this for the new body.
-  useEffect(() => {
-    const root = mdRef.current;
-    if (!root?.querySelector('code[data-lang="sql"]')) return;
-    let observer: MutationObserver | undefined;
-    let disposed = false;
-    void import('./markdown/colorizeSql').then(({ colorizeSqlBlocks, applySqlTheme }) => {
-      if (disposed) return;
-      void colorizeSqlBlocks(root);
-      observer = new MutationObserver(applySqlTheme);
-      observer.observe(document.body, { attributes: true, attributeFilter: ['data-vscode-theme-kind'] });
-    });
-    return () => { disposed = true; observer?.disconnect(); };
-  }, [html, expanded]);
+  // The body mounts only while expanded, so expanding re-runs the colorizing for the new body.
+  useSqlColorizing(mdRef, html, expanded);
   const railName = viewName || 'AI Report';
   const overlayClassName = [
     'ln-ai-description-overlay',
@@ -377,8 +331,8 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
           <div
             ref={mdRef}
             className="ln-ai-description-md"
-            onClick={handleMarkdownClick}
-            onKeyDown={handleMarkdownKeyDown}
+            onClick={markdownLinks.onClick}
+            onKeyDown={markdownLinks.onKeyDown}
             dangerouslySetInnerHTML={{ __html: html }}
           />
         </div>

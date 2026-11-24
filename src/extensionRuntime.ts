@@ -3,6 +3,7 @@ import * as path from 'path';
 import { getSession } from './ai/session/session';
 import { registerCommands } from './commands';
 import { openPanel, getActivePanel, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
+import { ChatController } from './bridge/chatHandlers';
 import { postToWebview } from './bridge/host';
 import { Logger, OUTPUT_CHANNEL_NAME, OUTPUT_POINTER } from './utils/log';
 import { clearOnceToasts, notifyErrorOnce, notifyWarning, notifyWarningOnce } from './utils/notifications';
@@ -15,7 +16,7 @@ import { LineageRuntime } from './ai/runtime/lineageRuntime';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules } from './engine/sqlBodyParser';
-import { DEFAULT_AI_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
+import { DEFAULT_AI_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, readDeclaredNumericSetting, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import { buildExtensionConfig } from './bridge/messageHandlers';
 
@@ -78,36 +79,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     },
   });
 
-  context.subscriptions.push(...registerCommands(
-    context,
-    getSession,
-    outputChannel,
-    (ctx, title, demo, replace) => {
-      Logger.create(outputChannel, 'Bridge').debug(`Command executed: openPanel (demo=${demo})`);
-      return openPanel(
-        ctx,
-        title,
-        getSession,
-        outputChannel,
-        loadStore,
-        saveStore,
-        async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel, reportDroppedProjects); },
-        demo,
-        replace
-      );
-    },
-    (ctx) => buildDebugDump(ctx, getSession),
-    traceWriter,
-  ));
-
-  const templateSet = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
-    logger.warn('AI output templates failed to load — using empty defaults');
-    logger.debug(`AI output templates failed to load — ${err instanceof Error ? err.message : String(err)}`);
-    return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
-  });
-  getSession().outputTemplates = templateSet.templates;
-  getSession().outputSections = templateSet.sections;
-
   const aiEnabled = vscode.workspace
     .getConfiguration('dataLineageViz.ai')
     .get<boolean>('enabled', DEFAULT_AI_ENABLED);
@@ -118,14 +89,8 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     analysisSettings: () => buildExtensionConfig(vscode.workspace.getConfiguration('dataLineageViz')).analysis,
   };
 
-  // The MCP server follows `mcp.enabled` alone, not `ai.enabled`.
-  if (typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function') {
-    registerMcp(context, { getSession, outputChannel, getPanel: getActivePanel, host: aiToolHost });
-  } else {
-    logger.info('MCP server unavailable — this editor does not provide vscode.lm MCP server definitions.');
-  }
-
   let lineageRuntime: LineageRuntime | undefined;
+  let chat: ChatController | undefined;
 
   try {
     if (aiEnabled) {
@@ -141,6 +106,29 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
           if (panel) void postToWebview(panel, { type: 'ai-view-clear' }, aiLogger);
         },
       });
+      const controller = new ChatController({
+        runtime: lineageRuntime,
+        getSession,
+        modelSources: () => {
+          const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
+          return { models: cfg.get('models'), defaultModel: cfg.get<string>('defaultModel'), secrets: context.secrets };
+        },
+        turnSettings: () => {
+          const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+          return {
+            discoveryNodeCap: readDeclaredNumericSetting(cfg, 'ai.discoveryNodeCap'),
+            discoveryTokenBudget: readDeclaredNumericSetting(cfg, 'ai.discoveryTokenBudget'),
+            maxRounds: readDeclaredNumericSetting(cfg, 'ai.maxRounds'),
+            maxTraceColumns: readDeclaredNumericSetting(cfg, 'ai.maxTraceColumns'),
+          };
+        },
+        logger: aiLogger,
+        showErrorMessage: (message) => vscode.window.showErrorMessage(message),
+        showWarningMessage: (message) => vscode.window.showWarningMessage(message),
+        traceWriter,
+      });
+      chat = controller;
+      context.subscriptions.push({ dispose: () => controller.dispose() });
     } else {
       logger.info('AI surface disabled — dataLineageViz.ai.enabled is false; the AI runtime was not loaded.');
     }
@@ -154,6 +142,44 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       + 'Lineage visualisation, parsing and the graph are unaffected.',
       { aiEnabled: String(aiEnabled) },
     );
+  }
+
+  context.subscriptions.push(...registerCommands(
+    context,
+    getSession,
+    outputChannel,
+    (ctx, title, demo, replace) => {
+      Logger.create(outputChannel, 'Bridge').debug(`Command executed: openPanel (demo=${demo})`);
+      return openPanel(
+        ctx,
+        title,
+        getSession,
+        outputChannel,
+        loadStore,
+        saveStore,
+        async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel, reportDroppedProjects); },
+        demo,
+        replace,
+        chat,
+      );
+    },
+    (ctx) => buildDebugDump(ctx, getSession),
+    traceWriter,
+  ));
+
+  const templateSet = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
+    logger.warn('AI output templates failed to load — using empty defaults');
+    logger.debug(`AI output templates failed to load — ${err instanceof Error ? err.message : String(err)}`);
+    return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
+  });
+  getSession().outputTemplates = templateSet.templates;
+  getSession().outputSections = templateSet.sections;
+
+  // The MCP server follows `mcp.enabled` alone, not `ai.enabled`.
+  if (typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function') {
+    registerMcp(context, { getSession, outputChannel, getPanel: getActivePanel, host: aiToolHost });
+  } else {
+    logger.info('MCP server unavailable — this editor does not provide vscode.lm MCP server definitions.');
   }
 
   const configLogger = Logger.create(outputChannel, 'Config');
@@ -193,6 +219,10 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         if (pick === 'Reload Window') {
           void vscode.commands.executeCommand('workbench.action.reloadWindow');
         }
+      }
+
+      if (e.affectsConfiguration('dataLineageViz.ai.models') || e.affectsConfiguration('dataLineageViz.ai.defaultModel')) {
+        chat?.refresh();
       }
 
       if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {

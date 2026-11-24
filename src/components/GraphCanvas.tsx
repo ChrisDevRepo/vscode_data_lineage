@@ -44,6 +44,7 @@ import { AnalysisSidebar } from './AnalysisSidebar';
 import { AiViewBanner } from './AiViewBanner';
 import { BookmarkBanner } from './BookmarkBanner';
 import { BookmarkInfoCard } from './BookmarkInfoCard';
+import { ChatDock } from './ChatDock';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
@@ -1937,6 +1938,7 @@ export function GraphCanvas({
   }, [renderStateMessage, vscodeApi]);
 
   return (
+    <ChatDock>
     <div className="flex flex-col h-screen">
       <Toolbar
         types={filter.types}
@@ -2320,5 +2322,6 @@ export function GraphCanvas({
         />
       )}
     </div>
+    </ChatDock>
   );
 }

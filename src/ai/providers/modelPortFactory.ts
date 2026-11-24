@@ -7,6 +7,7 @@ import { ModelPortError } from '../model/modelPort';
 import type { ProviderModelPort, ProviderModelPortOptions } from '../model/providerModelPort';
 import { apiKeySecretName, parseModelEntries } from './modelEntries';
 import { createProviderModelPort } from './openAiTransport';
+import { NO_MODEL_MESSAGE } from '../../engine/shared/chatContract';
 
 /** Where the entry list, the default entry and the keys live; the VS Code API fits it. */
 export interface ModelPortSources {
@@ -35,7 +36,7 @@ export async function createConfiguredModelPort(
     const named = invalid.find((candidate) => candidate.name === entryId);
     throw new ModelPortError('invalid_request', named
       ? `Model entry "${named.name}" is invalid in ai.models.`
-      : 'No model entry is selected; add one to ai.models and set ai.defaultModel.');
+      : NO_MODEL_MESSAGE);
   }
   const apiKey = (await sources.secrets.get(apiKeySecretName(entry.id)))?.trim();
   if (!apiKey) {

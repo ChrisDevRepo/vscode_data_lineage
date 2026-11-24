@@ -16,7 +16,8 @@
     "sourceMap": true,
     "outDir": "./out",
     "rootDir": "./src",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": { "@/*": ["./src/components/chat/vendor/*"] }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "out", "dist"]

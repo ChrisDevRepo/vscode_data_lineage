@@ -4,6 +4,7 @@
 @layer theme, base, xyflow, components, utilities;
 
 @import 'tailwindcss';
+@import 'tw-animate-css';
 @import '@xyflow/react/style.css';
 
 /* Implicit borders use the neutral theme token instead of inheriting text color. */
@@ -299,6 +300,46 @@ body[data-vscode-theme-kind="vscode-light"] {
 
 /* #endregion */
 
+/* #region Chat (assistant-ui) theme */
+
+/* The shipped chat components (src/components/chat/vendor) use shadcn's colour names. They exist
+   nowhere else in the app, so one global @theme maps each to a --ln-* token, which follows the VS Code
+   theme. Utilities of this block therefore look the same in every view. */
+@theme {
+  --color-background: var(--ln-bg);
+  --color-foreground: var(--ln-fg);
+  --color-muted: var(--ln-bg-secondary);
+  --color-muted-foreground: var(--ln-fg-muted);
+  --color-accent: var(--ln-hover-bg);
+  --color-accent-foreground: var(--ln-fg);
+  --color-primary: var(--ln-button-bg);
+  --color-primary-foreground: var(--ln-button-fg);
+  --color-secondary: var(--ln-button-secondary-bg);
+  --color-secondary-foreground: var(--ln-button-secondary-fg);
+  --color-destructive: var(--ln-error-fg);
+  --color-border: var(--ln-border);
+  --color-input: var(--ln-input-border);
+  --color-ring: var(--ln-focus-border);
+  --color-popover: var(--ln-widget-bg);
+  --color-popover-foreground: var(--ln-fg);
+
+  @keyframes collapsible-down {
+    from { height: 0; }
+    to { height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto)); }
+  }
+  @keyframes collapsible-up {
+    from { height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto)); }
+    to { height: 0; }
+  }
+}
+
+/* Variants the chat components declare; no graph component uses `dark:` or `data-open`. `dark:` follows the VS Code theme kind, not the OS. */
+@custom-variant dark (&:is(body[data-vscode-theme-kind="vscode-dark"] *, body[data-vscode-theme-kind="vscode-high-contrast"] *));
+@custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
+@custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
+
+/* #endregion */
+
 /* #region Global Resets */
 
 * {
@@ -419,6 +460,96 @@ body.vscode-reduce-motion *::after {
 /* Override dimmed node opacity on hover so node content is readable */
 .ln-node-card:hover {
   opacity: 1 !important;
+}
+
+/* #endregion */
+
+/* #region Chat dock */
+
+/* Tailwind's own palette and fonts are used by the graph too (`font-mono`, `shadow-lg`, ...), so they
+   are redefined only inside the chat pane: the same utility resolves to a --ln-* token or a VS Code
+   font there and stays Tailwind's everywhere else. white and black are the on-scrim pair (inverse of
+   the theme), blue the live indicator, amber and red the warning and error tints. Radix renders the
+   popover, tooltip and dialog into `document.body`, outside the pane, so the shipped components'
+   `data-slot` hooks carry the same remap. */
+.ln-chat-dock-pane,
+[data-slot="popover-content"], [data-slot="tooltip-content"], [data-slot="dialog-overlay"], [data-slot="dialog-content"] {
+  --font-sans: var(--vscode-font-family);
+  --font-mono: var(--vscode-editor-font-family);
+  --color-white: var(--ln-bg);
+  --color-black: var(--ln-fg);
+  --color-blue-400: var(--ln-text-link);
+  --color-blue-500: var(--ln-text-link);
+  --color-amber-200: var(--ln-warning-fg);
+  --color-amber-400: var(--ln-warning-border);
+  --color-amber-500: var(--ln-warning-border);
+  --color-amber-800: var(--ln-warning-fg);
+  --color-red-200: var(--ln-error-fg);
+}
+/* Shadow utilities fall back to `var(--tw-shadow-color, <black literal>)`, and Tailwind registers
+   `--tw-shadow-color` as non-inherited, so it is set on each element, in the base layer so an explicit
+   `shadow-<color>` utility still wins. */
+@layer base {
+  .ln-chat-dock-pane *,
+  [data-slot="popover-content"], [data-slot="popover-content"] *, [data-slot="tooltip-content"], [data-slot="tooltip-content"] *, [data-slot="dialog-overlay"], [data-slot="dialog-overlay"] *, [data-slot="dialog-content"], [data-slot="dialog-content"] * {
+    --tw-shadow-color: color-mix(in srgb, var(--ln-fg) 20%, transparent);
+  }
+}
+
+/* The graph with the chat pane docked on its right edge. The host pads itself by the pane's width,
+   so the canvas shrinks beside the pane. `resize: horizontal` on a right-anchored pane is the AI
+   report column's pattern. */
+.ln-chat-dock-host {
+  position: relative;
+  height: 100vh;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.ln-chat-dock-pane {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  min-width: 280px;
+  max-width: 75vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--ln-bg);
+  border-left: 1px solid var(--ln-border);
+  z-index: 20;
+  resize: horizontal;
+  overflow: hidden;
+}
+.ln-chat-dock-close {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 21;
+  padding: 4px 8px;
+  color: var(--ln-fg-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.ln-chat-dock-close:hover {
+  color: var(--ln-fg);
+}
+.ln-chat-dock-rail {
+  position: absolute;
+  top: 96px;
+  right: 0;
+  z-index: 20;
+  writing-mode: vertical-rl;
+  padding: 14px 5px;
+  border: 1px solid var(--ln-border-light);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--ln-widget-bg);
+  color: var(--ln-fg);
+  cursor: pointer;
+}
+.ln-chat-dock-rail:hover {
+  background: var(--ln-hover-bg);
 }
 
 /* #endregion */

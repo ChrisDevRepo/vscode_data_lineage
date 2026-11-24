@@ -10,7 +10,8 @@ const vscodeAzureAuthStub = fileURLToPath(new URL('./tests/stubs/vscodeAzureAuth
 
 export default defineConfig({
   plugins: [react()],
-  resolve: { alias: { vscode: vscodeStub, '@microsoft/vscode-azext-azureauth': vscodeAzureAuthStub } },
+  // `tsconfigPaths` resolves the vendored chat sources' `@/` imports exactly as the Vite build does.
+  resolve: { alias: { vscode: vscodeStub, '@microsoft/vscode-azext-azureauth': vscodeAzureAuthStub }, tsconfigPaths: true },
   define: {
     __APP_VERSION__: JSON.stringify('test'),
   },

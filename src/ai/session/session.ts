@@ -692,6 +692,11 @@ export class AiSession {
       : transcript;
   }
 
+  /** The retained user/assistant exchanges as display text, oldest first; no evidence projection. */
+  public getDiscoveryTranscript(): Array<{ role: 'user' | 'assistant'; text: string }> {
+    return this.discoveryTranscript.flatMap((turn) => turn.map(({ role, content }) => ({ role, text: content })));
+  }
+
   /**
    * Clears cross-turn discovery memory: on model/project (re)load, on a new native chat, and after
    * every turn that supplied native history (which then owns cross-turn conversation). Never on SM
