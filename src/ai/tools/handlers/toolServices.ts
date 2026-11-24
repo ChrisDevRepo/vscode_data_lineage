@@ -43,10 +43,10 @@ export interface ToolServices {
   /**
    * Token budget of the turn that owns this registry, fixed when the lease-bound registry was built
    * so a superseded turn's still-running dispatch keeps measuring against the caps its own model
-   * was admitted under. The MCP server, serving callers outside any turn,
-   * carries the shipped defaults.
+   * was admitted under. The MCP server, serving callers outside any turn, passes `null`: no
+   * discovery or admission limit applies to its calls.
    */
-  readonly budget: TurnTokenBudget;
+  readonly budget: TurnTokenBudget | null;
   /** Current turn epoch; the turn lease beats the session field, so stale writes are rejectable. */
   turnEpoch(sess: AiSession): number;
   /** Returns the loaded database model, or throws the standard no-model error. */

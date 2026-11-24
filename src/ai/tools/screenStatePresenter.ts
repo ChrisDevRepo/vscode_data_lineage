@@ -48,8 +48,8 @@ export interface RunRecallInput {
   readonly getStoredRun?: StoredRunReader;
   /** The session's completed run, recalled when no AI bookmark is applied. */
   readonly liveRun?: StoredAiRun;
-  /** The calling turn's budget, which the recall payload is measured against. */
-  readonly budget: TurnTokenBudget;
+  /** The calling turn's budget, which the recall payload is measured against; `null`, no limit. */
+  readonly budget: TurnTokenBudget | null;
   /** Canonical object ids to recall; mutually exclusive with {@link RunRecallInput.filter}. */
   readonly ids?: readonly string[];
   /** One class of the stored run to list; mutually exclusive with {@link RunRecallInput.ids}. */

@@ -12,7 +12,7 @@ import { Logger, trunc, sanitizeForLog, LOG_TRUNC_JSON, LOG_TRUNC_REJECTION, typ
 import {
   getContext, searchObjects, getObjectDetail,
   runAnalysis, searchDdl, getScopeBundle,
-  getNeighborColumns,
+  getNeighborColumns, getTrace, getPath, getGraphPreviewScope,
 } from '../tools/tools';
 import {
   parseToolInput,
@@ -24,6 +24,9 @@ import {
   SearchDdlInputSchema,
   GetContextInputSchema,
   GetScreenStateInputSchema,
+  GetTraceInputSchema,
+  GetPathInputSchema,
+  CreateGraphPreviewInputSchema,
 } from '../tools/toolSchemas';
 import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/types';
 import { type SerializedFilterState } from '../../engine/projectStore';
@@ -34,7 +37,7 @@ import { TOOL_DEFS, type ToolName } from '../tools/toolDefs';
 import { readToolError, isConsentGateRejection, makeRejection, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
-import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
+import { type TurnTokenBudget } from '../support/tokenBudget';
 import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { postToWebview, type WebviewPostTarget } from '../../bridge/host';
@@ -45,6 +48,7 @@ import type { PreviewDelivery } from '../support/chatAnswer';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
+import { buildPreviewMetadata, orderAndAssemble } from './presentResult';
 import type { ModelPort } from '../model/modelPort';
 import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -104,22 +108,6 @@ export function classifyRejectionCode(code: string): RejectionChatGroup {
 }
 
 /**
- * Reveals the result panel and posts one preview, naming the outcome: `no_panel`, `delivered`, or
- * `post_failed` (the validated send was dropped or refused). A transport throw propagates. A schema
- * drop is only a log line here; the AI host's failed-render notice is the one user-visible
- * notice.
- */
-export async function deliverToPanel(
-  panel: ResultPanel | undefined,
-  message: AiViewPreviewMessage,
-  logger: Logger,
-): Promise<PreviewDelivery> {
-  if (!panel) return 'no_panel';
-  panel.reveal();
-  return (await postToWebview(panel, message, logger, false)) ? 'delivered' : 'post_failed';
-}
-
-/**
  * Private handler for AI tool execution. Owns the shared VS Code host services and thin read-tool
  * handlers; mutating tool behavior goes through the {@link ToolServices} seam.
  */
@@ -131,11 +119,12 @@ class ToolHandler implements ToolServices {
     outputChannel: LogChannel,
     private readonly getPanel: () => ResultPanel | undefined,
     private readonly analysisSettings: () => AnalysisSettings,
-    private readonly turnLease?: TurnLease,
-    public readonly getStoredRun?: StoredRunReader,
-    public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>,
-    public readonly signal?: AbortSignal,
-    public readonly budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
+    private readonly turnLease: TurnLease | undefined,
+    public readonly getStoredRun: StoredRunReader | undefined,
+    public readonly textModel: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'> | undefined,
+    public readonly signal: AbortSignal | undefined,
+    public readonly budget: TurnTokenBudget | null,
+    private readonly served: ReadonlySet<string> | undefined,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
   }
@@ -144,8 +133,17 @@ class ToolHandler implements ToolServices {
     return this.turnLease?.epoch ?? sess.turnEpoch;
   }
 
-  public deliverPreview(message: AiViewPreviewMessage): Promise<PreviewDelivery> {
-    return deliverToPanel(this.getPanel(), message, this.logger);
+  /**
+   * Reveals the result panel and posts one preview, naming the outcome: `no_panel`, `delivered`, or
+   * `post_failed` (the validated send was dropped or refused). A transport throw propagates. A
+   * schema drop is only a log line here; the AI host's failed-render notice is the one
+   * user-visible notice.
+   */
+  public async deliverPreview(message: AiViewPreviewMessage): Promise<PreviewDelivery> {
+    const panel = this.getPanel();
+    if (!panel) return 'no_panel';
+    panel.reveal();
+    return (await postToWebview(panel, message, this.logger, false)) ? 'delivered' : 'post_failed';
   }
 
   public requireModel(): DatabaseModel {
@@ -172,7 +170,8 @@ class ToolHandler implements ToolServices {
       this.logger.debug(`Invoking ${toolName} — input: ${inputJson}`);
     }
 
-    sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
+    // The hop log is the chat turn's record; a call outside a turn (MCP) leaves the session as it was.
+    if (this.turnLease) sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     const rejection = readToolError(data);
     if (rejection) {
       const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), LOG_TRUNC_REJECTION)}` : '';
@@ -227,19 +226,21 @@ class ToolHandler implements ToolServices {
 
   /**
    * Mechanical phase guard: enforces the per-phase tool policy at the shared registry boundary, not
-   * just at the LM `tools[]` parameter. Both dispatch paths (the native full catalog and the
-   * read-only MCP subset) land here, so the current phase stays authoritative even for
-   * externally addressable reads.
+   * just at the LM `tools[]` parameter. A caller outside the chat turn (the MCP server) names the
+   * tools it serves, so the chat's phase never gates its calls.
    *
    * @returns Provider-neutral JSON text carrying an `off_policy` error when the tool is not allowed
    *   in the current phase, else `null`.
    */
   public authorizeTool(toolName: ToolName, input: unknown): string | null {
-    const sess = this.getSession();
-    const stage = this.deriveLmStage(sess);
-    const allowed = getAllowedLmToolNames(stage);
-    const violation = evaluateToolPhaseRule(toolName, stage, allowed);
+    const stage = this.deriveLmStage(this.getSession());
+    const violation = evaluateToolPhaseRule(toolName, stage, this.offeredTools());
     return violation ? this.logAndReturn(toolName, violation, input) : null;
+  }
+
+  /** The tools a result's hints may name: the caller's served set, else the chat stage's. */
+  private offeredTools(): ReadonlySet<string> {
+    return this.served ?? getAllowedLmToolNames(this.deriveLmStage(this.getSession()));
   }
 
   /** Derives the {@link LmStage} from the session's current phase + engine state. */
@@ -311,12 +312,57 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchObjectsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_objects', parsed.error, input);
       const { query, types, schemas, mode, cursor } = parsed.data;
-      return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), getAllowedLmToolNames(this.deriveLmStage(this.getSession())), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor, this.signal), input);
+      return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), this.offeredTools(), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor, this.signal), input);
     } catch (err) {
       if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
       if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
       return this.toolError('search_objects', err);
     }
+  }
+
+  public getTrace(input: unknown) {
+    try {
+      const parsed = parseToolInput(GetTraceInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_get_trace', parsed.error, input);
+      return this.logAndReturn('lineage_get_trace', getTrace(this.requireModel(), this.getSession().filter, parsed.data), input);
+    } catch (err) { return this.toolError('get_trace', err); }
+  }
+
+  public getPath(input: unknown) {
+    try {
+      const parsed = parseToolInput(GetPathInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_get_path', parsed.error, input);
+      return this.logAndReturn('lineage_get_path', getPath(this.requireModel(), this.getSession().filter, parsed.data), input);
+    } catch (err) { return this.toolError('get_path', err); }
+  }
+
+  /** Shows the validated scope as the AI graph preview in the graph view. */
+  public async createGraphPreview(input: unknown) {
+    try {
+      const parsed = parseToolInput(CreateGraphPreviewInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_create_graph_preview', parsed.error, input);
+      const model = this.requireModel();
+      const scope = getGraphPreviewScope(model, this.getSession().filter, parsed.data);
+      if (!('nodeIds' in scope)) return this.logAndReturn('lineage_create_graph_preview', scope, input);
+      const { name, summary, layout_direction } = parsed.data;
+      const { highlight_groups, sections, notes } = scope.view;
+      const { badges, description } = orderAndAssemble(sections, { nodeMap: getModelNodeMap(model) });
+      const delivery = await this.deliverPreview({
+        type: 'ai-view-preview',
+        name,
+        nodeIds: scope.nodeIds,
+        aiMetadata: buildPreviewMetadata(
+          { summary, description, layout_direction, highlight_groups, badges, notes: notes.map(n => ({ nodeId: n.node_id, text: n.caption })) },
+          { modelName: 'MCP client' },
+        ),
+      });
+      if (delivery === 'no_panel') throw new NoProjectLoadedError();
+      if (delivery === 'post_failed') {
+        this.logger.warn('AI preview post failed');
+        return this.logAndReturn('lineage_create_graph_preview', makeRejection({ code: REJECTION_CODES.toolExecutionError, reason: 'The graph view refused the preview.' }), input);
+      }
+      return this.logAndReturn('lineage_create_graph_preview', { name, nodes: scope.nodes, edges: scope.edges }, input);
+    } catch (err) { return this.toolError('create_graph_preview', err); }
   }
 
   public getScopeBundle(input: unknown) {
@@ -395,7 +441,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchDdlInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_ddl', parsed.error, input);
       const { query, types } = parsed.data;
-      return this.logAndReturn('lineage_search_ddl', await searchDdl(this.requireModel(), getAllowedLmToolNames(this.deriveLmStage(this.getSession())), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg), this.signal), input);
+      return this.logAndReturn('lineage_search_ddl', await searchDdl(this.requireModel(), this.offeredTools(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg), this.signal), input);
     } catch (err) {
       if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
       if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
@@ -456,7 +502,7 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
 /**
  * Builds the shared lineage {@link ToolRegistry}, the single authoritative dispatch surface
  * (`invoke`) for names, handlers, ordering, authorization and labels. The native runtime calls this
- * directly; the MCP server serves its read-only subset ({@link MCP_TOOL_NAMES}).
+ * directly; the MCP server serves the titled entries ({@link MCP_TOOL_DEFS}).
  *
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
@@ -464,16 +510,17 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
  *   `getStoredRun` resolves the AI run behind an applied bookmark,
  *   `model`/`signal` supply the text completion `start_exploration` uses for the discovery-handoff
  *   memo on the approval card, and `budget` carries the owning turn's caps so a superseded turn's
- *   dispatch keeps measuring against its own model.
+ *   dispatch keeps measuring against its own model (`null`: no limit, the MCP server's); `served` names the tools of a caller outside
+ *   the chat turn (the MCP server), which replaces the chat stage's policy and hints.
  */
 export function buildAiToolRegistry(
   getSession: () => AiSession,
   outputChannel: LogChannel,
   getPanel: () => ResultPanel | undefined,
   turnLease: TurnLease | undefined,
-  host: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget?: TurnTokenBudget; analysisSettings: () => AnalysisSettings },
+  host: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget: TurnTokenBudget | null; served?: ReadonlySet<string>; analysisSettings: () => AnalysisSettings },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, turnLease, host.getStoredRun, host.model, host.signal ?? turnLease?.signal, host.budget);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, turnLease, host.getStoredRun, host.model, host.signal ?? turnLease?.signal, host.budget, host.served);
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
@@ -487,6 +534,9 @@ export function buildAiToolRegistry(
     lineage_detect_graph_patterns: (input) => handler.runAnalysis(input),
     lineage_search_ddl: (input) => handler.searchDdl(input),
     lineage_get_neighbor_columns: (input) => handler.getNeighborColumns(input),
+    lineage_get_trace: (input) => handler.getTrace(input),
+    lineage_get_path: (input) => handler.getPath(input),
+    lineage_create_graph_preview: (input) => handler.createGraphPreview(input),
   } satisfies Record<ToolName, ToolExecutor>;
 
   const registry = new ToolRegistry<LineageToolOutput>();
@@ -520,16 +570,3 @@ export function buildAiToolRegistry(
   }
   return registry;
 }
-
-/**
- * The tools the local MCP server serves: the read-only catalog. An MCP client has no AI
- * turn behind it; reads are safe there, but every other effect class commits session lifecycle
- * state only the owning turn may advance, and exposing them would let a third party drive the
- * state machine. `lineage_get_neighbor_columns` is the one read left out: it answers only inside
- * an active hop phase.
- */
-export const MCP_TOOL_NAMES: ReadonlySet<string> = new Set(
-  TOOL_DEFS
-    .filter(def => def.effect === 'read' && def.name !== 'lineage_get_neighbor_columns')
-    .map(def => def.name),
-);
