@@ -8,6 +8,7 @@ import {
   numericStringDepth,
 } from '../../engine/shared/explorationDepthContract';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { DEFAULT_DISCOVERY_NODE_CAP } from '../support/tokenBudget';
 import { jsonPointer, rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, sectionField, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
@@ -1057,6 +1058,34 @@ function overLength(limit: number) {
       `${jsonPointer(issue.path ?? [])} is over its length limit: ${String(issue.input).length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`,
   };
 }
+
+const IncludeDmlSchema = z.boolean().describe('false drops the write, delete and exec edges before the walk; true walks every edge, as the graph view does.');
+
+/** `lineage_get_trace` input (MCP only): the graph view's trace by level. */
+export const GetTraceInputSchema = z.object({
+  origin: z.string().describe('Canonical object ID the trace starts from.'),
+  upstream_levels: ScopeDepthSchema.describe('Levels toward the sources: an integer, "all" for the whole chain, or 0 for none.'),
+  downstream_levels: ScopeDepthSchema.describe('Levels toward the consumers: an integer, "all" for the whole chain, or 0 for none.'),
+  include_dml: IncludeDmlSchema,
+}).strict();
+
+export type GetTraceInput = z.infer<typeof GetTraceInputSchema>;
+
+/** `lineage_get_path` input (MCP only): the graph view's Find Path. */
+export const GetPathInputSchema = z.object({
+  start: z.string().describe('Canonical object ID at one end of the path.'),
+  end: z.string().describe('Canonical object ID at the other end of the path.'),
+  include_dml: IncludeDmlSchema,
+}).strict();
+
+export type GetPathInput = z.infer<typeof GetPathInputSchema>;
+
+/** `lineage_create_graph_preview` input (MCP only): the discovery card's graph preview. */
+export const CreateGraphPreviewInputSchema = z.object({
+  ids: z.array(z.string()).min(1).max(DEFAULT_DISCOVERY_NODE_CAP).describe('Canonical object IDs the preview shows.'),
+  title: z.string().max(PRESENT_RESULT_NAME_MAX, overLength(PRESENT_RESULT_NAME_MAX)).trim().min(1).describe('Preview name shown in the graph banner.'),
+  summary: z.string().trim().min(1).optional().describe('One-line summary shown with the preview.'),
+}).strict();
 
 /**
  * A refinement that also runs when the value already carries shape issues, so one parse reports

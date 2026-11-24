@@ -8,42 +8,10 @@
  */
 
 import type Graph from 'graphology';
-import { bidirectional } from 'graphology-shortest-path';
 import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel } from './types';
 
-/** Direction in which a shortest path between two endpoints was found. */
-type ShortestPathDirection = 'source_to_target' | 'target_to_source';
-
-/** Ordered shortest path plus the direction in which it was found. */
-export interface OrderedShortestPath {
-  /** Ordered node ids along the directed path, in the found direction. */
-  path: string[];
-  /** Whether the directed path runs source→target or (on reverse retry) target→source. */
-  direction: ShortestPathDirection;
-}
-
-/**
- * Finds the shortest directed dependency path between two endpoints, trying `source → target` first
- * and retrying `target → source`, so the result matches the GUI "Find Path"
- * ({@link computeShortestPath}), the single source of truth for path lookup. `null` only when the
- * nodes are disconnected in both directions or an endpoint is absent.
- *
- * @returns The ordered path and the direction it was found in.
- */
-export function findShortestPathOrdered(
-  graph: Graph,
-  sourceId: string,
-  targetId: string,
-): OrderedShortestPath | null {
-  if (!graph.hasNode(sourceId) || !graph.hasNode(targetId)) return null;
-  const forward = bidirectional(graph, sourceId, targetId);
-  if (forward) return { path: forward, direction: 'source_to_target' };
-  const reverse = bidirectional(graph, targetId, sourceId);
-  if (reverse) return { path: reverse, direction: 'target_to_source' };
-  return null;
-}
-
+export { findShortestPathOrdered } from './shared/lineageTrace';
 
 /**
  * Logging callback injected into state machines for operational tracing; the optional error

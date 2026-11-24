@@ -201,6 +201,7 @@ Prompts and templates: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 Tool names, descriptions and input schemas are defined once in
 `src/ai/tools/toolDefs.ts`. The local MCP server
 ([`src/ai/mcp/mcpServer.ts`](../src/ai/mcp/mcpServer.ts)) serves them from there.
+The MCP-only tools (trace, path and graph preview) are defined in `mcpServer.ts` itself.
 
 ## Test
 

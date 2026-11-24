@@ -107,7 +107,6 @@ export function classifyRejectionCode(code: string): RejectionChatGroup {
  * `post_failed` (the validated send was dropped or refused). A transport throw propagates. A schema
  * drop is only a log line here; the AI host's failed-render notice is the one user-visible
  * notice.
- * @internal
  */
 export async function deliverToPanel(
   panel: vscode.WebviewPanel | undefined,

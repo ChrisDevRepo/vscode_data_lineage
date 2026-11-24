@@ -23,11 +23,17 @@ import {
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { Logger } from '../../utils/log';
 import { notifyWarning } from '../../utils/notifications';
-import { readToolError } from '../support/toolErrorEnvelope';
+import type { z } from 'zod';
+import { REJECTION_CODES } from '../support/rejectionCodes';
+import {
+  NoProjectLoadedError, buildNoProjectLoadedError, buildToolExecutionError, makeRejection, readToolError,
+} from '../support/toolErrorEnvelope';
 import { toModelJsonSchema } from '../tools/jsonSchema';
 import { filterRegistry } from '../tools/registry';
 import { TOOL_DEFS } from '../tools/toolDefs';
-import { MCP_TOOL_NAMES, buildAiToolRegistry } from '../tools/toolProvider';
+import { MCP_TOOL_NAMES, buildAiToolRegistry, deliverToPanel } from '../tools/toolProvider';
+import { getGraphPreviewScope, getPath, getTrace } from '../tools/tools';
+import { CreateGraphPreviewInputSchema, GetPathInputSchema, GetTraceInputSchema, parseToolInput } from '../tools/toolSchemas';
 import type { StoredRunReader } from '../session/runStore';
 import type { AiSession } from '../session/session';
 
@@ -69,6 +75,81 @@ const READ_ONLY_ANNOTATIONS = {
 } as const;
 
 /**
+ * The graph preview changes only what the graph view shows; the same call shows the same view.
+ */
+const VIEW_ANNOTATIONS = { ...READ_ONLY_ANNOTATIONS, readOnlyHint: false } as const;
+
+/** One MCP-only tool: `run` gets the parsed input, the loaded model's session and tool source. */
+interface McpOnlyTool {
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: z.ZodType;
+  annotations: typeof READ_ONLY_ANNOTATIONS | typeof VIEW_ANNOTATIONS;
+  run: (input: never, session: AiSession, tools: McpToolSource, logger: Logger) => object | Promise<object>;
+}
+
+const mcpOnlyTool = <S extends z.ZodType>(tool: Omit<McpOnlyTool, 'inputSchema' | 'run'> & {
+  inputSchema: S;
+  run: (input: z.output<S>, session: AiSession, tools: McpToolSource, logger: Logger) => object | Promise<object>;
+}): McpOnlyTool => tool as McpOnlyTool;
+
+/**
+ * Tools only MCP clients get: the graph view's trace, Find Path and the discovery card's graph
+ * preview. They are not in the chat loop's registry, so its served tool text stays unchanged.
+ */
+const MCP_ONLY_TOOLS: readonly McpOnlyTool[] = [
+  mcpOnlyTool({
+    name: 'lineage_get_trace', title: 'Get Trace', inputSchema: GetTraceInputSchema, annotations: READ_ONLY_ANNOTATIONS,
+    description: 'The graph view\'s trace from one object, within the user filter (the whole model when the object is outside it). Each object in `nodes` carries `up`/`down`, the level it was reached at on each side (the origin is 0), and `in_user_filter`; `edges` are positional [source, target, type]. Use lineage_get_path for the route between two objects.',
+    run: (input, session) => getTrace(session.model!, session.filter, input),
+  }),
+  mcpOnlyTool({
+    name: 'lineage_get_path', title: 'Get Path', inputSchema: GetPathInputSchema, annotations: READ_ONLY_ANNOTATIONS,
+    description: 'The graph view\'s Find Path on the whole model: the shortest directed path between `start` and `end`, tried in both directions. `nodes` in path order with `in_user_filter`, `edges` positional [source, target, type]; `found: false` when neither direction connects them. Use lineage_get_trace for everything around one object.',
+    run: (input, session) => getPath(session.model!, session.filter, input),
+  }),
+  mcpOnlyTool({
+    name: 'lineage_create_graph_preview', title: 'Create Graph Preview', inputSchema: CreateGraphPreviewInputSchema, annotations: VIEW_ANNOTATIONS,
+    description: 'Shows the `ids` objects and every edge between them as the AI graph preview in the graph view. Returns the objects and edges shown, `edges` positional [source, target, type]. Use lineage_search_objects for ids.',
+    run: async (input, session, tools, logger) => {
+      const scope = getGraphPreviewScope(session.model!, session.filter, input.ids);
+      if (!('nodeIds' in scope)) return scope;
+      const delivery = await deliverToPanel(tools.getPanel(), {
+        type: 'ai-view-preview',
+        name: input.title,
+        nodeIds: scope.nodeIds,
+        aiMetadata: { summary: input.summary, createdAt: new Date().toISOString(), modelName: 'MCP client', highlightGroups: [], badges: [] },
+      }, logger);
+      if (delivery === 'no_panel') throw new NoProjectLoadedError();
+      if (delivery === 'post_failed') {
+        logger.warn('AI preview post failed');
+        return makeRejection({ code: REJECTION_CODES.toolExecutionError, reason: 'The graph view refused the preview.' });
+      }
+      return { name: input.title, nodes: scope.nodes, edges: scope.edges };
+    },
+  }),
+];
+
+/** Runs one MCP-only tool to its JSON text: a rejection envelope for bad input or no project. */
+async function runMcpOnlyTool(tool: McpOnlyTool, args: unknown, tools: McpToolSource): Promise<string> {
+  const logger = Logger.create(tools.outputChannel, 'AI');
+  try {
+    const parsed = parseToolInput(tool.inputSchema, args);
+    if (!parsed.ok) return JSON.stringify(parsed.error);
+    const session = tools.getSession();
+    if (!session.model) throw new NoProjectLoadedError();
+    const text = JSON.stringify(await tool.run(parsed.data as never, session, tools, logger));
+    logger.debug(`${tool.name} → ${text.length} chars`);
+    return text;
+  } catch (err) {
+    if (err instanceof NoProjectLoadedError) return buildNoProjectLoadedError();
+    logger.error(`Tool ${tool.name} failed unexpectedly`, err);
+    return buildToolExecutionError(tool.name);
+  }
+}
+
+/**
  * The SDK's validator seam, accepting every argument object as is. No SDK parse: the tool's own
  * Zod check is the only one, so raw `arguments` reach it unchanged and its rejection is the answer.
  */
@@ -79,9 +160,9 @@ const acceptAll: jsonSchemaValidator = {
 };
 
 /**
- * One stateless MCP server per request; the read-only lineage tools are registered on it. Each call
- * builds its own registry bound to the request's abort signal, so a cancel or a closed connection
- * stops that call's handler.
+ * One stateless MCP server per request; the read-only lineage tools and {@link MCP_ONLY_TOOLS}
+ * are registered on it. Each registry call builds its own registry bound to the request's abort
+ * signal, so a cancel or a closed connection stops that call's handler.
  */
 function createLineageMcpServer(version: string, tools: McpToolSource): McpServer {
   const server = new McpServer({ name: SERVER_SLUG, title: SERVER_LABEL, version });
@@ -97,6 +178,17 @@ function createLineageMcpServer(version: string, tools: McpToolSource): McpServe
         MCP_TOOL_NAMES,
       );
       const text = await registry.invoke(def.name, args);
+      return { content: [{ type: 'text', text }], isError: readToolError(JSON.parse(text)) !== null };
+    });
+  }
+  for (const tool of MCP_ONLY_TOOLS) {
+    server.registerTool(tool.name, {
+      title: tool.title,
+      description: tool.description,
+      inputSchema: fromJsonSchema(toModelJsonSchema(tool.inputSchema), acceptAll),
+      annotations: tool.annotations,
+    }, async (args) => {
+      const text = await runMcpOnlyTool(tool, args, tools);
       return { content: [{ type: 'text', text }], isError: readToolError(JSON.parse(text)) !== null };
     });
   }
