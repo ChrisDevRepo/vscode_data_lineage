@@ -87,12 +87,13 @@
   --ln-ai-border: #8847ff;
   --ln-ai-icon: #8847ff;
 
-  /* SQL highlight colours that replace the Monaco tokens failing 4.5:1 on the code block
-     background (--ln-input-bg); each is mixed toward the foreground, the colour with the most
-     contrast against that background, so it holds in any theme. */
+  /* SQL token colours of the code block (--ln-input-bg): each is mixed toward the foreground, the
+     colour with the most contrast against that background, so it holds in any theme. */
   --ln-sql-keyword: color-mix(in srgb, var(--ln-text-link) 60%, var(--ln-fg));
   --ln-sql-operator: color-mix(in srgb, var(--ln-fg-muted) 50%, var(--ln-fg));
   --ln-sql-function: color-mix(in srgb, var(--ln-ai-icon) 35%, var(--ln-fg));
+  --ln-sql-string: color-mix(in srgb, var(--vscode-debugTokenExpression-string, var(--ln-fg)) 60%, var(--ln-fg));
+  --ln-sql-number: color-mix(in srgb, var(--vscode-debugTokenExpression-number, var(--ln-fg)) 60%, var(--ln-fg));
 
   /* Error foreground (inline text errors, delete confirmations) */
   --ln-error-fg: var(--vscode-editorError-foreground, var(--vscode-inputValidation-errorBorder, #be1100));
@@ -987,14 +988,18 @@ body.vscode-reduce-motion *::after {
   background: none;
   padding: 0;
 }
-/* Monaco's built-in themes name a token colour by its position in the theme's colour map
-   (monaco-editor 0.57): in vs-dark mtk8 is the keyword blue #569cd6, mtk17 the operator grey
-   #778899 and mtk18 the function magenta #ff00ff; in vs mtk18 is the operator grey. These fall
-   below 4.5:1 on the block, so the app's tokens stand in for them. */
-.ln-ai-description-md code.language-sql.vs-dark .mtk8 { color: var(--ln-sql-keyword); }
-.ln-ai-description-md code.language-sql.vs-dark .mtk17,
-.ln-ai-description-md code.language-sql.vs .mtk18 { color: var(--ln-sql-operator); }
-.ln-ai-description-md code.language-sql.vs-dark .mtk18 { color: var(--ln-sql-function); }
+/* SQL token roles: the chat's SQL theme (colorizeSql.ts) gives each token role a placeholder
+   colour, and Monaco names each colour by its position in the theme's colour map: mtk1 text,
+   mtk3 comment, mtk4 keyword, mtk5 number, mtk6 operator (AND, IS, NOT, NULL included), mtk7
+   function, mtk8 string (mtk2 is the unused background). Every role takes its colour from the
+   app's theme tokens, never from a bundled Monaco theme. */
+.ln-ai-description-md code.language-sql .mtk1 { color: var(--ln-fg); }
+.ln-ai-description-md code.language-sql .mtk3,
+.ln-ai-description-md code.language-sql .mtk6 { color: var(--ln-sql-operator); }
+.ln-ai-description-md code.language-sql .mtk4 { color: var(--ln-sql-keyword); }
+.ln-ai-description-md code.language-sql .mtk5 { color: var(--ln-sql-number); }
+.ln-ai-description-md code.language-sql .mtk7 { color: var(--ln-sql-function); }
+.ln-ai-description-md code.language-sql .mtk8 { color: var(--ln-sql-string); }
 .ln-ai-description-md table {
   border-collapse: collapse;
   width: 100%;
