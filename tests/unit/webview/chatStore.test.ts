@@ -12,9 +12,9 @@ const event = (state: ChatState, turnId: string, e: TurnEvent): ChatState =>
 const sent = (text: string): ChatState => chatReducer(initialChatState, { type: 'send', text });
 
 describe('chatReducer — turn events to messages', () => {
-  it('shows the sent text as a user message and marks the chat busy', () => {
+  it('shows the sent text as a user message and leaves the running turn to the host', () => {
     const state = sent('where does dbo.Orders come from?');
-    expect(state.busy).toBe(true);
+    expect(state.turnId).toBeUndefined();
     expect(state.messages).toEqual([
       { id: 'local-1', role: 'user', parts: [{ type: 'text', text: 'where does dbo.Orders come from?' }] },
     ]);
@@ -34,7 +34,7 @@ describe('chatReducer — turn events to messages', () => {
     let state = sent('hi');
     state = event(state, 't1', { type: 'status', phase: 'thinking', label: 'Searching' });
     state = event(state, 't1', { type: 'status', phase: 'scoping', label: 'Scoping' });
-    expect(state.messages[1].parts).toEqual([{ type: 'status', phase: 'scoping', label: 'Scoping' }]);
+    expect(state.messages[1].parts).toEqual([{ type: 'status', label: 'Scoping' }]);
     state = event(state, 't1', { type: 'text', delta: 'Answer' });
     expect(state.messages[1].parts).toEqual([{ type: 'text', text: 'Answer' }]);
   });
@@ -43,7 +43,7 @@ describe('chatReducer — turn events to messages', () => {
     let state = sent('hi');
     state = event(state, 't1', { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3 objects', classes: ['sliding_memory'] });
     expect(state.messages[1].parts).toEqual([
-      { type: 'gate', gateId: 'g1', gate: 'scope', summary: 'Trace 3 objects', replacesAnalysis: undefined, decision: undefined },
+      { type: 'gate', gateId: 'g1', summary: 'Trace 3 objects', replacesAnalysis: undefined, decision: undefined },
     ]);
   });
 
@@ -72,32 +72,31 @@ describe('chatReducer — turn events to messages', () => {
     expect(state.messages[1].parts).toEqual([{ type: 'error', message: 'provider down' }]);
   });
 
-  it('settles busy on a terminal event, removes the status part, and shows a terminal error once', () => {
+  it('settles the running turn on a terminal event, removes the status part, and shows a terminal error once', () => {
     let state = sent('hi');
-    state = chatReducer(state, { type: 'host-state', models: [], selectedModelId: '', busy: true, turnId: 't1', followups: [] });
+    state = chatReducer(state, { type: 'host-state', models: [], selectedModelId: '', turnId: 't1', followups: [] });
     state = event(state, 't1', { type: 'status', phase: 'tool', label: 'Working' });
     state = event(state, 't1', { type: 'error', message: 'boom' });
     state = event(state, 't1', { type: 'terminal', status: 'error', error: 'boom' });
-    expect(state.busy).toBe(false);
     expect(state.turnId).toBeUndefined();
     expect(state.messages[1].parts).toEqual([{ type: 'error', message: 'boom' }]);
   });
 });
 
 describe('chatReducer — host state and history', () => {
-  it('takes models, selection, effort, busy and turn id from chat.state', () => {
+  it('takes models, selection, effort and turn id from chat.state', () => {
     const models = [{ id: 'm1', name: 'Local', supportsReasoningEffort: ['low', 'high'] }];
     const state = chatReducer(initialChatState, {
-      type: 'host-state', models, selectedModelId: 'm1', effort: 'low', busy: true, turnId: 't9', followups: [],
+      type: 'host-state', models, selectedModelId: 'm1', effort: 'low', turnId: 't9', followups: [],
     });
-    expect(state).toMatchObject({ models, selectedModelId: 'm1', effort: 'low', busy: true, turnId: 't9' });
+    expect(state).toMatchObject({ models, selectedModelId: 'm1', effort: 'low', turnId: 't9' });
   });
 
   it('carries the host follow-ups, and a later state replaces them', () => {
     const followups = [{ label: 'Show full description', prompt: 'Show the full description' }];
-    const state = chatReducer(initialChatState, { type: 'host-state', models: [], selectedModelId: '', busy: false, followups });
+    const state = chatReducer(initialChatState, { type: 'host-state', models: [], selectedModelId: '', followups });
     expect(state.followups).toEqual(followups);
-    expect(chatReducer(state, { type: 'host-state', models: [], selectedModelId: '', busy: true, followups: [] }).followups).toEqual([]);
+    expect(chatReducer(state, { type: 'host-state', models: [], selectedModelId: '', followups: [] }).followups).toEqual([]);
   });
 
   it('replaces the transcript with chat.history (new chat resets to empty)', () => {
