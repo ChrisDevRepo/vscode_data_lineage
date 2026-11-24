@@ -2,8 +2,9 @@
  * The one provider kind: an OpenAI-compatible endpoint, spoken to by `@langchain/openai`'s standard
  * `ChatOpenAI` client over Chat Completions or Responses. Azure is a `/openai/v1/` base URL and
  * Anthropic its `/v1/` chat-completions URL; nothing here branches on a vendor. The client takes
- * the host's `fetch` (VS Code patches the global one for proxy support), so no `fetch`, agent,
- * retry or timeout is injected. The key reaches only the client's `Authorization` header.
+ * the host's `fetch` (VS Code patches the global one for proxy support), so no `fetch`, agent or
+ * timeout is injected; the retry is the SDK's (see `createChatModel`). The key reaches only the
+ * client's `Authorization` header.
  */
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { ChatOpenAI, messageToOpenAIRole } from '@langchain/openai';
@@ -33,8 +34,10 @@ function entryBody(entry: ModelEntry, effort: string | undefined): Record<string
 }
 
 /**
- * The client for one entry; `maxRetries: 0` keeps the single connection retry in the graph. The
- * Chat Completions client writes `verbosity` and one output-cap key (`max_tokens`, or
+ * The client for one entry. Its retry is the OpenAI SDK's own (`configuration.maxRetries`, the SDK default
+ * of 2): connection errors, timeouts and 408/409/429/5xx, with backoff, `retry-after`, and the turn's signal
+ * ending a pending wait. `maxRetries: 0` turns off LangChain's second layer, which would also retry other 4xx.
+ * The Chat Completions client writes `verbosity` and one output-cap key (`max_tokens`, or
  * `max_completion_tokens` for a reasoning model name) after `requestBody`. `verbosity` goes to its
  * own field; the cap goes there only when the key the client writes is the key the entry names, so
  * `requestBody` reaches the wire unchanged and never as two keys.
@@ -45,7 +48,7 @@ function createChatModel(entry: ModelEntry, apiKey: string, effort: string | und
   const build = (maxTokens?: number): ChatOpenAI => new ChatOpenAI({
     model: entry.model,
     apiKey,
-    configuration: { baseURL: entry.url, ...(entry.requestHeaders ? { defaultHeaders: entry.requestHeaders } : {}) },
+    configuration: { baseURL: entry.url, maxRetries: 2, ...(entry.requestHeaders ? { defaultHeaders: entry.requestHeaders } : {}) },
     useResponsesApi: responses,
     streaming: true,
     maxRetries: 0,
@@ -189,12 +192,12 @@ function failureCode(error: unknown): ModelPortErrorCode {
 /**
  * One failure as a port error: cancellation by the signal, else a redacted message and the cause.
  */
-function normalizeError(error: unknown, signal: AbortSignal | undefined, replyReceived: boolean): ModelPortError {
+function normalizeError(error: unknown, signal: AbortSignal | undefined): ModelPortError {
   if (error instanceof ModelPortError) return error;
   if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) return cancelledError();
   const code = failureCode(error);
   const text = error instanceof Error ? error.message : '';
-  return new ModelPortError(code, sanitizeProviderError(text) || `Language model request failed (${code}).`, error, replyReceived);
+  return new ModelPortError(code, sanitizeProviderError(text) || `Language model request failed (${code}).`, error);
 }
 
 type WireToolChoice = NonNullable<Parameters<ChatOpenAI['bindTools']>[1]>['tool_choice'];
@@ -256,7 +259,7 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
           replyReceived = true;
           // A choice that finished with `error` is the provider's failure, whatever it streamed before.
           if (chunk.response_metadata?.finish_reason === 'error') {
-            throw new ModelPortError('provider_error', 'Provider ended the generation with finish_reason error.', undefined, true);
+            throw new ModelPortError('provider_error', 'Provider ended the generation with finish_reason error.');
           }
           usage = toUsage(chunk.usage_metadata) ?? usage;
           total = total ? total.concat(chunk) : chunk;
@@ -275,7 +278,7 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
           response_metadata: { streamEnd: true, [ENTRY_KEY]: entry.id, ...(usage ? { providerUsage: usage } : {}) },
         });
       } catch (error) {
-        throw normalizeError(error, signal, replyReceived);
+        throw normalizeError(error, signal);
       }
     },
   };
