@@ -74,7 +74,7 @@ describe('chatReducer — turn events to messages', () => {
 
   it('settles busy on a terminal event, removes the status part, and shows a terminal error once', () => {
     let state = sent('hi');
-    state = chatReducer(state, { type: 'host-state', models: [], selectedModelId: '', busy: true, turnId: 't1' });
+    state = chatReducer(state, { type: 'host-state', models: [], selectedModelId: '', busy: true, turnId: 't1', followups: [] });
     state = event(state, 't1', { type: 'status', phase: 'tool', label: 'Working' });
     state = event(state, 't1', { type: 'error', message: 'boom' });
     state = event(state, 't1', { type: 'terminal', status: 'error', error: 'boom' });
@@ -88,9 +88,16 @@ describe('chatReducer — host state and history', () => {
   it('takes models, selection, effort, busy and turn id from chat.state', () => {
     const models = [{ id: 'm1', name: 'Local', supportsReasoningEffort: ['low', 'high'] }];
     const state = chatReducer(initialChatState, {
-      type: 'host-state', models, selectedModelId: 'm1', effort: 'low', busy: true, turnId: 't9',
+      type: 'host-state', models, selectedModelId: 'm1', effort: 'low', busy: true, turnId: 't9', followups: [],
     });
     expect(state).toMatchObject({ models, selectedModelId: 'm1', effort: 'low', busy: true, turnId: 't9' });
+  });
+
+  it('carries the host follow-ups, and a later state replaces them', () => {
+    const followups = [{ label: 'Show full description', prompt: 'Show the full description' }];
+    const state = chatReducer(initialChatState, { type: 'host-state', models: [], selectedModelId: '', busy: false, followups });
+    expect(state.followups).toEqual(followups);
+    expect(chatReducer(state, { type: 'host-state', models: [], selectedModelId: '', busy: true, followups: [] }).followups).toEqual([]);
   });
 
   it('replaces the transcript with chat.history (new chat resets to empty)', () => {

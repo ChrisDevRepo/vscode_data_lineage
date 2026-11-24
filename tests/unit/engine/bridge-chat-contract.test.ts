@@ -44,4 +44,12 @@ describe('chat frames to the webview', () => {
     for (const frame of frames) expect(ExtensionToWebviewMsgSchema.safeParse(frame).success).toBe(true);
     expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'chat.event', turnId: 't', event: { type: 'bogus' } }).success).toBe(false);
   });
+
+  it('defaults the state followups to none and keeps the ones sent', () => {
+    const state = { type: 'chat.state', models: [], selectedModelId: '', busy: false };
+    expect(ExtensionToWebviewMsgSchema.parse(state)).toMatchObject({ followups: [] });
+    const followups = [{ label: 'Show full description', prompt: 'Show the full description' }];
+    expect(ExtensionToWebviewMsgSchema.parse({ ...state, followups })).toMatchObject({ followups });
+    expect(ExtensionToWebviewMsgSchema.safeParse({ ...state, followups: [{ label: 'x' }] }).success).toBe(false);
+  });
 });

@@ -37,7 +37,7 @@ export function useChat(): { state: ChatState; actions: ChatActions } {
           dispatch({ type: 'host-event', turnId: msg.turnId, event: msg.event, replacesAnalysis: msg.replacesAnalysis });
           break;
         case 'chat.state':
-          dispatch({ type: 'host-state', models: msg.models, selectedModelId: msg.selectedModelId, effort: msg.effort, busy: msg.busy, turnId: msg.turnId });
+          dispatch({ type: 'host-state', models: msg.models, selectedModelId: msg.selectedModelId, effort: msg.effort, busy: msg.busy, turnId: msg.turnId, followups: msg.followups });
           break;
         case 'chat.history':
           dispatch({ type: 'host-history', messages: msg.messages });

@@ -5,6 +5,7 @@ import {
   Tools,
   useExternalStoreRuntime,
   type AppendMessage,
+  type ThreadSuggestion,
   type ThreadMessageLike,
   type Toolkit,
 } from '@assistant-ui/react';
@@ -78,6 +79,15 @@ export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
   };
 }
 
+/**
+ * The library's follow-up suggestions for the host's buttons: the label is the button text, a click
+ * sends the prompt through `onNew`.
+ * @internal
+ */
+export function toSuggestions(followups: ChatState['followups']): ThreadSuggestion[] {
+  return followups.map(({ label, prompt }) => ({ title: label, prompt }));
+}
+
 function textOf(message: AppendMessage): string {
   return message.content.map(part => (part.type === 'text' ? part.text : '')).join('');
 }
@@ -142,6 +152,7 @@ export default function ChatPane() {
   const runtime = useExternalStoreRuntime<ChatMessage>({
     messages: state.messages,
     isRunning: state.busy,
+    suggestions: useMemo(() => toSuggestions(state.followups), [state.followups]),
     // The library's own disabled composer; the notice above tells the user why.
     isDisabled: modelsMissing(state),
     convertMessage: toThreadMessage,

@@ -108,10 +108,14 @@ export class LineageRuntime {
       modelCalls: input.model.modelCalls,
       durationMs: elapsedMs(startedAt),
     });
-    input.sink.result(outcome);
     const modelCalls = input.model.modelCalls;
-    if (result.status !== 'error') return { outcome: result.status === 'completed' ? 'ok' : result.status, modelCalls };
-    return { outcome: 'error', modelCalls, failure: { message: describeTurnStop(result.turnStop, input.model.identity.name), turnStop: result.turnStop } };
+    if (result.status !== 'error') {
+      input.sink.result(outcome);
+      return { outcome: result.status === 'completed' ? 'ok' : result.status, modelCalls };
+    }
+    const message = describeTurnStop(result.turnStop, input.model.identity.name);
+    input.sink.fail(message);
+    return { outcome: 'error', modelCalls, failure: { message, turnStop: result.turnStop } };
   }
 
   /**

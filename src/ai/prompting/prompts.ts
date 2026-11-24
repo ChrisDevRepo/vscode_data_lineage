@@ -372,6 +372,12 @@ export function buildGateReplyUserPrompt(scopeMd: string, reply: string): string
 export const SHOW_FULL_DESCRIPTION_TRIGGER = 'Show the full description';
 
 /**
+ * Prompt of the "Next questions and related objects" follow-up pill. The chat host answers it on the
+ * tool-free suggestion path, expanding it into compact facts before the model sees it.
+ */
+export const NEXT_QUESTIONS_TRIGGER = 'What could I explore next?';
+
+/**
  * Stable first line of the seeded trace envelope, matched by the graph to route straight to SM.
  *
  * @remarks Matches our own generated prefix, never user text, so the re-entry is deterministic and

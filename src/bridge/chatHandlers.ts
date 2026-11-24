@@ -7,6 +7,8 @@
 import { randomUUID } from 'node:crypto';
 import { NO_MODEL_MESSAGE, type ChatToExtensionMsg, type ChatToWebviewMsg, type TurnEvent } from '../engine/shared/chatContract';
 import { ModelPortError, type ModelPort } from '../ai/model/modelPort';
+import { expandNextQuestionSuggestions } from '../ai/prompting/followupSuggestions';
+import { NEXT_QUESTIONS_TRIGGER, RUN_TRACE_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER, expandRunTracePrompt } from '../ai/prompting/prompts';
 import type { ProviderModelPortOptions } from '../ai/model/providerModelPort';
 import type { AiTraceWriter } from '../ai/observability/aiTraceWriter';
 import { parseModelEntries, type ModelEntry } from '../ai/providers/modelEntries';
@@ -14,12 +16,16 @@ import { createConfiguredModelPort, type ModelPortSources } from '../ai/provider
 import type { LineageRuntime } from '../ai/runtime/lineageRuntime';
 import { TurnEventSink } from '../ai/runtime/turnEventSink';
 import type { AiSession } from '../ai/session/session';
+import { sanitizeDescriptionForChat } from '../ai/support/text';
 import { calibrateTurnBudget } from '../ai/support/tokenBudget';
 import { Logger, OUTPUT_POINTER } from '../utils/log';
 import { notifyError, notifyWarningOnce } from '../utils/notifications';
 
 /** Window in which streamed text deltas are merged into one frame. */
 const TEXT_BATCH_MS = 75;
+
+/** A trigger as the user may type it: case and spacing do not matter. */
+const normalizeTrigger = (value: string): string => value.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
 
 /** The chat surface: the docked pane of the graph webview. */
 export interface ChatView {
@@ -29,7 +35,7 @@ export interface ChatView {
 
 /** What the controller needs from the host. */
 export interface ChatHostDeps {
-  readonly runtime: Pick<LineageRuntime, 'run' | 'resumeGate'>;
+  readonly runtime: Pick<LineageRuntime, 'run' | 'runSuggestions' | 'resumeGate'>;
   readonly getSession: () => AiSession;
   /** Current `ai.models`, `ai.defaultModel` and SecretStorage; read afresh per use. */
   readonly modelSources: () => ModelPortSources;
@@ -198,8 +204,17 @@ export class ChatController {
     this.post(this.stateMsg());
     const sink = new TurnEventSink((event) => this.onEvent(turn, event));
     const entry = this.selectedEntry();
+    const session = getSession();
+    const trigger = normalizeTrigger(prompt);
     let failure: unknown;
     try {
+      if (trigger === normalizeTrigger(SHOW_FULL_DESCRIPTION_TRIGGER)) {
+        sink.stream(session.lastPresentResultDescription
+          ? sanitizeDescriptionForChat(session.lastPresentResultDescription)
+          : '_No AI preview description is currently cached for this session._');
+        sink.result('ok');
+        return;
+      }
       if (!entry) throw new ModelPortError('invalid_request', NO_MODEL_MESSAGE);
       const trace = this.deps.traceWriter?.isEnabled() ? this.deps.traceWriter : undefined;
       const port = await (this.deps.createPort ?? createConfiguredModelPort)(this.deps.modelSources(), {
@@ -211,9 +226,12 @@ export class ChatController {
         traceVerbose: trace?.isVerbose(),
         budget: calibrateTurnBudget(entry.maxInputTokens, this.deps.turnSettings()),
       });
-      const result = await this.deps.runtime.run({
+      // Next questions read compact facts on the tool-free suggestion path; the Run-trace sentinel
+      // becomes the seeded envelope the graph routes to the hop-by-hop analysis.
+      const suggestions = trigger === normalizeTrigger(NEXT_QUESTIONS_TRIGGER) && session.phase.kind === 'completed';
+      const result = await (suggestions ? this.deps.runtime.runSuggestions : this.deps.runtime.run).call(this.deps.runtime, {
         model: port,
-        request: { id: requestId, prompt },
+        request: { id: requestId, prompt: suggestions ? expandNextQuestionSuggestions(session) : expandRunTracePrompt(prompt, session) },
         sink,
         signal: turn.abort.signal,
       });
@@ -295,6 +313,17 @@ export class ChatController {
     return entry?.supportsReasoningEffort?.includes(this.selectedEffort ?? '') ? this.selectedEffort : undefined;
   }
 
+  /** The follow-up buttons for the session as it stands; none while a turn runs or a gate is pending. */
+  private followups(): { label: string; prompt: string }[] {
+    const session = this.deps.getSession();
+    if (this.turn || session.phase.kind === 'awaiting_gate') return [];
+    return [
+      ...(session.phase.kind === 'completed' ? [{ label: 'Next questions and related objects', prompt: NEXT_QUESTIONS_TRIGGER }] : []),
+      ...(session.lastPresentResultDescription ? [{ label: 'Show full description', prompt: SHOW_FULL_DESCRIPTION_TRIGGER }] : []),
+      ...(session.smOfferAvailable() ? [{ label: 'Start deeper hop-by-hop analysis', prompt: RUN_TRACE_TRIGGER }] : []),
+    ];
+  }
+
   private stateMsg(): ChatToWebviewMsg {
     const { entries } = this.entries();
     const selected = this.selectedEntry(entries);
@@ -307,6 +336,7 @@ export class ChatController {
       effort: this.explicitEffort(selected) ?? selected?.reasoningEffort,
       busy: this.turn !== undefined,
       turnId: this.turn?.turnId,
+      followups: this.followups(),
     };
   }
 }

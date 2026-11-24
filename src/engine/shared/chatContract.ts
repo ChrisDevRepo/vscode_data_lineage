@@ -54,7 +54,10 @@ const ChatEventMsgSchema = z.object({
   replacesAnalysis: z.boolean().optional(),
 });
 
-/** Composer state: the picker lists, the selection, and whether a turn is running. */
+/** One suggested next prompt: `label` is the button text, `prompt` is what the view sends when it is clicked. */
+const ChatFollowupSchema = z.object({ label: z.string(), prompt: z.string() });
+
+/** Composer state: the picker lists, the selection, whether a turn is running, and the follow-ups on offer. */
 const ChatStateMsgSchema = z.object({
   type: z.literal('chat.state'),
   models: z.array(ChatModelSchema),
@@ -62,6 +65,8 @@ const ChatStateMsgSchema = z.object({
   effort: z.string().optional(),
   busy: z.boolean(),
   turnId: z.string().optional(),
+  /** Follow-up buttons for the session as it stands; empty while a turn runs or a gate is pending. */
+  followups: z.array(ChatFollowupSchema).default([]),
 });
 
 /** Finished exchanges of the session transcript, oldest first; replaces the view's list. */

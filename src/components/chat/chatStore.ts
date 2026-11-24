@@ -3,6 +3,7 @@ import type { ChatToExtensionMsg, ChatToWebviewMsg } from '../../engine/shared/c
 type HostMessage<T extends ChatToWebviewMsg['type']> = Extract<ChatToWebviewMsg, { type: T }>;
 export type TurnEvent = HostMessage<'chat.event'>['event'];
 type ChatModelOption = HostMessage<'chat.state'>['models'][number];
+type ChatFollowup = HostMessage<'chat.state'>['followups'][number];
 type ChatHistoryMessage = HostMessage<'chat.history'>['messages'][number];
 export type GateDecision = Extract<ChatToExtensionMsg, { type: 'chat.gate' }>['decision'];
 
@@ -29,6 +30,8 @@ export interface ChatState {
   models: ChatModelOption[];
   selectedModelId: string;
   effort: string | undefined;
+  /** The host's follow-up buttons for the session as it stands. */
+  followups: ChatFollowup[];
   /** Counter behind the local message ids. */
   nextLocalId: number;
 }
@@ -36,7 +39,7 @@ export interface ChatState {
 export type ChatAction =
   | { type: 'send'; text: string }
   | { type: 'host-event'; turnId: string; event: TurnEvent; replacesAnalysis?: boolean }
-  | { type: 'host-state'; models: ChatModelOption[]; selectedModelId: string; effort?: string; busy: boolean; turnId?: string }
+  | { type: 'host-state'; models: ChatModelOption[]; selectedModelId: string; effort?: string; busy: boolean; turnId?: string; followups: ChatFollowup[] }
   | { type: 'host-history'; messages: ChatHistoryMessage[] }
   | { type: 'gate-decided'; turnId: string; gateId: string; decision: GateDecision };
 
@@ -48,6 +51,7 @@ export const initialChatState: ChatState = {
   models: [],
   selectedModelId: '',
   effort: undefined,
+  followups: [],
   nextLocalId: 1,
 };
 
@@ -115,6 +119,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         effort: action.effort,
         busy: action.busy,
         turnId: action.turnId,
+        followups: action.followups,
         ready: true,
       };
     case 'host-history':
