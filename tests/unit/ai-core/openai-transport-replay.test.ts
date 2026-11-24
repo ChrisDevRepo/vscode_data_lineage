@@ -160,7 +160,7 @@ describe('OpenAI transport replay of a malformed tool call', () => {
   });
 
   it.each(['chat-completions', 'responses'] as const)('%s: a content_filter finish ends the generation as one blocked port error, recorded in wire-error and never as a stop', async (apiType) => {
-    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType, maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
+    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType, maxInputTokens: 1000, maxOutputTokens: 100 }]).entries as OpenAiModelEntry[];
     const chatFrames = [{ choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: 'content_filter' }] }]
       .map((frame) => `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', model: 'gpt-x', ...frame })}\n\n`).join('');
     const response = { id: 'resp_1', object: 'response', created_at: 1, model: 'gpt-x', output: [] };
