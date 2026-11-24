@@ -12,7 +12,7 @@ import {
   type RenderStateSnapshot,
   type ScreenStateExtras,
 } from '../../engine/shared/bridgeContract';
-import { isRecord } from '../model/modelPort';
+import { isRecord } from '../../utils/isRecord';
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeTokens, type TurnTokenBudget } from '../support/tokenBudget';

@@ -9,6 +9,7 @@ import type { ZodType } from 'zod';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { causeCodes, isTransportProviderError, type ProviderErrorDiagnostic, type TurnStop } from '../support/text';
 import type { TurnTokenBudget } from '../support/tokenBudget';
+import { isRecord } from '../../utils/isRecord';
 
 /** LangChain's provider-neutral message hierarchy is the graph's sole history type. */
 export type ModelMessage = BaseMessage;
@@ -100,11 +101,6 @@ function modelToolArgs(input: unknown): Record<string, unknown> {
     );
   }
   return input;
-}
-
-/** Whether a value is a JSON object: not null and not an array. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

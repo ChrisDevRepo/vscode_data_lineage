@@ -4,7 +4,7 @@
  */
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
-import { isRecord } from '../model/modelPort';
+import { isRecord } from '../../utils/isRecord';
 import { schemaBranches, type JsonSchemaShape } from '../tools/jsonSchema';
 
 /**

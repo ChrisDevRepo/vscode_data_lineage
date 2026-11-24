@@ -8,7 +8,8 @@
  */
 import * as vscode from 'vscode';
 import { AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage, type BaseMessage, type MessageContent } from '@langchain/core/messages';
-import { cancelledError, isRecord, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
+import { cancelledError, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
+import { isRecord } from '../../utils/isRecord';
 import type { ModelTransport, TransportRequest } from '../model/providerModelPort';
 import { safeTraceStringify, systemPromptHash, type TokenUsage, type WireMessage, type WirePart } from '../observability/wireLog';
 import { sanitizeProviderError } from '../support/text';
