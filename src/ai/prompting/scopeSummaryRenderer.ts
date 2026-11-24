@@ -156,7 +156,7 @@ function planHeading(revision?: number): string {
 }
 
 /**
- * Renders the self-contained approval summary for native chat.
+ * Renders the self-contained approval summary for the chat.
  *
  * @param revision - Stamped in the heading from the second round on, so a re-approval is
  *   distinguishable from the first.

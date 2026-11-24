@@ -68,7 +68,7 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
   return [
     '# Data Lineage Assistant',
     '',
-    "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects into a dependency graph the user sees as a diagram.",
+    "You are the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects into a dependency graph the user sees as a diagram.",
     'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose. You read the lineage graph only and execute nothing: a request for query results, row values, or running a statement gets a short decline, never an exploration.',
     'When calling tools, match the served schema types precisely.',
     '',
@@ -453,7 +453,7 @@ function buildRunTraceTriggerPrompt(
  * system layer like every other stage.
  */
 export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
-  'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops.',
+  'You are the data-lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops.',
   'Every clause must come from the supplied <original_question> and <discovery_answer>, because later hops treat this memo as established fact.',
   'Plain prose only: no headings, bullets, or diagrams.',
 ].join('\n');

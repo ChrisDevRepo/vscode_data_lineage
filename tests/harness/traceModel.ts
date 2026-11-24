@@ -188,7 +188,7 @@ export function serializeRun(run: ParsedRun): string {
  *
  * @remarks
  * The pairing key is the pair, not `requestId` alone: `runFingerprint` changes across a retried
- * run against the same native chat request, so requestId alone can silently merge two unrelated
+ * run against the same chat request, so requestId alone can silently merge two unrelated
  * turns. Preserves first-seen order across the trace; a start with no terminal (a cut-off
  * capture) and a terminal with no start (a trace beginning mid-turn) both surface with the
  * missing half left `undefined` rather than being dropped.
