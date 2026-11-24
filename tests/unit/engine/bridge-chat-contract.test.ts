@@ -40,7 +40,7 @@ describe('chat frames to the webview', () => {
   it('validates event, state and history frames inside the one webview union', () => {
     const frames: unknown[] = [
       { type: 'chat.event', turnId: 't', event: { type: 'text', delta: 'a' } },
-      { type: 'chat.event', turnId: 't', event: { type: 'gate', gateId: 'g', gate: 'confirm_sm_start', summary: 's', classes: ['x'] }, replacesAnalysis: true },
+      { type: 'chat.event', turnId: 't', event: { type: 'gate', gateId: 'g', gate: 'confirm_sm_start', summary: 's', classes: ['x'], fullPlan: { markdown: 'p', objects: 2 } }, replacesAnalysis: true },
       { type: 'chat.state', models: [{ id: 'a', name: 'A', supportsReasoningEffort: ['low'], reasoningEffort: 'low' }], selectedModelId: 'a', effort: 'low', busy: false },
       { type: 'chat.history', messages: [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }] },
     ];

@@ -5,13 +5,14 @@ export type TurnEvent = HostMessage<'chat.event'>['event'];
 type ChatModelOption = HostMessage<'chat.state'>['models'][number];
 type ChatFollowup = HostMessage<'chat.state'>['followups'][number];
 type ChatHistoryMessage = HostMessage<'chat.history'>['messages'][number];
+export type GateFullPlan = NonNullable<Extract<TurnEvent, { type: 'gate' }>['fullPlan']>;
 export type GateDecision = Extract<ChatToExtensionMsg, { type: 'chat.gate' }>['decision'];
 
 /** One renderable piece of a chat message. */
 export type ChatPart =
   | { type: 'text'; text: string }
   | { type: 'status'; phase: string; label: string }
-  | { type: 'gate'; gateId: string; gate: string; summary: string; classes?: readonly string[]; replacesAnalysis?: boolean; decision: GateDecision | undefined }
+  | { type: 'gate'; gateId: string; gate: string; summary: string; fullPlan?: GateFullPlan; classes?: readonly string[]; replacesAnalysis?: boolean; decision: GateDecision | undefined }
   | { type: 'error'; message: string };
 
 export interface ChatMessage {
@@ -82,7 +83,7 @@ function applyEvent(state: ChatState, turnId: string, event: TurnEvent, replaces
     case 'gate':
       return updateTurn(state, turnId, parts => [
         ...withoutStatus(parts),
-        { type: 'gate', gateId: event.gateId, gate: event.gate, summary: event.summary, classes: event.classes, replacesAnalysis, decision: undefined },
+        { type: 'gate', gateId: event.gateId, gate: event.gate, summary: event.summary, fullPlan: event.fullPlan, classes: event.classes, replacesAnalysis, decision: undefined },
       ]);
     case 'error':
       return updateTurn(state, turnId, parts => [...withoutStatus(parts), { type: 'error', message: event.message }]);

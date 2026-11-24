@@ -4,7 +4,7 @@ import { Button } from '../ui/Button';
 import { renderAiMarkdown } from '../markdown/renderAiMarkdown';
 import { useMarkdownLinks } from '../markdown/useMarkdownLinks';
 import { useChatContext } from './ChatContext';
-import type { GateDecision } from './chatStore';
+import type { GateDecision, GateFullPlan } from './chatStore';
 
 /** Arguments the store puts on the gate's tool-call part (see `toThreadMessage`). */
 export interface GateArgs extends Record<string, unknown> {
@@ -12,6 +12,7 @@ export interface GateArgs extends Record<string, unknown> {
   gateId: string;
   gate: string;
   summary: string;
+  fullPlan?: GateFullPlan;
   classes?: readonly string[];
   replacesAnalysis?: boolean;
   decision?: GateDecision;
@@ -22,29 +23,45 @@ const DECIDED_LABEL: Record<GateDecision, string> = { approve: 'Approved', refin
 /** Class chips shown before "+N more". */
 const MAX_CLASS_CHIPS = 8;
 
+/** Host markdown as the chat shows it: one pipeline, links handled by the shared hook. */
+function Markdown({ text }: { text: string }) {
+  const html = useMemo(() => renderAiMarkdown(text), [text]);
+  const links = useMarkdownLinks();
+  return (
+    <div
+      className="ln-ai-description-md ln-ai-description-font-0"
+      onClick={links.onClick}
+      onKeyDown={links.onKeyDown}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
 /**
- * The approval card a turn waits on: the host's summary (markdown), the object-class chips, and the
- * three decisions. Refine asks for the change as text first. Once decided, the buttons give way to
- * the outcome, so a second click cannot post a second decision.
+ * The approval card a turn waits on: the host's scope card (markdown), the full plan behind a
+ * disclosure, the object-class chips, and the three decisions. Refine asks for the change as text
+ * first. Once decided, the buttons give way to the outcome, so a second click cannot post a second
+ * decision.
  */
 export function GateCard({ args }: { args: GateArgs }) {
   const { actions } = useChatContext();
   const [refining, setRefining] = useState(false);
   const [change, setChange] = useState('');
-  const html = useMemo(() => renderAiMarkdown(args.summary), [args.summary]);
-  const links = useMarkdownLinks();
   const decide = (decision: GateDecision, text?: string): void => actions.decideGate(args.turnId, args.gateId, decision, text);
   const chips = args.classes?.slice(0, MAX_CLASS_CHIPS) ?? [];
   const hidden = (args.classes?.length ?? 0) - chips.length;
 
   return (
     <section aria-label="Approval needed" className="bg-popover text-popover-foreground border-border my-2 rounded-md border p-3">
-      <div
-        className="ln-ai-description-md ln-ai-description-font-0"
-        onClick={links.onClick}
-        onKeyDown={links.onKeyDown}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <Markdown text={args.summary} />
+      {args.fullPlan && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs font-semibold">
+            Show full plan ({args.fullPlan.objects} objects)
+          </summary>
+          <Markdown text={args.fullPlan.markdown} />
+        </details>
+      )}
       {chips.length > 0 && (
         <ul className="mt-2 flex flex-wrap gap-1" aria-label="Object classes">
           {chips.map(name => (

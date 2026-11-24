@@ -45,10 +45,16 @@ afterEach(() => {
 });
 
 describe('GateCard', () => {
-  it('shows the summary as markdown and the class chips', () => {
-    mount(args);
+  it('shows the summary as markdown, the class chips and the full plan in a collapsed disclosure', () => {
+    const { rerender } = mount({ ...args, fullPlan: { markdown: '**Goal:** every object', objects: 6 } });
     expect(host?.querySelector('strong')?.textContent).toBe('3');
     expect(host?.textContent).toContain('table');
+    const details = host?.querySelector('details');
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector('summary')?.textContent).toBe('Show full plan (6 objects)');
+    expect(details?.querySelectorAll('strong')[0]?.textContent).toBe('Goal:');
+    rerender(args);
+    expect(host?.querySelector('details')).toBeNull();
   });
 
   it('caps the class chips at eight and counts the rest', () => {

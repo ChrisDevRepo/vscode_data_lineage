@@ -9,6 +9,7 @@ import { NO_MODEL_MESSAGE, type ChatToExtensionMsg, type ChatToWebviewMsg, type 
 import { ModelPortError, type ModelPort } from '../ai/model/modelPort';
 import { isClearCommand } from '../ai/agent/slashCommands';
 import { expandNextQuestionSuggestions } from '../ai/prompting/followupSuggestions';
+import { renderFullPlanMd, renderScopeCardMd } from '../ai/prompting/scopeSummaryRenderer';
 import { NEXT_QUESTIONS_TRIGGER, RUN_TRACE_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER, expandRunTracePrompt } from '../ai/prompting/prompts';
 import type { ProviderModelPortOptions } from '../ai/model/providerModelPort';
 import type { AiTraceWriter } from '../ai/observability/aiTraceWriter';
@@ -282,9 +283,24 @@ export class ChatController {
     this.flushText(turn);
     if (event.type === 'gate') {
       turn.pendingGate = { gateId: event.gateId, classes: event.classes ?? [] };
+      const session = this.deps.getSession();
       // A finished analysis is replaced when the user approves a new one.
-      const replacesAnalysis = this.deps.getSession().resultGraph != null;
-      this.post({ type: 'chat.event', turnId: turn.turnId, event, ...(replacesAnalysis ? { replacesAnalysis } : {}) });
+      const replacesAnalysis = session.resultGraph != null;
+      // The card and full plan come from the held proposal, not the model-facing `summary`.
+      const proposal = session.pendingExploration;
+      const shown: TurnEvent = proposal
+        ? {
+          ...event,
+          summary: renderScopeCardMd(proposal),
+          fullPlan: { markdown: renderFullPlanMd(proposal), objects: proposal.summary.scopeCount },
+        }
+        : event;
+      this.post({
+        type: 'chat.event',
+        turnId: turn.turnId,
+        event: shown,
+        ...(replacesAnalysis ? { replacesAnalysis } : {}),
+      });
       return;
     }
     if (event.type === 'terminal') turn.pendingGate = undefined;

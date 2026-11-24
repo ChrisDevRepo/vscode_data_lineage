@@ -34,8 +34,10 @@ const TurnEventSchema = z.discriminatedUnion('type', [
     type: z.literal('gate'),
     gateId: z.string(),
     gate: z.string(),
-    /** The approval card as markdown: scope names, depth, counts. */
+    /** The approval card as markdown: depth, scope, schemas, tracing, analysis, objects, skips. */
     summary: z.string(),
+    /** The held proposal's full plan as markdown, behind a disclosure; `objects` counts nodes. */
+    fullPlan: z.object({ markdown: z.string(), objects: z.number() }).optional(),
     classes: z.array(z.string()).readonly().optional(),
   }),
   z.object({ type: z.literal('error'), message: z.string(), recoverable: z.boolean().optional() }),
