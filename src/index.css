@@ -125,6 +125,10 @@
   --ln-edge-min-strength: 0.85;
   --ln-edge-min-width-scale: 0.75;
 
+  /* Chat text. The one size every chat text hangs off. VS Code injects --vscode-font-size (a
+     constant 13px, the chat.fontSize default) into webviews and no chat-specific size variable. */
+  --ln-chat-font-size: var(--vscode-font-size, 13px);
+
   /* Shadows */
   --ln-node-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -483,6 +487,10 @@ body.vscode-reduce-motion *::after {
 [data-slot="popover-content"], [data-slot="tooltip-content"], [data-slot="dialog-overlay"], [data-slot="dialog-content"] {
   --font-sans: var(--vscode-font-family);
   --font-mono: var(--vscode-editor-font-family);
+  --text-xs: calc(var(--ln-chat-font-size) * 0.85);
+  --text-sm: var(--ln-chat-font-size);
+  --text-base: calc(var(--ln-chat-font-size) * 1.1);
+  --text-lg: calc(var(--ln-chat-font-size) * 1.25);
   --color-white: var(--ln-bg);
   --color-black: var(--ln-fg);
   --color-blue-400: var(--ln-text-link);
@@ -909,32 +917,21 @@ body.vscode-reduce-motion *::after {
 
 /* Markdown content styling */
 .ln-ai-description-md {
-  font-size: var(--ln-ai-description-font-size, 12px);
+  /* Sizes derive from the chat font size; the overlay's A-/A+ add a step (font-0, font-1, font-2).
+     Code and headings are relative to the text, so each follows it. */
+  --ln-ai-description-font-size: calc(var(--ln-chat-font-size) + var(--ln-ai-description-step));
+  --ln-ai-description-code-font-size: calc(var(--ln-ai-description-font-size) * 0.92);
+  --ln-ai-description-h1-font-size: calc(var(--ln-ai-description-font-size) * 1.33);
+  --ln-ai-description-h2-font-size: calc(var(--ln-ai-description-font-size) * 1.17);
+  --ln-ai-description-h3-font-size: calc(var(--ln-ai-description-font-size) * 1.08);
+  font-size: var(--ln-ai-description-font-size);
   line-height: 1.6;
   color: var(--ln-fg);
   overflow-wrap: break-word;
 }
-.ln-ai-description-font-0 {
-  --ln-ai-description-font-size: 12px;
-  --ln-ai-description-code-font-size: 11px;
-  --ln-ai-description-h1-font-size: 16px;
-  --ln-ai-description-h2-font-size: 14px;
-  --ln-ai-description-h3-font-size: 13px;
-}
-.ln-ai-description-font-1 {
-  --ln-ai-description-font-size: 14px;
-  --ln-ai-description-code-font-size: 12px;
-  --ln-ai-description-h1-font-size: 18px;
-  --ln-ai-description-h2-font-size: 16px;
-  --ln-ai-description-h3-font-size: 15px;
-}
-.ln-ai-description-font-2 {
-  --ln-ai-description-font-size: 16px;
-  --ln-ai-description-code-font-size: 14px;
-  --ln-ai-description-h1-font-size: 21px;
-  --ln-ai-description-h2-font-size: 18px;
-  --ln-ai-description-h3-font-size: 17px;
-}
+.ln-ai-description-font-0 { --ln-ai-description-step: 0px; }
+.ln-ai-description-font-1 { --ln-ai-description-step: 2px; }
+.ln-ai-description-font-2 { --ln-ai-description-step: 4px; }
 /* Wrapper the KaTeX extension emits around every expression; carries the original LaTeX in
    `data-latex`. Kept inline so an expression flows with the sentence around it. */
 .ln-ai-description-md .vscode-katex-container {
@@ -958,9 +955,9 @@ body.vscode-reduce-motion *::after {
   font-weight: 600;
   color: var(--ln-fg);
 }
-.ln-ai-description-md h1 { font-size: var(--ln-ai-description-h1-font-size, 16px); }
-.ln-ai-description-md h2 { font-size: var(--ln-ai-description-h2-font-size, 14px); }
-.ln-ai-description-md h3 { font-size: var(--ln-ai-description-h3-font-size, 13px); }
+.ln-ai-description-md h1 { font-size: var(--ln-ai-description-h1-font-size); }
+.ln-ai-description-md h2 { font-size: var(--ln-ai-description-h2-font-size); }
+.ln-ai-description-md h3 { font-size: var(--ln-ai-description-h3-font-size); }
 .ln-ai-description-md p {
   margin: 6px 0;
 }
@@ -976,7 +973,7 @@ body.vscode-reduce-motion *::after {
   background: var(--ln-input-bg);
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: var(--ln-ai-description-code-font-size, 11px);
+  font-size: var(--ln-ai-description-code-font-size);
   font-family: var(--vscode-editor-font-family, monospace);
 }
 .ln-ai-description-md pre {
@@ -1007,7 +1004,7 @@ body.vscode-reduce-motion *::after {
 .ln-ai-description-md td {
   border: 1px solid var(--ln-border);
   padding: 4px 8px;
-  font-size: var(--ln-ai-description-code-font-size, 11px);
+  font-size: var(--ln-ai-description-code-font-size);
   text-align: left;
 }
 .ln-ai-description-md th {
@@ -1023,7 +1020,7 @@ body.vscode-reduce-motion *::after {
 /* Engine-assembled Objects footnote — one small muted line at section end; label and links
    share the same small size */
 .ln-ai-description-md .ln-ai-objects {
-  font-size: var(--ln-ai-description-code-font-size, 11px);
+  font-size: var(--ln-ai-description-code-font-size);
   color: var(--ln-fg-muted);
   border-top: 1px solid var(--ln-border-light);
   margin: 12px 0 2px;
