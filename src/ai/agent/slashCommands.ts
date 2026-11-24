@@ -16,6 +16,8 @@ interface SlashRoute {
   readonly trigger: AgentExecutionTrigger;
   /** Columns parsed from a `/trace [schema].[table].[column]` request; `null` when none. */
   readonly targetColumns: string[] | null;
+  /** Object ids the command names, in bracket form and first-seen order: a 3+ part chain minus its column, a 2-part id whole. */
+  readonly origins: string[];
 }
 
 const SLASH_RE = /^\s*\/(trace|search)\b[ \t]*/i;
@@ -24,8 +26,8 @@ const CLEAR_RE = /^\s*\/(?:clear|new)\s*$/i;
 /** One bracketed identifier; `]]` inside is an escaped `]`. */
 const BRACKET_IDENTIFIER = String.raw`\[(?:[^\]]|\]\])+\]`;
 const BRACKET_TOKEN_RE = new RegExp(BRACKET_IDENTIFIER, 'g');
-/** One contiguous dot-joined bracket chain of 3+ parts, e.g. `[schema].[table].[column]`. */
-const BRACKET_CHAIN_RE = new RegExp(`(?:${BRACKET_IDENTIFIER}\\.){2,}${BRACKET_IDENTIFIER}`, 'g');
+/** One contiguous dot-joined bracket chain of 2+ parts, e.g. `[schema].[table]` or `[schema].[table].[column]`. */
+const BRACKET_CHAIN_RE = new RegExp(`(?:${BRACKET_IDENTIFIER}\\.)+${BRACKET_IDENTIFIER}`, 'g');
 
 /**
  * Whether the message is the host command `/clear` (alias `/new`): the chat host starts a new chat
@@ -50,23 +52,26 @@ export function detectSlashRoute(prompt: string): SlashRoute | null {
   const match = SLASH_RE.exec(prompt);
   if (!match) return null;
   if (match[1].toLowerCase() === 'search') {
-    return { entry: 'discovery', trigger: 'free_text', targetColumns: null };
+    return { entry: 'discovery', trigger: 'free_text', targetColumns: null, origins: [] };
   }
-  const columns = parseTraceColumns(prompt.slice(match[0].length));
-  return { entry: columns ? 'column_trace' : 'discovery', trigger: 'slash_trace', targetColumns: columns };
+  const { columns, origins } = parseTraceNames(prompt.slice(match[0].length));
+  return { entry: columns ? 'column_trace' : 'discovery', trigger: 'slash_trace', targetColumns: columns, origins };
 }
 
 /**
- * Extracts column names from `/trace` text: each contiguous dot-joined bracket chain of 3+ parts
- * (`[schema].[table].[column]`) contributes its last token. A 2-part `[schema].[object]` is a node
- * id and a bare `[X]` an object, neither a column, and two ids named separately in one sentence
- * never combine into a fabricated chain. `null` when none were named.
+ * Extracts the names a `/trace` text carries from each contiguous dot-joined bracket chain. A chain
+ * of 3+ parts (`[schema].[table].[column]`) contributes its last token as a column and the rest as
+ * an object id; a 2-part `[schema].[object]` is an object id whole, no column; a bare `[X]` is
+ * neither. Two ids named separately in one sentence never combine into a fabricated chain.
+ * `columns` is `null` when none were named.
  */
-function parseTraceColumns(text: string): string[] | null {
-  const columns = [...text.matchAll(BRACKET_CHAIN_RE)].map((chainMatch) => {
+function parseTraceNames(text: string): { columns: string[] | null; origins: string[] } {
+  const columns: string[] = [];
+  const origins = new Set<string>();
+  for (const chainMatch of text.matchAll(BRACKET_CHAIN_RE)) {
     const tokens = [...chainMatch[0].matchAll(BRACKET_TOKEN_RE)].map(m => m[0]);
-    return stripBrackets(tokens[tokens.length - 1]).trim();
-  });
-  return columns.length > 0 ? columns : null;
+    if (tokens.length >= 3) columns.push(stripBrackets(tokens[tokens.length - 1]).trim());
+    origins.add((tokens.length >= 3 ? tokens.slice(0, -1) : tokens).join('.'));
+  }
+  return { columns: columns.length > 0 ? columns : null, origins: [...origins] };
 }
-

@@ -115,17 +115,22 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
  *   otherwise.
  * @param discoveryBudget - True when entered via a `discovery_budget` reroute, where
  *   `lineage_start_exploration` is required and the text-only ambiguity branch is omitted.
+ * @param resolvedOrigin - Canonical node id the host resolved from a `/trace` command; it replaces
+ *   the search-and-resolve rule, since there is nothing left to resolve.
  */
 export function buildSmEntrySystemPrompt(
   ctx: StagePromptContext,
   targetColumns?: string[],
   discoveryBudget = false,
+  resolvedOrigin?: string | null,
 ): string {
   const base = buildGeneralSystemPrompt(ctx);
   const ctLine = targetColumns?.length
     ? `Column trace: analysisMode "ct", targetColumns [${targetColumns.map((c) => `"${escapePromptText(c)}"`).join(', ')}].`
     : '';
-  const resolutionRule = discoveryBudget
+  const resolutionRule = resolvedOrigin
+    ? `The user named \`${escapePromptText(resolvedOrigin)}\`, already resolved: call \`lineage_start_exploration\` once with it as \`origin\`, without searching${targetColumns?.length ? '; the targetColumns are columns of that object' : ''}.`
+    : discoveryBudget
     ? "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; otherwise call it with the matching object id from the results."
     : "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named.";
   const directive = [
