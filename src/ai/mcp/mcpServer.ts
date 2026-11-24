@@ -100,6 +100,9 @@ function toMcpResult(text: string, call: RejectedCall): CallToolResult {
     : { content: [{ type: 'text', text }], isError: false };
 }
 
+/** The author the graph preview credits for an MCP call: the stateless server has no client handshake at call time. */
+const MCP_CALLER_LABEL = 'MCP client';
+
 /** The names the MCP server serves, which the registry's stage policy and hints are told. */
 const SERVED_TOOLS: ReadonlySet<string> = new Set(MCP_TOOL_DEFS.map(def => def.name));
 
@@ -118,7 +121,7 @@ function createLineageMcpServer(version: string, tools: McpToolSource): McpServe
       inputSchema: fromJsonSchema(toModelJsonSchema(def.inputSchema), acceptAll),
       annotations: def.effect === 'read' ? READ_ONLY_ANNOTATIONS : VIEW_ANNOTATIONS,
     }, async (args, ctx) => {
-      const registry = buildAiToolRegistry(tools.getSession, tools.outputChannel, tools.getPanel, undefined, { ...tools.host, signal: ctx.mcpReq.signal, budget: null, served: SERVED_TOOLS });
+      const registry = buildAiToolRegistry(tools.getSession, tools.outputChannel, tools.getPanel, undefined, { ...tools.host, signal: ctx.mcpReq.signal, budget: null, served: SERVED_TOOLS, authorName: MCP_CALLER_LABEL });
       return toMcpResult(await registry.invoke(def.name, args), { toolName: def.name, schema: () => def.inputSchema });
     });
   }

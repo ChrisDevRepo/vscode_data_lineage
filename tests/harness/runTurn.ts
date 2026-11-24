@@ -170,6 +170,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
         analysisSettings: () => DEFAULT_CONFIG.analysis,
         model,
         budget: model.budget,
+        authorName: model.identity.name,
         signal: lease.signal,
         ...(storedRun ? { getStoredRun: (id: string) => (id === bookmarkId ? storedRun : undefined) } : {}),
       },

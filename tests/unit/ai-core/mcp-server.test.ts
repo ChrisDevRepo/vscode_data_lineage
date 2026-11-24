@@ -288,6 +288,20 @@ describe('lineage tools over MCP', () => {
     expect(untimed(panel.posted)).toEqual(untimed(freshPanel.posted));
   });
 
+  it('credits the graph preview to the caller: the MCP server by its caller label, the chat registry by the model name', async () => {
+    const panel = panelStub();
+    const { call, session, channel } = await connected((await fixture()).session, panel);
+    const preview = { name: 'Orders', ids: ['[Sales].[SalesOrderHeader]'] };
+    expect(await call('lineage_create_graph_preview', preview)).toMatchObject({ isError: false });
+    expect(panel.posted).toMatchObject([{ aiMetadata: { modelName: 'MCP client' } }]);
+
+    // The chat stage does not offer the preview yet; `served` replaces the stage policy as it does for the MCP server.
+    const chatPanel = panelStub();
+    const chat = buildAiToolRegistry(() => session, channel, () => chatPanel as never, undefined, { ...TOOL_HOST, served: new Set(['lineage_create_graph_preview']), authorName: 'Chat Model' });
+    expect(JSON.parse(await chat.invoke('lineage_create_graph_preview', preview))).toMatchObject({ name: 'Orders' });
+    expect(chatPanel.posted).toMatchObject([{ aiMetadata: { modelName: 'Chat Model' } }]);
+  });
+
   it('serves statelessly: a running chat turn gates no tool, its stage changes no answer, and the calls leave session.hopLog unchanged', async () => {
     const { session } = await fixture();
     const idle = await connected((await fixture()).session);

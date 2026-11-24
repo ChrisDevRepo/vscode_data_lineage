@@ -125,6 +125,7 @@ class ToolHandler implements ToolServices {
     public readonly signal: AbortSignal | undefined,
     public readonly budget: TurnTokenBudget | null,
     private readonly served: ReadonlySet<string> | undefined,
+    private readonly authorName: string,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
   }
@@ -353,7 +354,7 @@ class ToolHandler implements ToolServices {
         nodeIds: scope.nodeIds,
         aiMetadata: buildPreviewMetadata(
           { summary, description, layout_direction, highlight_groups, badges, notes: notes.map(n => ({ nodeId: n.node_id, text: n.caption })) },
-          { modelName: 'MCP client' },
+          { modelName: this.authorName },
         ),
       });
       if (delivery === 'no_panel') throw new NoProjectLoadedError();
@@ -511,16 +512,17 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
  *   `model`/`signal` supply the text completion `start_exploration` uses for the discovery-handoff
  *   memo on the approval card, and `budget` carries the owning turn's caps so a superseded turn's
  *   dispatch keeps measuring against its own model (`null`: no limit, the MCP server's); `served` names the tools of a caller outside
- *   the chat turn (the MCP server), which replaces the chat stage's policy and hints.
+ *   the chat turn (the MCP server), which replaces the chat stage's policy and hints;
+ *   `authorName` is the display name the graph preview credits (the chat's model, the MCP client).
  */
 export function buildAiToolRegistry(
   getSession: () => AiSession,
   outputChannel: LogChannel,
   getPanel: () => ResultPanel | undefined,
   turnLease: TurnLease | undefined,
-  host: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget: TurnTokenBudget | null; served?: ReadonlySet<string>; analysisSettings: () => AnalysisSettings },
+  host: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget: TurnTokenBudget | null; served?: ReadonlySet<string>; analysisSettings: () => AnalysisSettings; authorName: string },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, turnLease, host.getStoredRun, host.model, host.signal ?? turnLease?.signal, host.budget, host.served);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, turnLease, host.getStoredRun, host.model, host.signal ?? turnLease?.signal, host.budget, host.served, host.authorName);
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
