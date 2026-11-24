@@ -78,7 +78,8 @@ export function useToolbarOverflow(barRef: RefObject<HTMLElement | null>, items:
 /**
  * The "…" button and the menu of the controls that did not fit in the bar. The controls stay live
  * (their own dropdowns open from the menu); a press inside any floating layer is not outside the
- * menu.
+ * menu. A button that does an action closes the menu, so a modal it opens is not covered; a button
+ * that opens a dropdown (`aria-haspopup`) keeps it.
  */
 export function ToolbarOverflowMenu({ items }: { items: ToolbarItem[] }) {
   const [open, setOpen] = useState(false);
@@ -117,7 +118,14 @@ export function ToolbarOverflowMenu({ items }: { items: ToolbarItem[] }) {
               className="ln-dropdown z-50 flex flex-wrap items-center gap-2 rounded-md p-2"
               role="dialog"
               aria-label="More toolbar actions"
-              {...getFloatingProps()}
+              {...getFloatingProps({
+                // A click in a dropdown's portal also bubbles here; only a button in the menu
+                // itself counts.
+                onClick: event => {
+                  const button = event.target instanceof Element ? event.target.closest('button') : null;
+                  if (button && event.currentTarget.contains(button) && !button.hasAttribute('aria-haspopup')) setOpen(false);
+                },
+              })}
             >
               {items.map(item => <div key={item.key} className="flex items-center gap-2">{item.node}</div>)}
             </div>
