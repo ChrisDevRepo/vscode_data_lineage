@@ -1,4 +1,4 @@
-// Verifies optional test env loading, provider aliases, precedence, and validation.
+// Verifies optional test env loading, precedence, and validation of the AI_TEST_* model entry.
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,50 +6,35 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { loadTestEnv } from './load-test-env.mjs';
 
-test('every provider profile resolves from the supplied environment when .env is absent', () => {
-  const profiles = [
-    ['azure', 'AZURE_URI', 'AZURE_API', 'AZURE_MODEL'],
-    ['fireworks', 'FIREWORKS_URL', 'FIREWORKS_API', 'FIREWORKS_MODEL'],
-    ['openrouter', 'OPENROUTER_URL', 'OPENROUTER_API', 'OPENROUTER_MODEL'],
-    [
-      'openai-compatible',
-      'AI_TEST_OPENAI_COMPATIBLE_ENDPOINT',
-      'AI_TEST_OPENAI_COMPATIBLE_API_KEY',
-      'AI_TEST_OPENAI_COMPATIBLE_MODEL',
-    ],
-  ];
-
-  for (const [provider, endpointKey, apiKey, modelKey] of profiles) {
-    const env = {
-      AI_TEST_PROVIDER: provider,
-      [endpointKey]: 'https://provider.example/v1',
-      [apiKey]: 'secret',
-      [modelKey]: `${provider}-model`,
-    };
-    const identity = loadTestEnv({
-      env,
-      envFile: join(tmpdir(), 'missing-lineage-env'),
-      requireAiProvider: true,
-    });
-
-    assert.deepEqual(identity, { provider, model: `${provider}-model` });
-    assert.equal(env.AI_TEST_ENDPOINT, 'https://provider.example/v1');
-    assert.equal(env.AI_TEST_API_KEY, 'secret');
-    assert.equal(env.AI_TEST_MODEL, `${provider}-model`);
-  }
+const entry = (over = {}) => ({
+  AI_TEST_ENDPOINT: 'https://provider.example/v1',
+  AI_TEST_API_KEY: 'secret',
+  AI_TEST_MODEL: 'the-model',
+  AI_TEST_API_TYPE: 'chat-completions',
+  AI_TEST_MAX_INPUT_TOKENS: '100000',
+  AI_TEST_MAX_OUTPUT_TOKENS: '8000',
+  ...over,
 });
 
-test('non-empty environment values win over .env and provider aliases', () => {
+test('the model entry resolves from the supplied environment when .env is absent', () => {
+  const env = entry({ AI_TEST_MODEL: ' the-model ' });
+  const identity = loadTestEnv({ env, envFile: join(tmpdir(), 'missing-lineage-env'), requireAiProvider: true });
+
+  assert.deepEqual(identity, { model: 'the-model' });
+  assert.equal(env.AI_TEST_MODEL, 'the-model');
+  assert.equal(env.AI_TEST_API_KEY, 'secret');
+});
+
+test('non-empty environment values win over .env', () => {
   const directory = mkdtempSync(join(tmpdir(), 'lineage-env-'));
   const envFile = join(directory, '.env');
   writeFileSync(envFile, [
-    'AI_TEST_PROVIDER=fireworks',
     'AI_TEST_ENDPOINT=https://file.example/v1',
     'AI_TEST_API_KEY=file-secret',
     'AI_TEST_MODEL=file-model',
-    'FIREWORKS_URL=https://profile.example/v1',
-    'FIREWORKS_API=profile-secret',
-    'FIREWORKS_MODEL=profile-model',
+    'AI_TEST_API_TYPE=responses',
+    'AI_TEST_MAX_INPUT_TOKENS=1',
+    'AI_TEST_MAX_OUTPUT_TOKENS=1',
   ].join('\n'));
   const env = {
     AI_TEST_ENDPOINT: 'https://shell.example/v1',
@@ -59,18 +44,19 @@ test('non-empty environment values win over .env and provider aliases', () => {
 
   try {
     const identity = loadTestEnv({ env, envFile, requireAiProvider: true });
-    assert.deepEqual(identity, { provider: 'fireworks', model: 'shell-model' });
+    assert.deepEqual(identity, { model: 'shell-model' });
     assert.equal(env.AI_TEST_ENDPOINT, 'https://shell.example/v1');
     assert.equal(env.AI_TEST_API_KEY, 'shell-secret');
+    assert.equal(env.AI_TEST_API_TYPE, 'responses');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test('selected profiles reject missing values and invalid endpoints without exposing secrets', () => {
+test('a required entry rejects missing values and invalid endpoints without exposing secrets', () => {
   assert.throws(
     () => loadTestEnv({
-      env: { AI_TEST_PROVIDER: 'azure', AZURE_API: 'do-not-print', AZURE_MODEL: 'deployment' },
+      env: { AI_TEST_API_KEY: 'do-not-print', AI_TEST_MODEL: 'deployment' },
       envFile: join(tmpdir(), 'missing-lineage-env'),
       requireAiProvider: true,
     }),
@@ -83,12 +69,7 @@ test('selected profiles reject missing values and invalid endpoints without expo
 
   assert.throws(
     () => loadTestEnv({
-      env: {
-        AI_TEST_PROVIDER: 'openrouter',
-        OPENROUTER_URL: 'not-a-url',
-        OPENROUTER_API: 'do-not-print',
-        OPENROUTER_MODEL: 'model',
-      },
+      env: entry({ AI_TEST_ENDPOINT: 'not-a-url', AI_TEST_API_KEY: 'do-not-print' }),
       envFile: join(tmpdir(), 'missing-lineage-env'),
       requireAiProvider: true,
     }),
@@ -97,10 +78,10 @@ test('selected profiles reject missing values and invalid endpoints without expo
 
   assert.throws(
     () => loadTestEnv({
-      env: { AI_TEST_PROVIDER: 'typo-provider' },
+      env: entry({ AI_TEST_ENDPOINT: 'ftp://provider.example' }),
       envFile: join(tmpdir(), 'missing-lineage-env'),
       requireAiProvider: true,
     }),
-    /Unsupported AI_TEST_PROVIDER/u,
+    /must use HTTP or HTTPS/u,
   );
 });

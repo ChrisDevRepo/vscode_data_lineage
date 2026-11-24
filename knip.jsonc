@@ -23,13 +23,8 @@
     "tests/harness/vscodeHostShim.ts",
     // Imported by external consumers (@ext alias / createRequire), which knip cannot trace.
     "tests/harness/scriptedModelPort.ts",
-    "tests/fixtures/lm-provider-extension/live-provider-adapter.js",
     // The model-port factory: its callers are outside the extension bundle.
     "src/ai/providers/modelPortFactory.ts",
-    // Loaded by an in-host test lane, which knip cannot trace.
-    "tests/fixtures/lm-provider-extension/extension.js",
-    // extension.js loads it through a conditional require (DLV_CHAT_UI_REAL).
-    "tests/fixtures/lm-provider-extension/chat-ui-provider.js",
     // Comment-batch proof tool invoked by CI, not the public gate.
     "tests/tools/assert-comment-only.mjs",
   ],
