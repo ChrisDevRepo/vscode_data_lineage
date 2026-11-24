@@ -211,15 +211,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
         const norm = (v?: string[]): string => [...(v ?? [])].map(identifierKey).sort().join('\u0000');
         return norm(a) === norm(b);
       };
-      const depthIntent = data.depth ?? pendingInit?.depthIntent;
-      if (!depthIntent) {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: REJECTION_CODES.missingField,
-          reason: '/depth is missing from the exploration proposal.',
-          hint: 'Set levels and exactness for both upstream and downstream.',
-          issuePaths: ['depth'],
-        }), loggedInput);
-      }
+      const depthIntent = data.depth ?? pendingInit!.depthIntent;
       const refineDirection = directionFromDepth(depthIntent);
       const sameDepthIntent = (a?: DepthIntent, b?: DepthIntent): boolean =>
         !!a && !!b && !depthSidesDiffer(a.upstream, b.upstream) && !depthSidesDiffer(a.downstream, b.downstream);
@@ -260,10 +252,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
       const initResult = engine.init(proposalInit);
 
       if ('code' in initResult) return s.logAndReturn('lineage_start_exploration', initResult, loggedInput);
-      const classification = data.classification ?? sess.pendingExploration?.classification;
-      if (!classification) {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.missingField, reason: '/classification is missing from the exploration proposal.', hint: 'Send /classification.', issuePaths: ['classification'] }), loggedInput);
-      }
+      const classification = data.classification ?? sess.pendingExploration!.classification;
       engine.classification = classification;
       const summary = engine.getScopeSummary();
 
