@@ -50,8 +50,8 @@ export interface BridgeHost {
 }
 
 /** The minimum a send target must expose, so a panel and a bare view share one send path. */
-interface WebviewPostTarget {
-  readonly webview: vscode.Webview;
+export interface WebviewPostTarget {
+  readonly webview: { postMessage(message: unknown): PromiseLike<boolean> };
 }
 
 /**
@@ -108,7 +108,7 @@ function postValidated<S extends z.ZodTypeAny>(
  *   `false` when the caller's own notice already reaches the user, leaving only a log line.
  */
 export function postToWebview(
-  panel: vscode.WebviewPanel,
+  panel: WebviewPostTarget,
   msg: ExtensionToWebviewMsg,
   logger: Logger,
   notifyDrop = true,

@@ -10,6 +10,7 @@ import type { AiSession } from '../../src/ai/session/session';
 import type { StoredAiRun } from '../../src/ai/session/runStore';
 import type { NavigationEngine } from '../../src/ai/sm/smBase';
 import { buildAiToolRegistry } from '../../src/ai/tools/toolProvider';
+import { DEFAULT_CONFIG } from '../../src/engine/types';
 import { Logger } from '../../src/utils/log';
 import type { HeadlessLogChannel } from './headlessLogger';
 
@@ -195,6 +196,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
       () => undefined,
       lease,
       {
+        analysisSettings: () => DEFAULT_CONFIG.analysis,
         model,
         budget: model.budget,
         signal: lease.signal,

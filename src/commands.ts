@@ -9,8 +9,8 @@ import { searchCatalog } from './utils/modelSearch';
 import { markGitIgnored } from './utils/gitIgnoredDir';
 import { applyModelToSession, buildExtensionConfig, isModelOverLimit } from './bridge/messageHandlers';
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
-import { registerConnectionCommands } from './engine/db/connectionCommands';
-import { loadDmvQueries } from './engine/connectionManager';
+import { registerConnectionCommands } from './host/connectionCommands';
+import { loadDmvQueries } from './host/dbHost';
 import { registerSetApiKeyCommand } from './ai/providers/apiKeyCommand';
 
 /** Registers all user-facing and internal commands; returns their disposables. */

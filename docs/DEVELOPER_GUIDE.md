@@ -136,8 +136,8 @@ label.
   through [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts).
   Platform detection finishes before the model for the selected schemas is
   built.
-- **Connections:** [`src/engine/db/`](../src/engine/db/). The built-in
-  `tedious` driver opens the connection. Saved connections live in the
+- **Connections:** [`src/engine/db/`](../src/engine/db/) and the VS Code side in
+  [`src/host/`](../src/host/). The built-in `tedious` driver opens the connection. Saved connections live in the
   `dataLineageViz.database.connections` setting; passwords go to VS Code
   `SecretStorage`. See [`../SECURITY.md`](../SECURITY.md#connections).
 - **Saved projects:** [`src/engine/projectStore.ts`](../src/engine/projectStore.ts).

@@ -115,6 +115,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   const runStoreLogger = Logger.create(outputChannel, 'AI');
   const aiToolHost = {
     getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
+    analysisSettings: () => buildExtensionConfig(vscode.workspace.getConfiguration('dataLineageViz')).analysis,
   };
 
   // The MCP server follows `mcp.enabled` alone, not `ai.enabled`.

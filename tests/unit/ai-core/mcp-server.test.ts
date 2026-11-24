@@ -27,6 +27,7 @@ import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { Logger } from '../../../src/utils/log';
 import type { DatabaseModel } from '../../../src/engine/types';
 import { createHarnessSession, repoPath } from '../../harness/sessionFactory';
+import { TOOL_HOST } from '../helpers/toolHost';
 
 const INITIALIZE = JSON.stringify({
   jsonrpc: '2.0',
@@ -77,7 +78,7 @@ function harness(session = new AiSession()) {
     version: '0.0.0-test',
     onPortInUse: (port) => portInUse.push(port),
     onChange: () => undefined,
-    tools: { getSession: () => session, outputChannel: channel as never, getPanel: () => undefined },
+    tools: { getSession: () => session, outputChannel: channel as never, getPanel: () => undefined, host: TOOL_HOST },
   });
   return { lines, errors, store, portInUse, service, session, channel: channel as unknown as VSCode.LogOutputChannel };
 }
@@ -185,7 +186,7 @@ async function connected(session: AiSession) {
     const text = (result.content as Array<{ text?: string }>).map((part) => part.text ?? '').join('');
     return { text, isError: result.isError, rejection: readToolError(JSON.parse(text)) };
   };
-  return { ...s, client, call, registry: () => buildAiToolRegistry(() => session, s.channel, () => undefined) };
+  return { ...s, client, call, registry: () => buildAiToolRegistry(() => session, s.channel, () => undefined, undefined, TOOL_HOST) };
 }
 
 describe('lineage tools over MCP', () => {

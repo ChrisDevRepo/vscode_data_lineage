@@ -5,11 +5,10 @@
  * [`tools.ts`](./tools.ts); mutating tools live in `handlers/`; this module owns their shared host
  * services, registry binding, turn-lease checks and effect serialization.
  */
-import * as vscode from 'vscode';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
-import { Logger, trunc, sanitizeForLog, LOG_TRUNC_JSON, LOG_TRUNC_REJECTION } from '../../utils/log';
+import { Logger, trunc, sanitizeForLog, LOG_TRUNC_JSON, LOG_TRUNC_REJECTION, type LogChannel } from '../../utils/log';
 import {
   getContext, searchObjects, getObjectDetail,
   runAnalysis, searchDdl, getScopeBundle,
@@ -27,7 +26,6 @@ import {
   GetScreenStateInputSchema,
 } from '../tools/toolSchemas';
 import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/types';
-import { readDeclaredNumericSetting } from '../../configCore';
 import { type SerializedFilterState } from '../../engine/projectStore';
 import { countVisibleNodes } from '../../engine/shared/modelFilters';
 import { getAllowedLmToolNames, activeModeOf, type LmStage } from '../tools/toolPolicy';
@@ -39,7 +37,7 @@ import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
-import { postToWebview } from '../../bridge/host';
+import { postToWebview, type WebviewPostTarget } from '../../bridge/host';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { cursorOffset } from '../support/text';
 import { getModelNodeMap, type AiViewPreviewMessage, type ToolServices } from './handlers/toolServices';
@@ -50,6 +48,9 @@ import { executePresentResult } from './handlers/presentResult';
 import type { ModelPort } from '../model/modelPort';
 import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+
+type ResultPanel = WebviewPostTarget & { reveal(): void };
+export type AnalysisSettings = typeof DEFAULT_CONFIG.analysis;
 
 /**
  * Retry-messaging group for a rejection code, shared by this module's `[Reject]` debug line and
@@ -109,7 +110,7 @@ export function classifyRejectionCode(code: string): RejectionChatGroup {
  * notice.
  */
 export async function deliverToPanel(
-  panel: vscode.WebviewPanel | undefined,
+  panel: ResultPanel | undefined,
   message: AiViewPreviewMessage,
   logger: Logger,
 ): Promise<PreviewDelivery> {
@@ -127,8 +128,9 @@ class ToolHandler implements ToolServices {
 
   constructor(
     public readonly getSession: () => AiSession,
-    outputChannel: vscode.LogOutputChannel,
-    private readonly getPanel: () => vscode.WebviewPanel | undefined,
+    outputChannel: LogChannel,
+    private readonly getPanel: () => ResultPanel | undefined,
+    private readonly analysisSettings: () => AnalysisSettings,
     private readonly turnLease?: TurnLease,
     public readonly getStoredRun?: StoredRunReader,
     public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>,
@@ -383,11 +385,8 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(DetectGraphPatternsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_detect_graph_patterns', parsed.error, input);
       const { type, min_degree, max_size } = parsed.data;
-      const anaCfg = vscode.workspace.getConfiguration('dataLineageViz');
-      const resolvedMinDegree = min_degree ?? readDeclaredNumericSetting(anaCfg, 'analysis.hubMinDegree', DEFAULT_CONFIG.analysis.hubMinDegree);
-      const resolvedMaxSize   = max_size   ?? readDeclaredNumericSetting(anaCfg, 'analysis.islandMaxSize', DEFAULT_CONFIG.analysis.islandMaxSize);
-      const resolvedLongestPath = readDeclaredNumericSetting(anaCfg, 'analysis.longestPathMinNodes', DEFAULT_CONFIG.analysis.longestPathMinNodes);
-      return this.logAndReturn('lineage_detect_graph_patterns', runAnalysis(this.requireGraph(), type, this.budget, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
+      const configured = this.analysisSettings();
+      return this.logAndReturn('lineage_detect_graph_patterns', runAnalysis(this.requireGraph(), type, this.budget, min_degree ?? configured.hubMinDegree, max_size ?? configured.islandMaxSize, configured.longestPathMinNodes), input);
     } catch (err) { return this.toolError('detect_graph_patterns', err); }
   }
 
@@ -461,19 +460,20 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
  *
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
- * @param host - Optional host seam: `getStoredRun` resolves the AI run behind an applied bookmark,
+ * @param host - Host seam: `analysisSettings` reads the configured analysis thresholds,
+ *   `getStoredRun` resolves the AI run behind an applied bookmark,
  *   `model`/`signal` supply the text completion `start_exploration` uses for the discovery-handoff
  *   memo on the approval card, and `budget` carries the owning turn's caps so a superseded turn's
  *   dispatch keeps measuring against its own model.
  */
 export function buildAiToolRegistry(
   getSession: () => AiSession,
-  outputChannel: vscode.LogOutputChannel,
-  getPanel: () => vscode.WebviewPanel | undefined,
-  turnLease?: TurnLease,
-  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget?: TurnTokenBudget },
+  outputChannel: LogChannel,
+  getPanel: () => ResultPanel | undefined,
+  turnLease: TurnLease | undefined,
+  host: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget?: TurnTokenBudget; analysisSettings: () => AnalysisSettings },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal ?? turnLease?.signal, host?.budget);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, turnLease, host.getStoredRun, host.model, host.signal ?? turnLease?.signal, host.budget);
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),

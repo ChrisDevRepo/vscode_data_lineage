@@ -31,7 +31,7 @@ import {
 import { toModelJsonSchema } from '../tools/jsonSchema';
 import { filterRegistry } from '../tools/registry';
 import { TOOL_DEFS } from '../tools/toolDefs';
-import { MCP_TOOL_NAMES, buildAiToolRegistry, deliverToPanel } from '../tools/toolProvider';
+import { MCP_TOOL_NAMES, buildAiToolRegistry, deliverToPanel, type AnalysisSettings } from '../tools/toolProvider';
 import { getGraphPreviewScope, getPath, getTrace } from '../tools/tools';
 import { CreateGraphPreviewInputSchema, GetPathInputSchema, GetTraceInputSchema, parseToolInput } from '../tools/toolSchemas';
 import type { StoredRunReader } from '../session/runStore';
@@ -66,7 +66,7 @@ export interface McpToolSource {
   getSession: () => AiSession;
   outputChannel: vscode.LogOutputChannel;
   getPanel: () => vscode.WebviewPanel | undefined;
-  host?: { getStoredRun?: StoredRunReader };
+  host: { getStoredRun?: StoredRunReader; analysisSettings: () => AnalysisSettings };
 }
 
 /** Every served tool reads the loaded project: it changes nothing and touches nothing outside. */

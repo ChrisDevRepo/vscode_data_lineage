@@ -10,7 +10,9 @@ import { parseModelEntries, type ModelEntry } from '../../src/ai/providers/model
 import { createProviderModelPort } from '../../src/ai/providers/openAiTransport';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
 import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
-import { loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/connectionManager';
+import { loadDmvQueries } from '../../src/host/dbHost';
+import { DEFAULT_CONFIG } from '../../src/engine/types';
+import { executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/connectionManager';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
 import { exportRunToLangfuse, resolveLangfuseConfig } from './langfuseExport';
@@ -158,6 +160,9 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       };
       const session = await openBuiltInSession(db, {
         outputChannel, loadQueries: async () => queries,
+        queryTimeoutSeconds: () => DEFAULT_CONFIG.dmvQueryTimeout,
+        promptPassword: async () => undefined,
+        acquireSqlToken: async () => { throw new Error('The headless harness has no Microsoft sign-in.'); },
         secrets: { get: async () => undefined, store: async () => {}, delete: async () => {} } as unknown as vscode.SecretStorage,
       }, { password: process.env.DB_TEST_PASSWORD, token });
       if (!session) throw new Error('Database connection cancelled.');

@@ -6,14 +6,15 @@
  */
 
 import * as vscode from 'vscode';
-import type { Logger } from '../../utils/log';
-import type { StoredConnectionInfo } from '../shared/bridgeContract';
-import { readBuiltInConnections, upsertBuiltInConnection, describeConnection, resolveServerAddress, AZURE_SQL_HOST, type BuiltInConnection } from './connectionSettings';
-import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, type DbSession } from './dbSession';
+import type { Logger } from '../utils/log';
+import type { StoredConnectionInfo } from '../engine/shared/bridgeContract';
+import { describeConnection, resolveServerAddress, AZURE_SQL_HOST, type BuiltInConnection } from '../engine/db/connectionSettings';
+import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, type DbSession } from '../engine/db/dbSession';
+import { readBuiltInConnections, upsertBuiltInConnection } from './connectionStore';
 import { pickAccount, signInForSql } from './entraSignIn';
-import { redactSecrets } from '../../utils/redact';
-import { errorMessage } from '../../utils/errorMessage';
-import { quoteIdentifier } from '../../utils/sql';
+import { redactSecrets } from '../utils/redact';
+import { errorMessage } from '../utils/errorMessage';
+import { quoteIdentifier } from '../utils/sql';
 
 /** Identifier of an action a connection error can offer. */
 export type ConnectionErrorActionId =
