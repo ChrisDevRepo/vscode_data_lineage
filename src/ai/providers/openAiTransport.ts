@@ -17,7 +17,7 @@ import {
   type TransportRequest,
   type TransportTool,
 } from '../model/providerModelPort';
-import { cancelledError, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
+import { cancelledError, messageContentToText, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
 import { systemPromptHash, type TokenUsage, type WireMessage, type WirePart } from '../observability/wireLog';
 import { sanitizeProviderError } from '../support/text';
 import { countTokens } from '../support/tokenCount';
@@ -206,7 +206,7 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
             descriptionHash: systemPromptHash(tool.description),
             inputSchema: tool.inputSchema,
           })),
-          toolMode: tools.length > 0 ? (forced ? 2 : 1) : undefined,
+          toolMode: tools.length > 0 ? (forced && entry.forcedToolChoice ? 2 : 1) : undefined,
           body: wireBody(chat, tools.length > 0 ? sentChoice : undefined),
         });
         const model = tools.length > 0
@@ -236,7 +236,7 @@ function createOpenAiTransport(entry: ModelEntry, apiKey: string, effort = entry
         if (!replyReceived) throw new ModelPortError('unsupported_response', 'Provider reply carried no event stream.');
         wire?.({
           type: 'wire-response',
-          text: typeof total?.content === 'string' ? total.content : '',
+          text: total ? messageContentToText(total.content) : '',
           // The streamed text, not LangChain's completed `tool_calls`: a cut call shows what the model sent.
           toolCalls: (total?.tool_call_chunks ?? []).map((call) => ({
             callId: call.id ?? '',

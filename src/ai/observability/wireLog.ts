@@ -57,8 +57,9 @@ export type WireEvent =
       /** 1 when the request offers tools, 2 when it forces a call; absent when it carries no tools. */
       readonly toolMode?: number;
       /**
-       * The request fields that steer the model, as the HTTP body sent them: `tool_choice`,
-       * `reasoning_effort`, `reasoning`, `output_config`, `thinking`. Never a header or key.
+       * The request fields that steer the model, as the HTTP body sent them: the transport's
+       * `WIRE_BODY_FIELDS` (tool choice, reasoning, sampling and output cap).
+       * Never a header or key.
        */
       readonly body?: Readonly<Record<string, unknown>>;
       /** The verbatim system instruction, captured only while the trace runs verbose. */

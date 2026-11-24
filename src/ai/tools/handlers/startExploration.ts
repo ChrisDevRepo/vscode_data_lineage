@@ -312,7 +312,6 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
         s.logger.debug(
           `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
           `scope_nodes=${summary.scopeCount} ` +
-          `estimated_ddl_tokens=${summary.estimatedDdlTokens} ` +
           `estimated_ddl_chars=${summary.estimatedDdlChars}`
         );
 

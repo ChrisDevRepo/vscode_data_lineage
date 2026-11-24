@@ -13,7 +13,6 @@ import {
   cancelledError,
   cancelledToolTurnResult,
   errorToolTurnResult,
-  isHostCancellationError,
   isPortCancellation,
   isRecord,
   messageContentToText,
@@ -26,7 +25,7 @@ import {
   sanitizeProviderErrorDiagnostic,
 } from '../support/text';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
+import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { coerceStringifiedArguments, parseJson } from '../support/inputNormalization';
 import { toolCallNotationFault } from '../support/toolCallNotation';
 import { sanitizeForLog, trunc } from '../../utils/log';
@@ -69,7 +68,7 @@ export interface ModelTransport {
   /** Port identifier derived from the model. */
   readonly id: string;
   readonly identity: ModelIdentity;
-  /** Token count of one text; may reject, the port then estimates. */
+  /** Token count of one text; the counter does not reject. */
   countTokens(text: string): Promise<number>;
   /**
    * Streams one generation as LangChain chunks. A stream seen to its end finishes with one chunk
@@ -136,20 +135,10 @@ export class ProviderModelPort implements ModelPort {
 
   /**
    * {@link SingleGenerationModelPort.getNumTokens}; delegates to the transport's counter. Carries
-   * no cancellation: the caller is `trimMessages`' counter, run outside any generation. A rejecting
-   * counter falls back to the shared chars-per-token estimate rather than failing the node.
+   * no cancellation: the caller is `trimMessages`' counter, run outside any generation.
    */
-  public async getNumTokens(content: MessageContent): Promise<number> {
-    const text = messageContentToText(content);
-    try {
-      return await this.transport.countTokens(text);
-    } catch (error) {
-      this.options.debugLog?.(
-        `[AI] count-tokens-fallback model=${this.identity.id}`
-        + ` error=${error instanceof Error ? error.message : String(error)}`,
-      );
-      return estimateTokens(text.length);
-    }
+  public getNumTokens(content: MessageContent): Promise<number> {
+    return this.transport.countTokens(messageContentToText(content));
   }
 
   /** Runs one tool-capable generation and validates emitted calls against the supplied tools. */
@@ -171,7 +160,7 @@ export class ProviderModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const { message, toolCalls: emittedCalls, nonTextChars, finishReason, usage } = await this.collectGeneration(
+      const { message, toolCalls: emittedCalls, finishReason, usage } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions.map((definition) => ({
@@ -230,7 +219,7 @@ export class ProviderModelPort implements ModelPort {
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}`
         + ` observed_parts=${content.length} observed_text_chars=${text.length}`
-        + ` observed_nontext_chars=${nonTextChars} provider_parts=${providerParts.length}`
+        + ` provider_parts=${providerParts.length}`
         + ` tool_calls=${toolCalls.length} duration_ms=${Date.now() - startedAt}`
         + (usage
           ? ` input_tokens=${usage.inputTokens ?? 'n/a'} output_tokens=${usage.outputTokens ?? 'n/a'}`
@@ -340,7 +329,6 @@ export class ProviderModelPort implements ModelPort {
     message: AIMessageChunk;
     /** The message's tool calls, each verified to carry a call ID. */
     toolCalls: readonly IdentifiedToolCall[];
-    nonTextChars: number;
     finishReason: 'tool-calls' | 'stop' | 'unknown';
     /** Provider-reported usage of the last readable 'usage' stream part; absent when none. */
     usage?: TokenUsage;
@@ -376,7 +364,6 @@ export class ProviderModelPort implements ModelPort {
         ? [new SystemMessage(system), ...history]
         : [...history];
       let message = new AIMessageChunk({ content: '' });
-      let nonTextChars = 0;
       let streamEnded = false;
       let usage: TokenUsage | undefined;
       const stream = this.transport.stream({
@@ -389,9 +376,8 @@ export class ProviderModelPort implements ModelPort {
       for await (const chunk of stream) {
         if (signal?.aborted) throw cancelledError();
         message = message.concat(chunk);
-        if (typeof chunk.content === 'string' && chunk.content) onTextDelta?.(chunk.content);
-        const streamedNonText = chunk.response_metadata?.nonTextChars;
-        if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
+        const delta = messageContentToText(chunk.content);
+        if (delta) onTextDelta?.(delta);
         if (chunk.response_metadata?.streamEnd) streamEnded = true;
         const streamedUsage = chunk.response_metadata?.providerUsage;
         if (streamedUsage) usage = streamedUsage as TokenUsage;
@@ -420,7 +406,7 @@ export class ProviderModelPort implements ModelPort {
         latencyMs: Date.now() - startedAt,
         ...(usage ? { usage } : {}),
       });
-      return { message, toolCalls, nonTextChars, finishReason, usage };
+      return { message, toolCalls, finishReason, usage };
     } catch (error) {
       if (emitWire && requestEmitted && !signal?.aborted && !isCancellation(error)) {
         emitWire({
@@ -480,5 +466,5 @@ function toTransportToolChoice(
 }
 
 function isCancellation(error: unknown): boolean {
-  return isPortCancellation(error) || isHostCancellationError(error);
+  return isPortCancellation(error);
 }

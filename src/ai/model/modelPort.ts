@@ -174,26 +174,6 @@ export function isPortCancellation(error: unknown): boolean {
   return error instanceof ModelPortError && error.code === 'cancelled';
 }
 
-/**
- * Error names a host raises on cancellation: `Canceled` (platform spelling,
- * `vscode.CancellationError`), `Cancelled` (two `l`s) and `AbortError` (fetch-level abort). Declared
- * once so every classifier of a raw transport error shares one list.
- */
-const HOST_CANCELLATION_ERROR_NAMES: ReadonlySet<string> = new Set([
-  'AbortError',
-  'Canceled',
-  'Cancelled',
-]);
-
-/**
- * Whether a thrown value carries one of the host's cancellation error names. Name-based by
- * necessity: the host raises a plain `Error` with no code. Pair with {@link isPortCancellation} for
- * a normalized port error, and with `isCancellationOutcome` for the `ABORT_ERR`/`20` code forms.
- */
-export function isHostCancellationError(error: unknown): boolean {
-  return error instanceof Error && HOST_CANCELLATION_ERROR_NAMES.has(error.name);
-}
-
 /** Model-facing context used to audit which instruction fragments reached a generation. */
 export interface InstructionContext {
   /** Which generation shape the audit describes — structured, converse (tool-capable), or text. */

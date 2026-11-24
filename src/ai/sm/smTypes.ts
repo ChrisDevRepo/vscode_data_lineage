@@ -521,8 +521,6 @@ export interface ScopeSummary {
   targetColumns?: string[];
   /** Approximate UTF-16 DDL character count across the proposed scope. */
   estimatedDdlChars: number;
-  /** Approximate DDL token count (1 token ~= 4 chars) across the proposed scope. */
-  estimatedDdlTokens: number;
   /** Schema → type → leaf rollup used by `renderScopeSummaryMd` to reproduce the approval tree. */
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }>;
   /**

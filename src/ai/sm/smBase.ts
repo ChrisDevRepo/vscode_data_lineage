@@ -25,7 +25,7 @@ import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ColumnFlowEntry, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
-import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
+import type { ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
@@ -1891,7 +1891,6 @@ export class NavigationEngine implements IHopStateMachine {
       columnAspectActive: this.tracer !== null,
       targetColumns: this.tracer?.targetColumns,
       estimatedDdlChars,
-      estimatedDdlTokens: estimateTokens(estimatedDdlChars),
       bySchema,
       ambiguousObjectNames,
       scopeNotes: this.memory.getScopeNotes(),

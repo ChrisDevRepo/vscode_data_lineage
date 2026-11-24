@@ -12,7 +12,9 @@ import { createProviderModelPort } from '../../../src/ai/providers/openAiTranspo
  * object goes out with empty JSON-object arguments (`function.arguments` / `function_call.arguments`),
  * never the model's cut text (providers reject a history call whose arguments are no JSON) and never
  * LangChain's completed object; the rejection result carries the fault to the model. Both API types,
- * an own turn and another endpoint's turn.
+ * an own turn and another endpoint's turn. A streamed reply's text, whatever its chunk shape (a
+ * Responses `response.output_text.delta` event), reaches `onTextDelta` and the `wire-response`
+ * record the same as a Chat Completions text delta.
  */
 const CUT = '{"sections":{"technical":"cu';
 const schema = z.object({ sections: z.object({ technical: z.string() }) });
@@ -128,5 +130,31 @@ describe('OpenAI transport replay of a malformed tool call', () => {
       { callId: 'call_ok', name: 'lineage_present_result', input: { sections: { technical: 'x' } } },
       { callId: 'call_cut', name: 'lineage_present_result', input: CUT },
     ]);
+  });
+
+  it('a Responses output_text.delta streams to onTextDelta and is recorded in wire-response', async () => {
+    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'responses', maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
+    const reply = (status: string, output: unknown[] = []) => ({ id: 'resp_1', object: 'response', created_at: 1, model: 'gpt-x', status, output });
+    const message = { id: 'msg_1', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'hello world', annotations: [] }] };
+    const delta = (sequence: number, text: string) => ({ type: 'response.output_text.delta', sequence_number: sequence, item_id: 'msg_1', output_index: 0, content_index: 0, delta: text });
+    const events = [
+      { type: 'response.created', sequence_number: 0, response: reply('in_progress') },
+      { type: 'response.output_item.added', sequence_number: 1, output_index: 0, item: { ...message, status: 'in_progress', content: [] } },
+      delta(2, 'hello '),
+      delta(3, 'world'),
+      { type: 'response.output_item.done', sequence_number: 4, output_index: 0, item: message },
+      { type: 'response.completed', sequence_number: 5, response: reply('completed', [message]) },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    )));
+    const deltas: string[] = [];
+    const records: WireRecord[] = [];
+    await createProviderModelPort(entry, 'key', { wireLog: (record) => records.push(record) })
+      .generateToolTurn({ messages: [new HumanMessage('go')], tools: [], phase: 'test', onTextDelta: (text) => deltas.push(text) });
+    expect(deltas.join('')).toBe('hello world');
+    const wire = records.find((record) => record.type === 'wire-response');
+    expect(wire?.type === 'wire-response' ? wire.text : undefined).toBe('hello world');
   });
 });
