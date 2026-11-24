@@ -66,7 +66,7 @@ flowchart LR
 - **Hop-by-hop exploration.** One procedure, view or function is read per step.
   The model records findings and the extension decides which objects come
   next. Column mappings are the model's reading of the SQL, best-effort and not
-  complete. What the plan shows: [`FEATURES.md`](FEATURES.md#ai).
+  complete. What the plan shows: [`FEATURES.md`](FEATURES.md#ai-chat-panel).
 - **Memory.** Findings are kept per chat session; a bookmark saved from an AI
   view keeps them for later questions.
 

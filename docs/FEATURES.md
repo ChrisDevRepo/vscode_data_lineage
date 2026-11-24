@@ -193,7 +193,7 @@ Tables above `tableStatistics.sampleThreshold` rows are sampled instead of fully
 
 ## MCP server
 
-A local MCP server lets other AI clients call the lineage tools. It covers the discovery phase: lookup tools (context, screen state, object search, object detail, graph patterns, DDL search) plus trace, path and graph preview. The client's own model does the reasoning and writes the answer; the server returns each result or an error result. Everything after discovery is in the chat panel, which uses your configured model (see [AI](#ai)). The six lookup tools run the same code as in the chat panel.
+A local MCP server lets other AI clients call the lineage tools. It covers the discovery phase: lookup tools (context, screen state, object search, object detail, graph patterns, DDL search) plus trace, path and graph preview. The client's own model does the reasoning and writes the answer; the server returns each result or an error result. Everything after discovery is in the chat panel, which uses your configured model (see [AI chat panel](#ai-chat-panel)). The six lookup tools run the same code as in the chat panel.
 
 - **Tools.** `lineage_get_context`, `lineage_get_screen_state`, `lineage_search_objects`, `lineage_get_object_detail`, `lineage_detect_graph_patterns`, `lineage_search_ddl`, `lineage_get_trace`, `lineage_get_path` and `lineage_create_graph_preview`. They read the loaded model and are inactive when none is loaded. Nothing connects to the database. The graph preview opens its view in the graph panel.
 - **Failed calls.** A call that is refused returns an error result with a corrective message and a structured error. The server keeps no state, retries nothing and sets no call limit; the client decides whether to retry.
@@ -204,16 +204,21 @@ A local MCP server lets other AI clients call the lineage tools. It covers the d
 
 ---
 
-## AI
+## AI chat panel
 
-The assistant is being rebuilt as its own panel. The model setup and the lineage tools are in place:
+The graph view has its own chat pane, docked on the right edge. It answers lineage questions on the loaded model with the model you configure. It is separate from the [MCP server](#mcp-server), which serves the lineage tools to other AI clients.
 
-- **Models.** `dataLineageViz.ai.models` lists OpenAI-compatible endpoints (Chat Completions or Responses). `dataLineageViz.ai.defaultModel` names the entry to use. An invalid entry is named in a warning and not offered.
+- **Open and use.** Click **Chat** on the right edge of the graph; the pane resizes, **Esc** collapses it, and a running answer keeps streaming while it is collapsed. **New chat** starts a fresh conversation and stops a running answer.
+- **Commands.** Type `/search` to answer from the lookup tools only, or `/trace` (optionally with `[schema].[table].[column]`) to plan a hop-by-hop exploration.
+- **Models.** `dataLineageViz.ai.models` lists OpenAI-compatible endpoints (Chat Completions or Responses). `dataLineageViz.ai.defaultModel` names the entry used first. The composer's picker offers the valid entries, and an effort picker for entries that set `supportsReasoningEffort`. An invalid entry is named in a warning and not offered.
 - **API keys.** **Data Lineage: Set API key** stores the key of one entry in VS Code's secret storage. A key is never in settings, logs or the webview.
-- **Tools.** The read-only lineage tools over the loaded model are served to local MCP clients (such as Copilot, Claude Code, Cursor or Codex CLI) when `dataLineageViz.mcp.enabled` is on (**Data Lineage: Enable MCP Server** sets it). Nothing connects to the database.
+- **Approval.** Before a hop-by-hop exploration reads any object, an approval card shows the plan: **Approve**, **Refine** (describe the change, then **Send change**) or **Cancel**.
+- **Token guard.** A question whose discovery would pull more than `ai.discoveryNodeCap` objects or `ai.discoveryTokenBudget` tokens of DDL is not answered directly; it is offered as a hop-by-hop exploration for your approval.
+- **Follow-up buttons.** **Start deeper hop-by-hop analysis** (when an exploration is offered), **Next questions and related objects** (after a completed answer) and **Show full description** (when the answer has a longer description).
+- **Tools.** The lineage tools the chat uses are also available to other clients: see the [MCP server](#mcp-server).
 - **Output templates.** **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml), which controls the summary, badges and notes. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
-What a model reads (the SQL and metadata the tools return) is sent to the endpoint of the entry used, including for a local DACPAC. To turn the chat panel and its AI tools off, set `dataLineageViz.ai.enabled` to `false` and reload the window; the MCP server follows `dataLineageViz.mcp.enabled` only.
+What a model reads (the SQL and metadata the tools return) is sent to the endpoint of the entry used, including for a local DACPAC. To turn the chat panel off, set `dataLineageViz.ai.enabled` to `false` and reload the window; the MCP server follows `dataLineageViz.mcp.enabled` only.
 
 ---
 
@@ -294,7 +299,7 @@ Database import only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 
 | Setting | Default | Detail |
 |---|---|---|
-| `ai.enabled` | on | Registers the AI tools. Reload the window after changing it. |
+| `ai.enabled` | on | Turns the chat panel and its tools on or off. Reload the window after changing it. |
 | `ai.maxRounds` | 50 (5–100) | Rounds per deep analysis, one for each procedure, view or function it reads. An analysis that needs more is not started. |
 | `ai.maxTraceColumns` | 10 (min 1) | Starting columns one column trace may follow. A trace that selects more is not started. |
 | `ai.discoveryNodeCap` | 10 (1–30) | Scope nodes a discovery answer may pull in one request before it is offered as a deep analysis for approval. |

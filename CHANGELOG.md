@@ -3,7 +3,7 @@
 ## [1.3.0] - Unreleased
 
 ### Changed
-- AI: the `@lineage` Copilot chat participant is replaced, because Microsoft deprecated chat participants ([VS Code docs](https://code.visualstudio.com/api/extension-guides/ai/chat)). Models are OpenAI-compatible endpoints in `dataLineageViz.ai.models`; keys via **Data Lineage: Set API key**.
+- AI: the `@lineage` Copilot chat participant is replaced by a chat panel in the graph view (`/search`, `/trace`, model picker, approval before hop-by-hop exploration); models in `dataLineageViz.ai.models`, keys via **Data Lineage: Set API key**.
 - MCP: a local MCP server lets Claude Code, Copilot agent mode and other MCP clients call the lineage tools on the loaded project; run **Data Lineage: Enable MCP Server** or set `dataLineageViz.mcp.enabled`. It is separate from the chat panel and does not need `dataLineageViz.ai.enabled`.
 - Column traces show join and filter columns as indirect sources.
 - AI follow-ups that name a border table bring in its next-level objects.

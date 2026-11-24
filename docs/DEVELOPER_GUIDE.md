@@ -195,6 +195,9 @@ What the AI may and may not do:
 | [`src/ai/tools/`](../src/ai/tools/) | The tool registry and handlers. |
 | [`src/ai/prompting/`](../src/ai/prompting/) | Prompt builders. Output templates are in `assets/aiOutputTemplates.yaml`. |
 | [`src/ai/session/`](../src/ai/session/) | Per-chat memory and saved AI runs. |
+| [`src/bridge/chatHandlers.ts`](../src/bridge/chatHandlers.ts), [`src/engine/shared/chatContract.ts`](../src/engine/shared/chatContract.ts) | Chat panel host (model selection, turns, approval, follow-ups) and its Zod message contract. |
+| [`src/components/chat/`](../src/components/chat/) | Chat panel webview (assistant-ui), docked by `src/components/ChatDock.tsx`. |
+| [`src/ai/runtime/lineageRuntime.ts`](../src/ai/runtime/lineageRuntime.ts) | Runs one chat turn on the agent graph and emits its events. |
 
 Prompts and templates: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
