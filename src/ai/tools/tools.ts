@@ -44,6 +44,7 @@ import {
 import { checkScopeText, countTokens } from '../support/tokenCount';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { buildBareGraph, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
+import { projectObject } from '../../engine/objectDetail';
 import { getModelNodeMap } from './handlers/toolServices';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { cursorOffset, nextCursor, quoteIds } from '../support/text';
@@ -474,9 +475,9 @@ export function getObjectDetail(
     });
   }
 
-  const cols = getNodeColumns(node.id, nodeMap, store);
-  const columns    = cols?.map(c => presentColumn(c)) ?? undefined;
-  const foreignKeys = presentForeignKeys(node.fks) ?? null;
+  const detail = projectObject(node, store);
+  const columns    = detail.columns?.map(c => presentColumn(c)) ?? undefined;
+  const foreignKeys = presentForeignKeys(detail.foreignKeys) ?? null;
 
   const base: Record<string, unknown> = strip({
     id:           node.id,

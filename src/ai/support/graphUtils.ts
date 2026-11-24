@@ -14,21 +14,8 @@ import type {
   LineageNode,
   ObjectType,
 } from '../../engine/types';
+import { projectObject, type NodeSnapshotStore } from '../../engine/objectDetail';
 import { normalizeBodyScript } from '../../utils/sql';
-
-/**
- * The two high-fidelity reads these accessors take from the engine's column store.
- *
- * @remarks
- * Declared structurally so the snapshot accessors state what they read instead of importing the
- * store implementation across the layer boundary; `ColumnStore` satisfies it as written.
- */
-export interface NodeSnapshotStore {
-  /** Stored column definitions for `nodeId`, or `undefined` when the store holds none. */
-  getColumns(nodeId: string): ColumnDef[] | undefined;
-  /** Stored DDL text for `nodeId`, or `undefined` when the store holds none. */
-  getDdl(nodeId: string): string | undefined;
-}
 
 /**
  * Constructs a minimal, directed topology-only graph from a DatabaseModel.
@@ -70,7 +57,7 @@ export function getNodeColumns(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,
 ): ColumnDef[] | undefined {
-  return (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
+  return projectObject(nodeMap.get(nodeId) ?? { id: nodeId }, store).columns;
 }
 
 /** Retrieves the stored DDL for a specific node (blank lines dropped, tabs expanded). */
@@ -78,7 +65,7 @@ export function getNodeDdl(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,
 ): string | undefined {
-  const raw = (typeof store?.getDdl === 'function' ? store.getDdl(nodeId) : undefined) ?? nodeMap.get(nodeId)?.bodyScript;
+  const raw = projectObject(nodeMap.get(nodeId) ?? { id: nodeId }, store).ddl;
   return raw ? normalizeBodyScript(raw) : undefined;
 }
 

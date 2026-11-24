@@ -41,6 +41,7 @@ import {
 import { buildBareGraph } from '../ai/support/graphUtils';
 import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
+import { projectObject } from '../engine/objectDetail';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
 import { formatRenderConnectivity } from '../engine/renderConnectivity';
 import { formatScreenStateSections } from './debugDumpScreenState';
@@ -367,10 +368,8 @@ export function createMessageHandlers(
   }
 
   function enrichNodeForDetail(node: LineageNode): LineageNode {
-    const sess = getSession();
-    const cols = sess.columnStore.getColumns(node.id);
-    const ddl = sess.columnStore.getDdl(node.id);
-    return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
+    const { columns, ddl } = projectObject(node, getSession().columnStore);
+    return { ...node, ...(columns && { columns }), ...(ddl && { bodyScript: ddl }) };
   }
 
   /** The one load the webview still waits for; starting another cancels it. */
