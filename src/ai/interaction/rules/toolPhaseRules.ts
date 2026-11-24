@@ -37,6 +37,7 @@ export function evaluateToolPhaseRule(
   const stageLabel = stage.kind === 'active' ? `active(${stage.mode})` : stage.kind;
   return makeRejection({
     code: REJECTION_CODES.offPolicy,
-    hint: `Tool ${toolName.replace('lineage_', '')} is not available in stage ${stageLabel}. Allowed tools this stage: ${[...allowed].map(n => n.replace('lineage_', '')).join(', ')}. ${offPolicyHint(toolName, stage)}`,
+    reason: `Tool ${toolName.replace('lineage_', '')} is not available in stage ${stageLabel}.`,
+    hint: `Allowed tools this stage: ${[...allowed].map(n => n.replace('lineage_', '')).join(', ')}. ${offPolicyHint(toolName, stage)}`,
   });
 }

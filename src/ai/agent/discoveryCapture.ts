@@ -33,10 +33,10 @@ const NodeCountsView = z.object({ nodes: z.number() }).loose();
 /**
  * The over-budget refusal as any catalog tool serves it: the rejection (`detail.counts`,
  * `detail.scope_proposal`) or `lineage_search_ddl`'s partial reply (top-level `counts`); both carry
- * the budget code as `reason`.
+ * the budget `code`.
  */
 const OverBudgetResultView = z.object({
-  reason: z.literal(REJECTION_CODES.overDiscoveryBudget),
+  code: z.literal(REJECTION_CODES.overDiscoveryBudget),
   counts: NodeCountsView.optional(),
   hint: z.string().optional(),
   detail: z.object({
