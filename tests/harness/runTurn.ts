@@ -12,6 +12,7 @@ import type { NavigationEngine } from '../../src/ai/sm/smBase';
 import { buildAiToolRegistry } from '../../src/ai/tools/toolProvider';
 import { DEFAULT_CONFIG } from '../../src/engine/types';
 import { Logger } from '../../src/utils/log';
+import { answerExpectation, gateRound, type GateExpectationReceipt, type GateRoundPolicy } from './gatePolicy';
 import type { HeadlessLogChannel } from './headlessLogger';
 
 /**
@@ -32,56 +33,10 @@ function bookmarkIdFromUiState(uiState: unknown): string | undefined {
   return typeof id === 'string' ? id : undefined;
 }
 
-/**
- * How one gate round is answered.
- *
- * @remarks
- * `--gate` supplies an ordered, comma-separated list of these; round *N* of a turn is answered by
- * entry *N*, clamped to the last entry once the list is exhausted, so a trailing `approve` or `deny`
- * terminates any further round without needing one entry per possible gate.
- */
-type GateRoundPolicy =
-  | { readonly kind: 'approve'; readonly expect?: string }
-  | { readonly kind: 'deny' }
-  | { readonly kind: 'refine'; readonly instruction: string };
+/** The answer of a run with no `--gate` list: every card is approved. */
+const APPROVE: GateRoundPolicy = { kind: 'approve' };
 
-/**
- * Evaluates one `approve:<expect>` assertion against the pending proposal.
- *
- * @param expr - `[!]<field>~<substring>` for membership, or `<field>=<number>` for a count.
- * @param session - The session carrying `pendingExploration` at gate time.
- * @returns Whether the proposal satisfies the assertion.
- * @remarks
- * The gate is where the proposal becomes binding, so an expectation is checked here rather than on
- * the finished graph: approving a proposal that contradicts the instruction and then scoring the
- * result conflates a wrong proposal with a wrongly accepted one.
- */
-function evaluateGateExpectation(expr: string, session: AiSession): boolean {
-  const proposal = session.pendingExploration;
-  if (!proposal) return false;
-  const negated = expr.startsWith('!');
-  const body = negated ? expr.slice(1) : expr;
-
-  const countMatch = /^([A-Za-z]+)=(\d+)$/.exec(body);
-  if (countMatch) {
-    const counts: Record<string, number | undefined> = {
-      scopeCount: proposal.summary.scopeCount,
-      hopCount: proposal.summary.hopCount,
-    };
-    const actual = counts[countMatch[1]];
-    const ok = actual !== undefined && actual === Number(countMatch[2]);
-    return negated ? !ok : ok;
-  }
-
-  const hasMatch = /^([A-Za-z]+)~(.+)$/.exec(body);
-  if (!hasMatch) throw new Error(`--gate expect "${expr}" is invalid. Use field~substring or field=count.`);
-  const [, field, needle] = hasMatch;
-  const init = proposal.init as unknown as Record<string, unknown>;
-  const raw = init[field];
-  const values = Array.isArray(raw) ? raw.map((v) => String(v)) : raw === undefined ? [] : [String(raw)];
-  const ok = values.some((v) => v.toLowerCase().includes(needle.toLowerCase()));
-  return negated ? !ok : ok;
-}
+type GateEvent = Extract<TurnEvent, { type: 'gate' }>;
 
 /** Everything one headless turn needs; nothing here is VS Code specific. */
 export interface HarnessTurnOptions {
@@ -95,15 +50,20 @@ export interface HarnessTurnOptions {
   readonly requestId?: string;
   readonly maxRounds?: number;
   /**
-   * How each consent gate this turn raises is answered, in round order.
+   * The run's gate rounds: card *N* is answered by `gate[N]`; a card past the list is held
+   * unanswered.
    *
    * @remarks
    * A run-level policy, not a human-in-the-loop decision: the harness has no human to ask, and a
    * lane that silently varied its answer between otherwise-identical runs would make them
-   * incomparable. Round *N* (1-based) is answered by `gate[N-1]`, clamped to the last entry once the
-   * list is exhausted. Defaults to a single `approve` entry.
+   * incomparable. Absent, every card is approved.
    */
   readonly gate?: readonly GateRoundPolicy[];
+  /**
+   * Cards the run's earlier turns answered: this turn's first card reads `gate[gateOffset]`, so
+   * the list continues across follow-ups.
+   */
+  readonly gateOffset?: number;
   readonly signal?: AbortSignal;
   /** Session trace sink; when present the runtime writes lifecycle and tool records to it. */
   readonly traceWriter?: AiTraceWriter;
@@ -123,19 +83,15 @@ export interface HarnessTurnOptions {
   readonly storedRun?: StoredAiRun;
 }
 
-/** One consent gate and the decision the run policy applied to it. */
-interface HarnessGateDecision {
+/** One gate round and the decision applied to its card (revised card when `mismatch` is set). */
+interface HarnessGateDecision extends Pick<GateExpectationReceipt, 'expectation' | 'mismatch'> {
   readonly gateId: string;
   readonly gate: string;
-  readonly decision: 'approve' | 'deny' | 'refine';
+  /** Index of the round in the gate list. */
+  readonly policyIndex: number;
+  readonly decision: GateRoundPolicy['kind'];
   /** The refine instruction sent, present only when `decision` is `'refine'`. */
   readonly instruction?: string;
-  /**
-   * The `approve:<expect>` assertion evaluated at this gate, and whether the proposal satisfied it.
-   * A failed expectation is answered `deny`, so the run records a refusal at the gate instead of
-   * measuring a graph nobody would have approved.
-   */
-  readonly expectation?: { readonly expr: string; readonly ok: boolean };
 }
 
 /** Terminal outcome plus everything observable about the turn that produced it. */
@@ -147,6 +103,8 @@ export interface HarnessTurnResult {
   /** Terminal status claimed by the sink, or `null` when no terminal event was emitted. */
   readonly terminalStatus: string | null;
   readonly gates: readonly HarnessGateDecision[];
+  /** A card with no declared round was held open; the caller judges it. */
+  readonly unansweredCard: boolean;
   /** Absolute paths of the artifacts written, keyed by artifact name. */
   readonly artifacts: Readonly<Record<string, string>>;
 }
@@ -163,7 +121,7 @@ function writeArtifact(
 }
 
 /**
- * Executes one turn and dumps `sm-state.json`, `answer.md`, `present-result.json`, `hop-log.json`.
+ * Executes one turn and dumps `sm-state.json`, `answer.md`, `present-result.json`, `final-snapshot.json`, `hop-log.json`.
  *
  * @param options - Session, model port, prompt, run directory, and gate policy.
  * @returns The terminal outcome plus the observed events, answer text, and artifact paths.
@@ -180,11 +138,12 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
   const bookmarkId = bookmarkIdFromUiState(options.uiState);
   const storedRun = options.storedRun;
   const requestId = options.requestId ?? randomUUID();
-  const gatePolicy: readonly GateRoundPolicy[] =
-    options.gate && options.gate.length > 0 ? options.gate : [{ kind: 'approve' }];
   const events: TurnEvent[] = [];
   const gates: HarnessGateDecision[] = [];
-  let gateRound = 0;
+  const answering: Promise<void>[] = [];
+  /** Waits for the card an onMismatch Change revises: the next gate event, or `null` at turn end. */
+  let revisedCard: ((gate: GateEvent | null) => void) | null = null;
+  let unansweredCard = false;
   let text = '';
   let engine: NavigationEngine | null = null;
 
@@ -217,45 +176,64 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     if (!engine && options.session.stateMachine) {
       engine = options.session.stateMachine as NavigationEngine;
     }
+    if (event.type === 'terminal') revisedCard?.(null);
     if (event.type !== 'gate') return;
-    const round = gatePolicy[Math.min(gateRound, gatePolicy.length - 1)];
-    gateRound += 1;
-    // A proposal that contradicts the instruction is what a user refuses at the gate, so the harness
-    // refuses it too rather than approving and scoring the graph that follows.
-    const expectation = round.kind === 'approve' && round.expect !== undefined
-      ? { expr: round.expect, ok: evaluateGateExpectation(round.expect, options.session) }
-      : undefined;
-    const decision = expectation && !expectation.ok ? 'deny' : round.kind;
-    gates.push({
-      gateId: event.gateId,
-      gate: event.gate,
-      decision,
-      ...(round.kind === 'refine' ? { instruction: round.instruction } : {}),
-      ...(expectation ? { expectation } : {}),
-    });
-    if (expectation && !expectation.ok) {
-      options.logger.error(
-        `[harness] gate ${event.gate} expectation FAILED (${expectation.expr}) — denying instead of approving`,
-      );
+    if (revisedCard) {
+      revisedCard(event);
+      return;
     }
-    options.logger.info(
-      `[harness] gate ${event.gate} → ${decision}${round.kind === 'refine' ? `: ${round.instruction}` : ''}`
-      + (expectation ? ` [expect ${expectation.expr} ${expectation.ok ? 'ok' : 'FAILED'}]` : ''),
-    );
-    // FIRE-AND-FORGET, never awaited. `resumeGate` resolves only after the owning turn reaches its
-    // terminal state, and this callback runs inside that turn — awaiting it here deadlocks the turn
-    // that is waiting for the decision being made.
-    void runtime.resumeGate(
-      event.gateId,
-      decision === 'approve'
-        ? { kind: 'approve', classes: [] }
-        : decision === 'refine'
-          ? { kind: 'refine', refine: { instruction: (round as { instruction: string }).instruction } }
-          : { kind: 'cancel' },
-    ).catch((error: unknown) => {
+    answering.push(answerCard(event));
+  });
+
+  /** Resolves a gate without awaiting it: `resumeGate` settles only after the owning turn reaches its terminal state, and
+   * this runs inside that turn, so awaiting would deadlock the turn that is waiting for the decision being made. */
+  const resume = (gateId: string, decision: Parameters<LineageRuntime['resumeGate']>[1]): void => {
+    void runtime.resumeGate(gateId, decision).catch((error: unknown) => {
       options.logger.error(`[harness] gate resume failed: ${String(error)}`);
     });
-  });
+  };
+
+  /** Answers one card with the next declared round: a missed `expect` is recorded, never refused. */
+  async function answerCard(event: GateEvent): Promise<void> {
+    const policyIndex = (options.gateOffset ?? 0) + gates.length;
+    const round = options.gate === undefined ? APPROVE : gateRound(options.gate, policyIndex);
+    if (!round) {
+      // `hold` ends the turn with the card open, as a user who leaves it: the caller sees `unansweredCard`.
+      unansweredCard = true;
+      options.logger.info(`[harness] gate ${event.gate} has no declared round ${policyIndex + 1} — held unanswered`);
+      resume(event.gateId, { kind: 'hold' });
+      return;
+    }
+    let gateId = event.gateId;
+    const answered = await answerExpectation(round, () => options.session, async (instruction) => {
+      const revised = new Promise<GateEvent | null>((resolve) => { revisedCard = resolve; });
+      options.logger.info(`[harness] gate ${event.gate} expectation missed — sending the onMismatch Change: ${instruction}`);
+      resume(gateId, { kind: 'refine', refine: { instruction } });
+      const card = await revised;
+      revisedCard = null;
+      if (card) gateId = card.gateId;
+    });
+    const decision = answered.decision ?? round.kind;
+    const instruction = answered.answer ?? (round.kind === 'refine' ? round.instruction : undefined);
+    gates.push({
+      gateId,
+      gate: event.gate,
+      policyIndex,
+      decision,
+      ...(instruction !== undefined ? { instruction } : {}),
+      ...(answered.expectation ? { expectation: answered.expectation } : {}),
+      ...(answered.mismatch ? { mismatch: answered.mismatch } : {}),
+    });
+    options.logger.info(
+      `[harness] gate ${event.gate} round ${policyIndex + 1} → ${decision}${instruction !== undefined ? `: ${instruction}` : ''}`
+      + (answered.expectation ? ` [expect ${answered.expectation.expr} ${answered.expectation.ok ? 'ok' : 'FAILED'}]` : ''),
+    );
+    // A Change that left no card was the round's last answer: nothing is left to resume.
+    if (answered.decision) return;
+    resume(gateId, round.kind === 'approve'
+      ? { kind: 'approve', classes: [] }
+      : round.kind === 'refine' ? { kind: 'refine', refine: { instruction: round.instruction } } : { kind: 'cancel' });
+  }
 
   options.logger.info(`[harness] turn start request=${requestId} model=${options.model.identity.id}`);
   const outcome = await runtime.run({
@@ -264,6 +242,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     sink,
     ...(options.signal ? { signal: options.signal } : {}),
   });
+  await Promise.all(answering);
   // A post-run read catches an engine published by a node that emitted no further event.
   if (!engine && options.session.stateMachine) {
     engine = options.session.stateMachine as NavigationEngine;
@@ -289,6 +268,19 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     );
   }
 
+  // No result graph means no final graph, not an empty one: the file is absent.
+  if (options.session.resultGraph) {
+    writeArtifact(
+      options.runDir,
+      artifacts,
+      'final-snapshot.json',
+      JSON.stringify({
+        nodes: options.session.resultGraph.nodeIds,
+        columnEdges: options.session.stateMachine?.columnAspect?.edges ?? null,
+      }, null, 2),
+    );
+  }
+
   const terminal = events.filter((event) => event.type === 'terminal');
   return {
     outcome,
@@ -296,6 +288,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     text,
     terminalStatus: terminal.length === 1 && terminal[0].type === 'terminal' ? terminal[0].status : null,
     gates,
+    unansweredCard,
     artifacts,
   };
 }
