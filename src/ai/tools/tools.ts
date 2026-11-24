@@ -173,6 +173,14 @@ export function getContext(
  */
 const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "", "schemas": ["<schema>"]}.';
 
+/** The `invalid_regex` faults of both regex searches: what went wrong and how to repair it. */
+const REGEX_TOO_LONG = { reason: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.`, hint: 'Shorten the query.' } as const;
+const REGEX_DEADLINE = {
+  reason: 'The isolated regex search did not finish before its execution deadline; no results were returned.',
+  hint: 'Simplify the pattern or narrow the search filters.',
+} as const;
+const REGEX_NOT_COMPILED = 'The query is not a valid regular expression.';
+
 /**
  * Bare tokens meaning "match everything" in any wildcard idiom (SQL `%`, glob `*`, regex `.*`),
  * independent of `mode`. Recognized only with an explicit `schemas[]` scope, where "list everything
@@ -194,10 +202,10 @@ const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 function validateQuery(query: string): ToolRejection | null {
   const trimmed = query.trim();
   if (trimmed.length < 1) {
-    return makeRejection({ code: REJECTION_CODES.queryTooShort, hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryTooShort, reason: 'The query is empty.', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
   }
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
-    return makeRejection({ code: REJECTION_CODES.queryNotAName, hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryNotAName, reason: 'In substring mode the query is punctuation only; no object name contains it.', hint: `Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
   }
   return null;
 }
@@ -249,14 +257,14 @@ export async function searchObjects(
     && WILDCARD_ALL_TOKENS.has((isRegex ? query : normalizedQuery.query).trim());
 
   if (!isWildcardAllQuery && normalizedQuery.query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_TOO_LONG });
   }
 
   const effectiveQuery = isWildcardAllQuery ? '' : (isRegex ? normalizedQuery.query : normalizedQuery.query.trim());
   if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) });
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_NOT_COMPILED, hint: regexRejectHint(effectiveQuery, compiled) });
     }
   }
   const listAllInSchemas = effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0;
@@ -284,7 +292,7 @@ export async function searchObjects(
       return model.nodes.filter(node => hits.has(node.id));
     } catch (error: unknown) {
       if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
-        return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: 'The isolated regex search did not finish before its execution deadline; no results were returned. Simplify the pattern or narrow the search filters.' });
+        return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_DEADLINE });
       }
       throw error;
     }
@@ -413,6 +421,9 @@ const NEIGHBOR_PAGE = 25;
  */
 const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact object ID.';
 
+/** The `not_found` reason: the ids the loaded model does not hold, as sent. */
+const notInModel = (ids: readonly string[]) => `Not in the loaded model: ${quoteIds(ids)}.`;
+
 /**
  * Full metadata for one object (DDL, columns, neighbors): the primary drill-down tool. Upstream and
  * downstream neighbors are paged with `cursor`; DDL and column lists always arrive in full on the
@@ -437,7 +448,7 @@ export function getObjectDetail(
   }
   const node      = nodeMap.get(normalizedId);
   if (!node) {
-    return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { id } });
+    return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel([id]), hint: SEARCH_OBJECTS_HINT });
   }
 
   const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
@@ -518,7 +529,7 @@ export function getScopeBundle(
   }
   const originNode = nodeMap.get(origin);
   if (!originNode) {
-    return makeRejection({ code: REJECTION_CODES.notFound, hint: 'Call lineage_search_objects to resolve the canonical origin ID.', detail: { origin: input.origin } });
+    return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel([input.origin]), hint: 'Call lineage_search_objects to resolve the canonical origin ID.' });
   }
 
   const direction = input.direction ?? 'bidirectional';
@@ -677,7 +688,7 @@ function resolveGraphIds(model: DatabaseModel, raw: readonly string[]): string[]
   const nodeMap = getModelNodeMap(model);
   const resolved = raw.map(id => resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive));
   const unknown = raw.filter((_, index) => !resolved[index]);
-  if (unknown.length > 0) return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { ids: unknown } });
+  if (unknown.length > 0) return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel(unknown), hint: SEARCH_OBJECTS_HINT });
   return resolved as string[];
 }
 
@@ -960,12 +971,12 @@ export async function searchDdl(
   signal?: AbortSignal,
 ): Promise<object> {
   if (query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_TOO_LONG });
   }
 
   const compiled = compileSearchRegex(query, onDebug);
   if (!compiled.ok) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(query, compiled) });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_NOT_COMPILED, hint: regexRejectHint(query, compiled) });
   }
 
   const ddlTypes: ObjectType[] = types
@@ -993,7 +1004,7 @@ export async function searchDdl(
     };
   } catch (error: unknown) {
     if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: 'The isolated regex search did not finish before its execution deadline; no results were returned. Simplify the pattern or narrow the search filters.' });
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_DEADLINE });
     }
     throw error;
   }

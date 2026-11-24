@@ -10,6 +10,7 @@ import {
   OAuthError,
   OAuthErrorCode,
   McpServer,
+  type CallToolResult,
   type JsonSchemaValidatorResult,
   type jsonSchemaValidator,
   createMcpHandler,
@@ -21,6 +22,7 @@ import {
   requireBearerAuth,
 } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
+import { renderRejection, type RejectedCall } from '../agent/toolAttempt';
 import { Logger } from '../../utils/log';
 import { notifyWarning } from '../../utils/notifications';
 import type { z } from 'zod';
@@ -169,6 +171,19 @@ const acceptAll: jsonSchemaValidator = {
 };
 
 /**
+ * One tool answer as the MCP result. A refusal is `isError` with the text the chat serves at its
+ * first feedback level ({@link renderRejection}), so a client model reads the same reason and hint;
+ * the envelope (`code`, `issuePaths`, `detail`) rides in `structuredContent`, which the spec allows
+ * without an `outputSchema`.
+ */
+function toMcpResult(text: string, call: RejectedCall): CallToolResult {
+  const rejection = readToolError(JSON.parse(text));
+  return rejection
+    ? { content: [{ type: 'text', text: renderRejection(rejection, call) }], structuredContent: { ...rejection }, isError: true }
+    : { content: [{ type: 'text', text }], isError: false };
+}
+
+/**
  * One stateless MCP server per request; the read-only lineage tools and {@link MCP_ONLY_TOOLS}
  * are registered on it. Each registry call builds its own registry bound to the request's abort
  * signal, so a cancel or a closed connection stops that call's handler.
@@ -186,8 +201,7 @@ function createLineageMcpServer(version: string, tools: McpToolSource): McpServe
         buildAiToolRegistry(tools.getSession, tools.outputChannel, tools.getPanel, undefined, { ...tools.host, signal: ctx.mcpReq.signal }),
         MCP_TOOL_NAMES,
       );
-      const text = await registry.invoke(def.name, args);
-      return { content: [{ type: 'text', text }], isError: readToolError(JSON.parse(text)) !== null };
+      return toMcpResult(await registry.invoke(def.name, args), { toolName: def.name, schema: () => def.inputSchema });
     });
   }
   for (const tool of MCP_ONLY_TOOLS) {
@@ -197,8 +211,7 @@ function createLineageMcpServer(version: string, tools: McpToolSource): McpServe
       inputSchema: fromJsonSchema(toModelJsonSchema(tool.inputSchema), acceptAll),
       annotations: tool.annotations,
     }, async (args) => {
-      const text = await runMcpOnlyTool(tool, args, tools);
-      return { content: [{ type: 'text', text }], isError: readToolError(JSON.parse(text)) !== null };
+      return toMcpResult(await runMcpOnlyTool(tool, args, tools), { toolName: tool.name, schema: () => tool.inputSchema });
     });
   }
   return server;

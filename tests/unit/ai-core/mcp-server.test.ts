@@ -1,8 +1,8 @@
 /**
  * The local MCP server accepts a client only with the bearer token and a local Host and Origin,
  * exists only while the setting is on, never writes the token to a log or an error body, and serves
- * the six discovery tools (each answer the registry's own text, each refusal its envelope as
- * `isError`) and the MCP-only graph tools.
+ * the six discovery tools (each answer the registry's own text, each refusal `isError` with the chat's
+ * first-level feedback text and its envelope in `structuredContent`) and the MCP-only graph tools.
  */
 import { request } from 'node:http';
 import { createServer } from 'node:net';
@@ -18,7 +18,7 @@ vi.mock('vscode', async importOriginal => {
 });
 
 import { McpService, MCP_TOKEN_KEY } from '../../../src/ai/mcp/mcpServer';
-import { readToolError } from '../../../src/ai/support/toolErrorEnvelope';
+import type { ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { AiSession } from '../../../src/ai/session/session';
 import { filterRegistry, ToolRegistry } from '../../../src/ai/tools/registry';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
@@ -191,7 +191,9 @@ async function connected(session: AiSession, panel?: PanelStub) {
   const call = async (name: string, args: Record<string, unknown>) => {
     const result = await client.callTool({ name, arguments: args });
     const text = (result.content as Array<{ text?: string }>).map((part) => part.text ?? '').join('');
-    return { text, isError: result.isError, rejection: readToolError(JSON.parse(text)) };
+    // MCP 2026-07-28 server/tools: `structuredContent` is the result's JSON value, allowed without an
+    // `outputSchema`; a refusal carries its envelope there and its first-level text in `content`.
+    return { text, isError: result.isError, rejection: result.structuredContent as ToolRejection | undefined };
   };
   return { ...s, client, call, registry: () => buildAiToolRegistry(() => session, s.channel, () => undefined, undefined, TOOL_HOST) };
 }
@@ -262,6 +264,10 @@ describe('lineage tools over MCP', () => {
       const first = await call(tool, args);
       expect(first, tool).toMatchObject({ isError: true, rejection: { code, ...(paths && { issuePaths: paths }) } });
       expect(first.rejection!.issuePaths?.length || first.rejection!.hint || code === 'no_project_loaded', first.text).toBeTruthy();
+      // The text is the chat's first-level feedback: it opens with the reason, which states the fault, not the code.
+      expect(first.text.startsWith(first.rejection!.reason), first.text).toBe(true);
+      expect(first.rejection!.reason, first.text).not.toBe(code);
+      if (code === 'not_found') expect(first.rejection!.reason, tool).toContain(missing);
       // No retry counter or limit: the same call again answers the same text, and nothing is posted.
       expect((await call(tool, args)).text, tool).toBe(first.text);
       expect((await call(tool, args)).text, tool).toBe(first.text);
@@ -286,7 +292,7 @@ describe('lineage tools over MCP', () => {
     const { call, registry } = await connected(session);
     const answer = await call('lineage_search_objects', CALLS['lineage_search_objects']!);
     expect(answer).toMatchObject({ isError: true, rejection: { code: 'off_policy' } });
-    expect(answer.text).toBe(await registry().invoke('lineage_search_objects', CALLS['lineage_search_objects']));
+    expect(answer.rejection).toEqual(JSON.parse(await registry().invoke('lineage_search_objects', CALLS['lineage_search_objects'])));
   });
 
   it('aborts the handler when the connection closes, recording no result and no error', async () => {
