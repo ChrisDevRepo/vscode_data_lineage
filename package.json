@@ -653,7 +653,7 @@
             "type": "boolean",
             "default": false,
             "scope": "application",
-            "markdownDescription": "Serve the read-only lineage tools to local AI clients (VS Code Copilot, Claude Code, Cursor, Codex CLI) over a local MCP server on 127.0.0.1. Independent of `dataLineageViz.ai.enabled`. Run **Data Lineage: Enable MCP Server** to turn it on, or **Data Lineage: Copy MCP Config** for clients outside VS Code."
+            "markdownDescription": "Serve the read-only lineage tools to local MCP clients (verified: Claude Code CLI and GitHub Copilot agent mode) over a local MCP server on 127.0.0.1. Independent of `dataLineageViz.ai.enabled`. Run **Data Lineage: Enable MCP Server** to turn it on, or **Data Lineage: Copy MCP Config** for clients outside VS Code."
           },
           "dataLineageViz.mcp.port": {
             "type": "integer",
