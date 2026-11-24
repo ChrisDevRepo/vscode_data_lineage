@@ -13,8 +13,9 @@ import { renderFullPlanMd, renderScopeCardMd } from '../ai/prompting/scopeSummar
 import { NEXT_QUESTIONS_TRIGGER, RUN_TRACE_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER, expandRunTracePrompt } from '../ai/prompting/prompts';
 import type { ProviderModelPortOptions } from '../ai/model/providerModelPort';
 import type { AiTraceWriter } from '../ai/observability/aiTraceWriter';
-import { parseModelEntries, type ModelEntry } from '../ai/providers/modelEntries';
+import { parseModelEntries, type OpenAiModelEntry, type VscodeLmModelEntry } from '../ai/providers/modelEntries';
 import { createConfiguredModelPort, type ModelPortSources } from '../ai/providers/modelPortFactory';
+import { preferredStartModel, type LmCatalog } from '../ai/providers/vscodeLmTransport';
 import type { LineageRuntime } from '../ai/runtime/lineageRuntime';
 import { TurnEventSink } from '../ai/runtime/turnEventSink';
 import type { AiSession } from '../ai/session/session';
@@ -29,6 +30,16 @@ const TEXT_BATCH_MS = 75;
 /** A trigger as the user may type it: case and spacing do not matter. */
 const normalizeTrigger = (value: string): string => value.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
 
+/** One model the picker offers and a turn runs on: an API entry, a resolved `vscode-lm` entry or a live VS Code model. */
+interface ModelChoice {
+  readonly id: string;
+  readonly name: string;
+  /** The input window the turn budget is sized from; an API entry's own, else the model's. */
+  readonly maxInputTokens: number;
+  readonly supportsReasoningEffort?: string[];
+  readonly reasoningEffort?: string;
+}
+
 /** The chat surface: the docked pane of the graph webview. */
 export interface ChatView {
   /** Sends a frame to the view's webview. */
@@ -41,6 +52,10 @@ export interface ChatHostDeps {
   readonly getSession: () => AiSession;
   /** Current `ai.models`, `ai.defaultModel` and SecretStorage; read afresh per use. */
   readonly modelSources: () => ModelPortSources;
+  /** The language models VS Code lists and each `vscode-lm` entry resolved to; `undefined` until first loaded. */
+  readonly lmCatalog: () => LmCatalog | undefined;
+  /** The model the user picked last, kept across sessions. */
+  readonly lastPick: { get(): string | undefined; update(id: string): PromiseLike<void> };
   /** The `ai.*` numeric settings that size a turn. */
   readonly turnSettings: () => {
     readonly discoveryNodeCap: number;
@@ -151,16 +166,17 @@ export class ChatController {
         Promise.resolve(this.deps.runModelCommand(msg.command)).catch((error: unknown) => logger.error('Chat model command', error));
         return;
       case 'chat.selectModel':
-        if (!this.entries().entries.some((candidate) => candidate.id === msg.modelId)) {
+        if (!this.choices().some((candidate) => candidate.id === msg.modelId)) {
           logger.debug(`[Chat] model selection rejected — unknown entry ${msg.modelId}`);
           return;
         }
         this.selectedModelId = msg.modelId;
         this.selectedEffort = undefined;
+        Promise.resolve(this.deps.lastPick.update(msg.modelId)).catch((error: unknown) => logger.error('Chat last model pick', error));
         this.post(this.stateMsg());
         return;
       case 'chat.selectEffort':
-        if (!this.selectedEntry()?.supportsReasoningEffort?.includes(msg.effort)) {
+        if (!this.selectedChoice()?.supportsReasoningEffort?.includes(msg.effort)) {
           logger.debug(`[Chat] effort selection rejected — ${msg.effort} not offered by the selected entry`);
           return;
         }
@@ -220,7 +236,7 @@ export class ChatController {
     this.turn = turn;
     this.post(this.stateMsg());
     const sink = new TurnEventSink((event) => this.onEvent(turn, event));
-    const entry = this.selectedEntry();
+    const entry = this.selectedChoice();
     const session = getSession();
     const trigger = normalizeTrigger(prompt);
     let failure: unknown;
@@ -320,28 +336,49 @@ export class ChatController {
     this.view?.post(msg);
   }
 
-  private entries(): ReturnType<typeof parseModelEntries> {
-    const read = parseModelEntries(this.deps.modelSources().models);
-    if (read.invalid.length > 0) {
+  /**
+   * What the picker offers: the valid API entries, the `vscode-lm` entries that resolved to a model,
+   * then the live VS Code models; `ai.defaultModel` only decides the start model. An entry that is
+   * invalid or matches no model is named in one warning and not offered.
+   */
+  private choices(): ModelChoice[] {
+    const { entries, invalid } = parseModelEntries(this.deps.modelSources().models);
+    const catalog = this.deps.lmCatalog();
+    const lmEntries = entries.filter((entry): entry is VscodeLmModelEntry => entry.apiType === 'vscode-lm');
+    const unmatched = catalog ? lmEntries.filter((entry) => !catalog.resolved.has(entry.id)).map((entry) => entry.id) : [];
+    const notOffered = [...invalid.map((entry) => entry.name), ...unmatched];
+    if (notOffered.length > 0) {
       notifyWarningOnce(
         this.deps.logger,
         'Chat model entries',
-        `Data Lineage: ai.models entry ${read.invalid.map((entry) => `"${entry.name}"`).join(', ')} is invalid and not offered.`,
+        `Data Lineage: ai.models entry ${notOffered.map((name) => `"${name}"`).join(', ')} is invalid or matches no VS Code language model, and is not offered.`,
         undefined,
         this.deps.showWarningMessage,
       );
     }
-    return read;
+    return [
+      ...entries.filter((entry): entry is OpenAiModelEntry => entry.apiType !== 'vscode-lm'),
+      ...lmEntries.flatMap(({ id, name }) => {
+        const info = catalog?.resolved.get(id);
+        return info ? [{ id, name, maxInputTokens: info.maxInputTokens }] : [];
+      }),
+      ...(catalog?.live ?? []).map(({ selectionId, name, maxInputTokens }) => ({ id: selectionId, name, maxInputTokens })),
+    ];
   }
 
-  /** The entry the next turn runs on: the user's pick, else `ai.defaultModel`, else the first. */
-  private selectedEntry(entries: readonly ModelEntry[] = this.entries().entries): ModelEntry | undefined {
-    const byId = (id: string | undefined) => entries.find((entry) => entry.id === id);
-    return byId(this.selectedModelId) ?? byId(this.deps.modelSources().defaultModel) ?? entries[0];
+  /**
+   * The model the next turn runs on: the user's pick, else a set `ai.defaultModel`, else the last
+   * pick kept across sessions, else the catalog's preferred start model (the upgrade default), else the first offered.
+   */
+  private selectedChoice(choices: readonly ModelChoice[] = this.choices()): ModelChoice | undefined {
+    const byId = (id: string | undefined) => choices.find((choice) => choice.id === id);
+    const start = preferredStartModel(this.deps.lmCatalog()?.live ?? []);
+    return byId(this.selectedModelId) ?? byId(this.deps.modelSources().defaultModel) ?? byId(this.deps.lastPick.get())
+      ?? byId(start?.selectionId) ?? choices[0];
   }
 
   /** The user's effort pick while the selected entry still offers it. */
-  private explicitEffort(entry: ModelEntry | undefined): string | undefined {
+  private explicitEffort(entry: ModelChoice | undefined): string | undefined {
     return entry?.supportsReasoningEffort?.includes(this.selectedEffort ?? '') ? this.selectedEffort : undefined;
   }
 
@@ -357,11 +394,11 @@ export class ChatController {
   }
 
   private stateMsg(): ChatToWebviewMsg {
-    const { entries } = this.entries();
-    const selected = this.selectedEntry(entries);
+    const choices = this.choices();
+    const selected = this.selectedChoice(choices);
     return {
       type: 'chat.state',
-      models: entries.map(({ id, name, supportsReasoningEffort, reasoningEffort }) => (
+      models: choices.map(({ id, name, supportsReasoningEffort, reasoningEffort }) => (
         { id, name, supportsReasoningEffort, reasoningEffort }
       )),
       selectedModelId: selected?.id ?? '',

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { transcriptTurn } from '../../../src/ai/model/modelPort';
 import { ProviderModelPort, type ModelTransport } from '../../../src/ai/model/providerModelPort';
 import type { WireRecord } from '../../../src/ai/observability/wireLog';
-import { parseModelEntries } from '../../../src/ai/providers/modelEntries';
+import { parseModelEntries, type OpenAiModelEntry } from '../../../src/ai/providers/modelEntries';
 import { createProviderModelPort } from '../../../src/ai/providers/openAiTransport';
 
 /**
@@ -48,7 +48,7 @@ async function history(own = false) {
 }
 
 async function sentBody(apiType: 'chat-completions' | 'responses', own = false): Promise<Record<string, unknown>> {
-  const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType, maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
+  const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType, maxInputTokens: 1000, maxOutputTokens: 100 }]).entries as OpenAiModelEntry[];
   let body: Record<string, unknown> = {};
   vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: { body: string }) => {
     body = JSON.parse(init.body) as Record<string, unknown>;
@@ -80,7 +80,7 @@ describe('OpenAI transport replay of a malformed tool call', () => {
   });
 
   it('an own chat completions turn with no malformed call is sent and traced from its tool_calls, as objects', async () => {
-    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'chat-completions', maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
+    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'chat-completions', maxInputTokens: 1000, maxOutputTokens: 100 }]).entries as OpenAiModelEntry[];
     // As streaming leaves it: the delta copy in additional_kwargs beside the parsed tool_calls.
     const own = new AIMessage({
       content: '',
@@ -109,7 +109,7 @@ describe('OpenAI transport replay of a malformed tool call', () => {
   });
 
   it('the wire-response record carries the streamed text of a cut call, not the completed object', async () => {
-    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'chat-completions', maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
+    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'chat-completions', maxInputTokens: 1000, maxOutputTokens: 100 }]).entries as OpenAiModelEntry[];
     const delta = (index: number, id: string, args: string) => ({
       choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index, id, type: 'function', function: { name: 'lineage_present_result', arguments: args } }] }, finish_reason: null }],
     });
@@ -133,7 +133,7 @@ describe('OpenAI transport replay of a malformed tool call', () => {
   });
 
   it('a Responses output_text.delta streams to onTextDelta and is recorded in wire-response', async () => {
-    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'responses', maxInputTokens: 1000, maxOutputTokens: 100 }]).entries;
+    const [entry] = parseModelEntries([{ id: 'e', name: 'e', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'responses', maxInputTokens: 1000, maxOutputTokens: 100 }]).entries as OpenAiModelEntry[];
     const reply = (status: string, output: unknown[] = []) => ({ id: 'resp_1', object: 'response', created_at: 1, model: 'gpt-x', status, output });
     const message = { id: 'msg_1', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'hello world', annotations: [] }] };
     const delta = (sequence: number, text: string) => ({ type: 'response.output_text.delta', sequence_number: sequence, item_id: 'msg_1', output_index: 0, content_index: 0, delta: text });

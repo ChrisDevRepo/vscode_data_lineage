@@ -1,8 +1,9 @@
 /**
- * The `dataLineageViz.ai.models` entry list: one entry per OpenAI-compatible endpoint. Field names
- * follow VS Code's own custom-endpoint model entry. Keys never live in an entry; they sit in
- * SecretStorage under {@link apiKeySecretName}. No `vscode` import, so tests and the headless lane
- * read entries the way the extension does.
+ * The `dataLineageViz.ai.models` entry list: one entry per OpenAI-compatible endpoint, or per VS Code
+ * language model (`apiType: "vscode-lm"`, a selector instead of a URL and key). Field names follow
+ * VS Code's own custom-endpoint model entry. Keys never live in an entry; they sit in SecretStorage
+ * under {@link apiKeySecretName}. No `vscode` import, so tests and the headless lane read entries
+ * the way the extension does.
  */
 import { z } from 'zod';
 
@@ -17,6 +18,9 @@ const MODEL_API_TYPES = ['chat-completions', 'responses'] as const;
 const PORT_OWNED_BODY_KEYS: readonly string[] = [
   'model', 'messages', 'input', 'tools', 'tool_choice', 'stream', 'stream_options',
 ];
+
+/** Prefix of the id a live VS Code language model is offered under; no entry id may start with it. */
+export const LIVE_MODEL_ID_PREFIX = 'lm:';
 
 /** Header names that carry a credential; a key never belongs in a settings file. */
 const CREDENTIAL_HEADER = /authorization|api[-_]?key|token|secret|cookie/i;
@@ -42,13 +46,26 @@ export function baseUrlFault(value: string): string | undefined {
   return undefined;
 }
 
+/** Stable identifier, also naming the SecretStorage entry of a key; never the live-model prefix. */
+const EntryIdSchema = z.string().min(1).max(128).refine((id) => !id.startsWith(LIVE_MODEL_ID_PREFIX), `id must not start with "${LIVE_MODEL_ID_PREFIX}"`);
+const EntryNameSchema = z.string().min(1).max(MAX_ENTRY_NAME_LENGTH);
+
+/** `requestBody` keys the port owns are invalid on either kind of entry. */
+function checkRequestBody(entry: { readonly requestBody?: Record<string, unknown> }, ctx: z.RefinementCtx): void {
+  for (const key of Object.keys(entry.requestBody ?? {})) {
+    if (PORT_OWNED_BODY_KEYS.includes(key)) {
+      ctx.addIssue({ code: 'custom', path: ['requestBody', key], message: `requestBody key "${key}" is owned by the port` });
+    }
+  }
+}
+
 /**
- * One model entry as stored in settings. Strict: an unknown key, `apiKey` above all, is invalid.
+ * An OpenAI-compatible endpoint as stored in settings. Strict: an unknown key, `apiKey` above all,
+ * is invalid.
  */
-const ModelEntrySchema = z.strictObject({
-  /** Stable identifier; also names the SecretStorage entry of the key. */
-  id: z.string().min(1).max(128),
-  name: z.string().min(1).max(MAX_ENTRY_NAME_LENGTH),
+const OpenAiEntrySchema = z.strictObject({
+  id: EntryIdSchema,
+  name: EntryNameSchema,
   /** Base URL of the OpenAI-compatible API, e.g. `https://host/openai/v1/`. */
   url: z.string().min(1),
   model: z.string().min(1),
@@ -71,11 +88,7 @@ const ModelEntrySchema = z.strictObject({
   if (entry.reasoningEffort && entry.supportsReasoningEffort && !entry.supportsReasoningEffort.includes(entry.reasoningEffort)) {
     ctx.addIssue({ code: 'custom', path: ['reasoningEffort'], message: 'reasoningEffort is not in supportsReasoningEffort' });
   }
-  for (const key of Object.keys(entry.requestBody ?? {})) {
-    if (PORT_OWNED_BODY_KEYS.includes(key)) {
-      ctx.addIssue({ code: 'custom', path: ['requestBody', key], message: `requestBody key "${key}" is owned by the port` });
-    }
-  }
+  checkRequestBody(entry, ctx);
   for (const name of Object.keys(entry.requestHeaders ?? {})) {
     if (CREDENTIAL_HEADER.test(name)) {
       ctx.addIssue({ code: 'custom', path: ['requestHeaders', name], message: `requestHeaders "${name}" looks like a credential; keys go through Update AI Model Key` });
@@ -83,8 +96,34 @@ const ModelEntrySchema = z.strictObject({
   }
 });
 
+/**
+ * A VS Code language model (`vscode.lm`) as stored in settings: the selector VS Code matches
+ * models against, no URL, key or input window (the model reports it). `requestBody` goes to the
+ * model as `modelOptions`, `maxOutputTokens` as its `max_tokens`.
+ */
+const VscodeLmEntrySchema = z.strictObject({
+  id: EntryIdSchema,
+  name: EntryNameSchema,
+  apiType: z.literal('vscode-lm'),
+  selector: z.strictObject({
+    vendor: z.string().min(1).optional(),
+    family: z.string().min(1).optional(),
+    id: z.string().min(1).optional(),
+  }),
+  maxOutputTokens: z.number().int().positive().optional(),
+  requestBody: z.record(z.string().min(1), z.unknown()).optional(),
+}).superRefine(checkRequestBody);
+
+const ModelEntrySchema = z.discriminatedUnion('apiType', [OpenAiEntrySchema, VscodeLmEntrySchema]);
+
+/** A valid OpenAI-compatible entry with its defaults applied. */
+export type OpenAiModelEntry = z.output<typeof OpenAiEntrySchema>;
+
+/** A valid VS Code language model entry. */
+export type VscodeLmModelEntry = z.output<typeof VscodeLmEntrySchema>;
+
 /** A valid model entry with its defaults applied. */
-export type ModelEntry = z.output<typeof ModelEntrySchema>;
+export type ModelEntry = OpenAiModelEntry | VscodeLmModelEntry;
 
 /** An entry that failed validation, named so the user can find it; `issues` never echo a value. */
 interface InvalidModelEntry {

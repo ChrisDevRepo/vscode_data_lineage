@@ -622,32 +622,58 @@
             "type": "array",
             "default": [],
             "scope": "application",
-            "markdownDescription": "OpenAI-compatible model endpoints the assistant can use (Chat Completions or Responses). Keys never belong here; they stay in VS Code secret storage. An invalid entry is named and not offered.\n\n**Manage:** [Add](command:dataLineageViz.addAiModel) · [Edit](command:dataLineageViz.editAiModel) · [Update Key](command:dataLineageViz.updateAiModelKey) · [Remove](command:dataLineageViz.removeAiModel)",
+            "markdownDescription": "Models the assistant can use: OpenAI-compatible endpoints (Chat Completions or Responses) or, with `apiType` `vscode-lm`, a language model VS Code lists. Keys never belong here; they stay in VS Code secret storage. An invalid entry, or a `vscode-lm` entry that matches no model, is named and not offered.\n\n**Manage:** [Add](command:dataLineageViz.addAiModel) · [Edit](command:dataLineageViz.editAiModel) · [Update Key](command:dataLineageViz.updateAiModelKey) · [Remove](command:dataLineageViz.removeAiModel)",
             "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["id", "name", "url", "model", "apiType", "maxInputTokens", "maxOutputTokens"],
-              "properties": {
-                "id": { "type": "string", "minLength": 1, "markdownDescription": "Stable identifier; also names the secret-store entry of the key." },
-                "name": { "type": "string", "minLength": 1, "description": "Display name." },
-                "url": { "type": "string", "markdownDescription": "Base URL of the API, e.g. `https://host/openai/v1/`; https, or http on 127.0.0.1, localhost or [::1]. No query string." },
-                "model": { "type": "string", "minLength": 1, "description": "Model name sent in the request." },
-                "apiType": { "type": "string", "enum": ["chat-completions", "responses"], "description": "Wire format of the endpoint." },
-                "maxInputTokens": { "type": "integer", "minimum": 1, "description": "Input window of the model in tokens." },
-                "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit of the model in tokens; sent as the API's output cap (`max_output_tokens` on Responses, `max_tokens` or `max_completion_tokens` on Chat Completions). A `max_tokens` or `max_completion_tokens` in `requestBody` overrides it on Chat Completions." },
-                "supportsReasoningEffort": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Reasoning efforts the model accepts." },
-                "reasoningEffort": { "type": "string", "description": "Reasoning effort sent with each request." },
-                "forcedToolChoice": { "type": "boolean", "default": true, "description": "Whether the endpoint accepts a forced tool choice; when off, `auto` is sent." },
-                "requestBody": { "type": "object", "markdownDescription": "Extra request parameters, sent unchanged. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream` and `stream_options` are owned by the extension." },
-                "requestHeaders": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Extra request headers. Never a key." }
-              }
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "name", "url", "model", "apiType", "maxInputTokens", "maxOutputTokens"],
+                  "properties": {
+                    "id": { "type": "string", "minLength": 1, "pattern": "^(?!lm:)", "markdownDescription": "Stable identifier; also names the secret-store entry of the key. Must not start with `lm:`." },
+                    "name": { "type": "string", "minLength": 1, "description": "Display name." },
+                    "url": { "type": "string", "markdownDescription": "Base URL of the API, e.g. `https://host/openai/v1/`; https, or http on 127.0.0.1, localhost or [::1]. No query string." },
+                    "model": { "type": "string", "minLength": 1, "description": "Model name sent in the request." },
+                    "apiType": { "type": "string", "enum": ["chat-completions", "responses"], "description": "Wire format of the endpoint." },
+                    "maxInputTokens": { "type": "integer", "minimum": 1, "description": "Input window of the model in tokens." },
+                    "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit of the model in tokens; sent as the API's output cap (`max_output_tokens` on Responses, `max_tokens` or `max_completion_tokens` on Chat Completions). A `max_tokens` or `max_completion_tokens` in `requestBody` overrides it on Chat Completions." },
+                    "supportsReasoningEffort": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Reasoning efforts the model accepts." },
+                    "reasoningEffort": { "type": "string", "description": "Reasoning effort sent with each request." },
+                    "forcedToolChoice": { "type": "boolean", "default": true, "description": "Whether the endpoint accepts a forced tool choice; when off, `auto` is sent." },
+                    "requestBody": { "type": "object", "markdownDescription": "Extra request parameters, sent unchanged. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream` and `stream_options` are owned by the extension." },
+                    "requestHeaders": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Extra request headers. Never a key." }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "name", "apiType", "selector"],
+                  "properties": {
+                    "id": { "type": "string", "minLength": 1, "pattern": "^(?!lm:)", "markdownDescription": "Stable identifier; must not start with `lm:`." },
+                    "name": { "type": "string", "minLength": 1, "description": "Display name." },
+                    "apiType": { "type": "string", "enum": ["vscode-lm"], "markdownDescription": "A model VS Code lists (`vscode.lm`), such as one from a chat subscription or a provider extension. It needs no URL or key and takes its input window from the model." },
+                    "selector": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "markdownDescription": "Which VS Code language model the entry uses; VS Code matches the first model that fits every field given. The **Add AI Model** wizard writes all three.",
+                      "properties": {
+                        "vendor": { "type": "string", "minLength": 1, "description": "Provider of the model." },
+                        "family": { "type": "string", "minLength": 1, "description": "Model family." },
+                        "id": { "type": "string", "minLength": 1, "description": "Model id." }
+                      }
+                    },
+                    "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit sent to the model as `max_tokens` in its options; `requestBody` can override it." },
+                    "requestBody": { "type": "object", "markdownDescription": "Model options (for example `temperature`, `top_p`), sent unchanged. The model's provider decides which it honors. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream` and `stream_options` are owned by the extension." }
+                  }
+                }
+              ]
             }
           },
           "dataLineageViz.ai.defaultModel": {
             "type": "string",
             "default": "",
             "scope": "application",
-            "markdownDescription": "The `id` of the `ai.models` entry used by default."
+            "markdownDescription": "The `id` of the `ai.models` entry the chat starts on. The chat also lists the language models VS Code provides; when empty, it starts on the last model you picked, else on a Copilot model if there is one."
           },
           "dataLineageViz.mcp.enabled": {
             "type": "boolean",

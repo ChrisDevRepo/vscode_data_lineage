@@ -8,8 +8,9 @@
 
 import * as vscode from 'vscode';
 import { ModelPortError, modelUserMessage } from '../ai/model/modelPort';
-import { apiKeySecretName, baseUrlFault, MAX_ENTRY_NAME_LENGTH, parseModelEntries, type ModelEntry } from '../ai/providers/modelEntries';
+import { apiKeySecretName, baseUrlFault, MAX_ENTRY_NAME_LENGTH, parseModelEntries, type ModelEntry, type OpenAiModelEntry } from '../ai/providers/modelEntries';
 import { createProviderModelPort } from '../ai/providers/openAiTransport';
+import { loadLmCatalog, type LmModelInfo } from '../ai/providers/vscodeLmTransport';
 import type { Logger } from '../utils/log';
 import { notifyWarning } from '../utils/notifications';
 import { rawId, readRawList, rewriteRawList } from './rawSettingList';
@@ -29,7 +30,7 @@ const WIZARD_TITLE = 'Add AI Model';
 const WIZARD_STEPS = 5;
 const { askInput, askPick } = wizardPrompts(WIZARD_TITLE, WIZARD_STEPS);
 
-type ApiType = ModelEntry['apiType'];
+type ApiType = OpenAiModelEntry['apiType'];
 
 /** The window and output limit a new entry gets; the user edits them in settings.json. */
 const DEFAULT_MAX_INPUT_TOKENS = 128_000;
@@ -60,11 +61,21 @@ const PRESETS: readonly ModelPreset[] = [
   { id: 'custom', label: 'Other OpenAI-compatible endpoint', description: 'Azure OpenAI, a gateway or any server', url: '', apiType: 'chat-completions', requestBody: SAMPLING_REQUEST_BODY },
 ];
 
+/** The wizard's source option for a model another extension provides through VS Code. */
+const LM_SOURCE_LABEL = 'VS Code language model';
+const NO_LM_MODEL_MESSAGE = 'No VS Code language model is available. Install and sign in to an extension that provides one, then try again.';
+
 /** What the connection test asks the endpoint; any reply shows URL, key and model are accepted. */
 const TEST_PROMPT = 'Reply with the single word OK.';
 
+/** One source the first step offers: a provider preset, or the language-model source (no preset). */
+type SourceItem = vscode.QuickPickItem & { preset?: ModelPreset };
+
 interface WizardState {
   preset?: ModelPreset;
+  /** Whether the entry is a VS Code language model: no URL, model name or key, a model pick instead. */
+  lm: boolean;
+  lmModel?: LmModelInfo;
   url: string;
   model: string;
   /** The key to test with and save: the saved one of an edited entry until another is typed. */
@@ -90,7 +101,7 @@ const required = (what: string) => (value: string): string | undefined => (value
  * Sends one short request through the real model port. Resolves `undefined` when the endpoint
  * answered, `'cancelled'` when the user cancelled the progress notification, else the failure text.
  */
-function testConnection(entry: ModelEntry, apiKey: string, logger: Logger): Thenable<string | undefined> {
+function testConnection(entry: OpenAiModelEntry, apiKey: string, logger: Logger): Thenable<string | undefined> {
   return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Testing ${entry.name}…`, cancellable: true }, async (_progress, token) => {
     const abort = new AbortController();
     token.onCancellationRequested(() => abort.abort());
@@ -110,35 +121,44 @@ function testConnection(entry: ModelEntry, apiKey: string, logger: Logger): Then
  * preset, base URL, model name, API key, display name), each with a Back button after the first;
  * the entry is test-connected before it is written, which reports a wrong URL, key or model name.
  * A new entry gets the preset's wire format and the default limits; the user tunes them, and adds
- * `requestBody` and the rest, in the settings JSON.
+ * `requestBody` and the rest, in the settings JSON. The source "VS Code language model" replaces the
+ * URL, model name and key steps with a pick of the models VS Code lists, writes the selector and the
+ * sampling `requestBody`, and tests nothing: consent and quota fall on the first chat turn.
  *
  * @param existing - Entry to edit; its id, every field the wizard does not ask and its saved key
  *   are kept. A changed base URL requires the key again, so a saved key never goes to another host.
+ *   A language model entry asks only for the model and the name.
  * @returns The saved entry id, or `undefined` when the user cancelled.
  */
 async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, existing?: ModelEntry): Promise<string | undefined> {
-  const savedKey = existing ? await secrets.get(apiKeySecretName(existing.id)) : undefined;
-  const state: WizardState = existing
-    ? { url: existing.url, model: existing.model, name: existing.name, key: savedKey }
-    : { url: '', model: '', name: '' };
+  const existingApi = existing?.apiType === 'vscode-lm' ? undefined : existing;
+  const savedKey = existingApi ? await secrets.get(apiKeySecretName(existingApi.id)) : undefined;
+  const state: WizardState = existingApi
+    ? { lm: false, url: existingApi.url, model: existingApi.model, name: existingApi.name, key: savedKey }
+    : { lm: existing !== undefined, url: '', model: '', name: existing?.name ?? '' };
 
   const steps: WizardStep[] = [
     {
       applies: () => existing === undefined,
       run: async (n) => {
-        const items = PRESETS.map((preset) => ({ label: preset.label, description: preset.description, preset }));
-        const answer = await askPick({
-          step: n, canGoBack: false, placeholder: 'Provider', items, active: items.find((item) => item.preset === state.preset),
+        const presetItems: SourceItem[] = PRESETS.map((preset) => ({ label: preset.label, description: preset.description, preset }));
+        const lmItem: SourceItem = { label: LM_SOURCE_LABEL, description: 'Models other extensions provide, e.g. a chat subscription' };
+        const answer = await askPick<SourceItem>({
+          step: n, canGoBack: false, placeholder: 'Provider', items: [...presetItems, lmItem],
+          active: state.lm ? lmItem : presetItems.find((item) => item.preset === state.preset),
         });
-        if (typeof answer === 'object' && answer.preset !== state.preset) {
-          state.preset = answer.preset;
-          state.url = answer.preset.url;
+        if (typeof answer === 'object') {
+          state.lm = answer.preset === undefined;
+          if (answer.preset !== state.preset) {
+            state.preset = answer.preset;
+            state.url = answer.preset?.url ?? '';
+          }
         }
         return outcome(answer);
       },
     },
     {
-      applies: () => true,
+      applies: () => !state.lm,
       run: async (n) => {
         const answer = await askInput({
           step: n, canGoBack: existing === undefined, value: state.url,
@@ -153,7 +173,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
       },
     },
     {
-      applies: () => true,
+      applies: () => !state.lm,
       run: async (n) => {
         const answer = await askInput({
           step: n, canGoBack: true, value: state.model, prompt: 'Model name the endpoint expects, e.g. gpt-5', validate: required('A model name'),
@@ -163,9 +183,9 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
       },
     },
     {
-      applies: () => true,
+      applies: () => !state.lm,
       run: async (n) => {
-        const keepSaved = savedKey !== undefined && existing?.url === state.url;
+        const keepSaved = savedKey !== undefined && existingApi?.url === state.url;
         const answer = await askInput({
           step: n, canGoBack: true, password: true,
           prompt: keepSaved
@@ -178,10 +198,29 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
       },
     },
     {
+      applies: () => state.lm,
+      run: async (n) => {
+        const { live } = await loadLmCatalog([]);
+        if (live.length === 0) {
+          void vscode.window.showInformationMessage(NO_LM_MODEL_MESSAGE);
+          return 'cancel';
+        }
+        const selector = existing?.apiType === 'vscode-lm' ? existing.selector : undefined;
+        const items = live.map((info) => ({ label: info.name, description: `${info.vendor} · ${info.family}`, detail: `${info.maxInputTokens} input tokens`, info }));
+        const answer = await askPick({
+          step: n, canGoBack: existing === undefined, placeholder: LM_SOURCE_LABEL, items,
+          active: items.find((item) => item.info === state.lmModel)
+            ?? items.find((item) => selector !== undefined && Object.entries(selector).every(([key, value]) => item.info[key as keyof typeof selector] === value)),
+        });
+        if (typeof answer === 'object') state.lmModel = answer.info;
+        return outcome(answer);
+      },
+    },
+    {
       applies: () => true,
       run: async (n) => {
         const answer = await askInput({
-          step: n, canGoBack: true, prompt: 'Display name', value: state.name || state.model,
+          step: n, canGoBack: true, prompt: 'Display name', value: state.name || (state.lm ? state.lmModel?.name : state.model),
           validate: (v) => (v.trim().length > MAX_ENTRY_NAME_LENGTH ? `A display name has at most ${MAX_ENTRY_NAME_LENGTH} characters.` : required('A display name')(v)),
         });
         if (typeof answer === 'string') state.name = answer.trim();
@@ -195,26 +234,31 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
   while (true) {
     const models = readRawList(AI_CONFIG_SECTION, MODELS_SETTING);
     const id = existing?.id ?? newEntryId(state.name, models);
-    const stored = models.find((entry) => rawId(entry) === id) as Partial<ModelEntry> | undefined;
+    const stored = models.find((entry) => rawId(entry) === id) as Record<string, unknown> | undefined;
     const added = stored ? {} : {
       apiType: state.preset?.apiType ?? 'chat-completions',
       maxInputTokens: DEFAULT_MAX_INPUT_TOKENS,
       maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
       ...(state.preset?.requestBody ? { requestBody: state.preset.requestBody } : {}),
     };
-    const candidate = { ...stored, id, name: state.name, url: state.url, model: state.model, ...added };
+    const { vendor, family, id: modelId } = state.lmModel ?? {};
+    const candidate = state.lm
+      ? { ...stored, id, name: state.name, apiType: 'vscode-lm', selector: { vendor, family, id: modelId }, ...(stored ? {} : { requestBody: SAMPLING_REQUEST_BODY }) }
+      : { ...stored, id, name: state.name, url: state.url, model: state.model, ...added };
     const { entries: [entry], invalid } = parseModelEntries([candidate]);
     if (!entry) throw new Error(`Invalid AI model: ${invalid.flatMap((item) => item.issues).join('; ')}`);
-    const failure = await testConnection(entry, state.key!, logger);
-    if (failure === 'cancelled') return undefined;
-    if (failure) {
-      const choice = await vscode.window.showErrorMessage(failure, 'Edit', SAVE_AND_OPEN, 'Cancel');
-      if (choice === 'Edit') {
-        if (!await runSteps(steps)) return undefined;
-        continue;
+    if (entry.apiType !== 'vscode-lm') {
+      const failure = await testConnection(entry, state.key!, logger);
+      if (failure === 'cancelled') return undefined;
+      if (failure) {
+        const choice = await vscode.window.showErrorMessage(failure, 'Edit', SAVE_AND_OPEN, 'Cancel');
+        if (choice === 'Edit') {
+          if (!await runSteps(steps)) return undefined;
+          continue;
+        }
+        if (choice !== SAVE_AND_OPEN) return undefined;
+        openSettings = true;
       }
-      if (choice !== SAVE_AND_OPEN) return undefined;
-      openSettings = true;
     }
     await rewriteRawList(AI_CONFIG_SECTION, MODELS_SETTING, (entries) => {
       const at = entries.findIndex((item) => rawId(item) === id);
@@ -222,7 +266,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
       else entries.push(candidate);
       return entries;
     });
-    if (state.key !== savedKey) await secrets.store(apiKeySecretName(id), state.key!);
+    if (entry.apiType !== 'vscode-lm' && state.key !== savedKey) await secrets.store(apiKeySecretName(id), state.key!);
     logger.info('Saved AI model');
     logger.debug(`Saved AI model ${id}`);
     void (openSettings ? vscode.commands.executeCommand(OPEN_SETTINGS_JSON) : offerSettingsJson());
@@ -238,9 +282,9 @@ async function offerSettingsJson(): Promise<void> {
   if (choice === OPEN_SETTINGS) await vscode.commands.executeCommand(OPEN_SETTINGS_JSON);
 }
 
-/** The valid entry an argument names by id, or the picked one; an invalid entry is warned about. */
-async function entryFromArg(arg: unknown, placeholder: string, logger: Logger): Promise<ModelEntry | undefined> {
-  const { entries, invalid } = parseModelEntries(vscode.workspace.getConfiguration(AI_CONFIG_SECTION).get(MODELS_SETTING));
+/** The valid entry an argument names by id, or the picked one; an invalid entry is warned about. `needsKey` leaves out the entries that take no key. */
+async function entryFromArg(arg: unknown, placeholder: string, logger: Logger, needsKey = false): Promise<ModelEntry | undefined> {
+  const { entries: all, invalid } = parseModelEntries(vscode.workspace.getConfiguration(AI_CONFIG_SECTION).get(MODELS_SETTING));
   if (invalid.length > 0) {
     notifyWarning(
       logger,
@@ -249,6 +293,7 @@ async function entryFromArg(arg: unknown, placeholder: string, logger: Logger): 
       { issues: invalid.flatMap((entry) => entry.issues) },
     );
   }
+  const entries = needsKey ? all.filter((entry) => entry.apiType !== 'vscode-lm') : all;
   const id = typeof arg === 'string' ? arg : (arg as { id?: unknown } | undefined)?.id;
   if (typeof id === 'string') return entries.find((entry) => entry.id === id);
   if (entries.length === 0) {
@@ -256,7 +301,7 @@ async function entryFromArg(arg: unknown, placeholder: string, logger: Logger): 
     return undefined;
   }
   const picked = await vscode.window.showQuickPick(
-    entries.map((entry) => ({ label: entry.name, description: entry.id, detail: entry.model, entry })),
+    entries.map((entry) => ({ label: entry.name, description: entry.id, detail: entry.apiType === 'vscode-lm' ? Object.values(entry.selector).join(' · ') : entry.model, entry })),
     { placeHolder: placeholder, ignoreFocusOut: true, matchOnDescription: true },
   );
   return picked?.entry;
@@ -287,7 +332,7 @@ export function registerAiModelCommands(context: vscode.ExtensionContext, logger
     }),
 
     vscode.commands.registerCommand(UPDATE_AI_MODEL_KEY_COMMAND, async (arg?: unknown): Promise<boolean> => {
-      const target = await entryFromArg(arg, 'Select the model the key belongs to', logger);
+      const target = await entryFromArg(arg, 'Select the model the key belongs to', logger, true);
       if (!target) return false;
       const key = await vscode.window.showInputBox({
         title: `New API key for ${target.name}`,

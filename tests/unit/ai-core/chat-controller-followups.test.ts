@@ -53,7 +53,9 @@ function setup(session: AiSession, overrides: { runtime?: ConstructorParameters<
   const controller = new ChatController({
     runtime: overrides.runtime ?? { run: overrides.run ? vi.fn(overrides.run) : answer('run'), runSuggestions: answer('suggestions'), resumeGate: vi.fn(async () => true) },
     getSession: () => session,
-    modelSources: () => ({ models: [ENTRY], defaultModel: 'm', secrets: { get: async () => undefined } }),
+    modelSources: () => ({ models: [ENTRY], defaultModel: 'm', secrets: { get: async () => undefined }, lmModel: () => undefined }),
+    lmCatalog: () => undefined,
+    lastPick: { get: () => undefined, update: async () => {} },
     turnSettings: () => ({ discoveryNodeCap: 100, discoveryTokenBudget: 10_000, maxRounds: 5, maxTraceColumns: 50 }),
     logger: Logger.create(channel as never, 'AI'),
     showErrorMessage: vi.fn(),

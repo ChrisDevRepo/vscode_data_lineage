@@ -6,7 +6,7 @@ import type * as vscode from 'vscode';
 import { z } from 'zod';
 import { sanitizeProviderErrorDiagnostic } from '../../src/ai/support/text';
 import { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
-import { parseModelEntries, type ModelEntry } from '../../src/ai/providers/modelEntries';
+import { parseModelEntries, type OpenAiModelEntry } from '../../src/ai/providers/modelEntries';
 import { createProviderModelPort } from '../../src/ai/providers/openAiTransport';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
 import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
@@ -105,7 +105,7 @@ export function databaseConfig(env: NodeJS.ProcessEnv) {
  * The model entry the AI_TEST_* variables describe, read by the product's own entry schema (the
  * same validation `ai.models` gets). Faults name the variable, never a value.
  */
-export function aiTestEntry(env: NodeJS.ProcessEnv): ModelEntry {
+export function aiTestEntry(env: NodeJS.ProcessEnv): OpenAiModelEntry {
   const text = (key: string) => env[key]?.trim() || undefined;
   const missing = ['AI_TEST_ENDPOINT', 'AI_TEST_MODEL', 'AI_TEST_API_TYPE', 'AI_TEST_MAX_INPUT_TOKENS', 'AI_TEST_MAX_OUTPUT_TOKENS']
     .filter(key => !text(key));
@@ -126,15 +126,16 @@ export function aiTestEntry(env: NodeJS.ProcessEnv): ModelEntry {
     ...(forced === undefined ? {} : { forcedToolChoice: forced === 'true' }),
     ...(requestBody === undefined ? {} : { requestBody }),
   }]);
-  if (!entries.length) throw new Error(`Invalid model entry: ${invalid.flatMap(entry => entry.issues).join('; ')}. Use --help.`);
-  return entries[0];
+  const entry = entries.find((e): e is OpenAiModelEntry => e.apiType !== 'vscode-lm');
+  if (!entry) throw new Error(`Invalid model entry: ${invalid.flatMap(entry => entry.issues).join('; ')}. Use --help.`);
+  return entry;
 }
 
 /** Runs one selected smoke with explicit configuration and independent runtime/export outcomes. */
 export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<number> {
   if (args.includes('--help')) { console.log(HELP); return 0; }
   let options: ReturnType<typeof parseOptions>;
-  let entry: ModelEntry | undefined;
+  let entry: OpenAiModelEntry | undefined;
   let db: ReturnType<typeof databaseConfig> | undefined;
   let langfuse: ReturnType<typeof resolveLangfuseConfig>;
   try {
