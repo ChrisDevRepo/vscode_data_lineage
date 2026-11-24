@@ -12,21 +12,15 @@ import { escapePromptText } from '../support/text';
 import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
 import type { InvestigationTask } from '../sm/smTypes';
 
-/**
- * Phase key used by the TS prompt protocol builders. `visual_preview` is the rendering step of a
- * discovery answer, not a lifecycle phase; it keeps the discovery grounding and is listed because
- * it authors a `lineage_present_result` payload and must receive the same presentation contract as
- * synthesis ({@link buildPhasePrompt}).
- */
-export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis' | 'completed';
+/** Phase key used by the TS prompt protocol builders ({@link buildPhasePrompt}). */
+export type PromptPhase = 'discover' | 'active' | 'synthesis' | 'completed';
 
 /**
  * The stages that author a `lineage_present_result` payload, as seen by
- * {@link buildPresentationDetailContract}: a subset of {@link PromptPhase} with `visual_preview`
- * renamed `preview`, since this axis is about what the stage may do with the text. `discover` and
- * `active` never call the tool.
+ * {@link buildPresentationDetailContract}: a subset of {@link PromptPhase}. `discover` and `active`
+ * never call the tool.
  */
-type PresentationStage = 'preview' | 'synthesis' | 'completed';
+type PresentationStage = 'synthesis' | 'completed';
 
 /**
  * Grounding values injected into the base system prompt.
@@ -135,7 +129,6 @@ export function buildPhasePrompt(
   filterHidesObjects = false,
 ): string {
   if (phase === 'discover') return buildDiscoveryPrompt(filterHidesObjects);
-  if (phase === 'visual_preview') return buildVisualPreviewPrompt();
   if (phase === 'active') return buildActivePhasePrompt(analysisMode);
   if (phase === 'synthesis') return buildSynthesisPrompt(analysisMode);
   return buildFollowUpPrompt();
@@ -194,7 +187,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
 
 /**
  * Builds the presentation contract shared by every stage that authors a `present_result` payload.
- * Preview, synthesis and follow-up share one tool and `validatePresentResult`, so the cross-field
+ * Synthesis and follow-up share one tool and `validatePresentResult`, so the cross-field
  * rule it enforces (a highlighted node is explained by a section link or a note) lives here once.
  * Single-field meaning lives in the `lineage_present_result` `.describe()` texts; synthesis-only
  * surfaces (`detail_slots[]`, Column Trace Chain, detail-slot coverage) stay in
@@ -202,9 +195,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
  *
  * The depth line is the stage-dependent part: synthesis chooses how much captured evidence
  * survives; follow-up has no archive in the window, so re-deriving via `lineage_get_object_detail`
- * owns it; preview authors no section text of its own (assembled from the served answer blocks), so
- * a compress-or-drop rule there would contradict the stage. The heading rule ships to the two
- * stages that author section text.
+ * owns it. The heading rule ships to both stages.
  *
  * @param evidence - Sentence naming the stage's evidence surface for `sections[].text`; omitted by
  *   stages whose own block names it. First parameter because existing callers pass it positionally.
@@ -217,44 +208,22 @@ function buildPresentationDetailContract(
 ): string {
   const headingRule =
     '- Inside a section body use bold labels, never `#` headings; the engine owns the title, the section headings and the object headers.';
-  const depthRules = mode === 'preview'
+  const depthRules = mode === 'completed'
     ? [
-      '- Depth is fixed by the supplied answer; you choose only where its blocks are cut into sections.',
+      '- Depth is the follow-up ask, not an archive lift. Keep exact node IDs, parameter names, and formulas intact in text you do author.',
+      headingRule,
     ]
-    : mode === 'completed'
-      ? [
-        '- Depth is the follow-up ask, not an archive lift. Keep exact node IDs, parameter names, and formulas intact in text you do author.',
-        headingRule,
-      ]
-      : [
-        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth. Correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. Where a captured SQL block supports an item in this report, keep it at the item\'s end by its id (opening line ```sql S7, closing line ```).',
-        '- Preserve captured evidence-supported warnings; do not create new ⚠️ callouts from defaults, normal behavior, unresolved gaps or SQL comments during synthesis.',
-        '- Resolve node-local gaps against the completed archive: a fact established by another analyzed node is no longer an unresolved gap in the final report.',
-        headingRule,
-      ];
+    : [
+      '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth. Correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. Where a captured SQL block supports an item in this report, keep it at the item\'s end by its id (opening line ```sql S7, closing line ```).',
+      '- Preserve captured evidence-supported warnings; do not create new ⚠️ callouts from defaults, normal behavior, unresolved gaps or SQL comments during synthesis.',
+      '- Resolve node-local gaps against the completed archive: a fact established by another analyzed node is no longer an unresolved gap in the final report.',
+      headingRule,
+    ];
   return [
     '## Presentation contract',
     ...(evidence ? [`- ${evidence}`] : []),
     '- Every node in `highlight_groups[]` is linked in a section or has a note.',
     ...depthRules,
-  ].join('\n');
-}
-
-/**
- * Protocol block for the bounded visual preview call. The stage restructures an already-written
- * discovery answer into the graph presentation, authoring no new prose and reading no new evidence,
- * so linking, captioning and colouring come from {@link buildPresentationDetailContract}. What is
- * unique is the reference contract: the answer is served as numbered blocks, each section names the
- * block it starts at and the engine assembles its text up to the next section.
- */
-function buildVisualPreviewPrompt(): string {
-  return [
-    '## Structure the cached discovery answer',
-    'Call `lineage_present_result` once. The supplied answer and scope are authoritative.',
-    'Divide `answer_blocks` into consecutive sections: each `sections[]` entry gives a label, its canonical `node_ids`, and the `start` block it begins at; a section runs to the block before the next start, the last to the end, and starts ascend from B1.',
-    'Choose cut points so each section answers one part of the user\'s question.',
-    '',
-    buildPresentationDetailContract('The detailed walkthrough is the supplied `answer_blocks`, presented whole through the section starts.', 'preview'),
   ].join('\n');
 }
 
@@ -385,9 +354,6 @@ export function buildGateReplyUserPrompt(scopeMd: string, reply: string): string
     reply,
   ].join('\n');
 }
-
-/** Stable host-owned marker that keeps the explicit preview action on the lightweight route. */
-export const PREVIEW_REQUEST_MARKER = 'The user clicked the post-discovery "Show graph preview" link.';
 
 /**
  * Stable first line of the seeded trace envelope, matched by the graph to route straight to SM.

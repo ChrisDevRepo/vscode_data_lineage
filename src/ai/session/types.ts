@@ -4,8 +4,7 @@ import type { AIViewMetadata } from '../../engine/projectStore';
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
 export interface DiscoveryScopeArtifact {
   /**
-   * Epoch of the host turn that captured (or, for a preview, re-armed) this scope; a consumer that
-   * renders it requires the live turn's epoch, and discovery tells its own walk from an earlier
+   * Epoch of the host turn that captured this scope; discovery tells its own walk from an earlier
    * one.
    */
   readonly turnEpoch: number;
@@ -18,7 +17,7 @@ export interface DiscoveryScopeArtifact {
   readonly edges: readonly [string, string, string][];
 }
 
-/** Validated presentation committed by either a bounded preview or SM synthesis. */
+/** Validated presentation committed by SM synthesis. */
 export interface PresentationArtifact {
   readonly name: string;
   /** Canonical node ids rendered in the view. */

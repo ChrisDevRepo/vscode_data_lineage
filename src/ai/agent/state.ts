@@ -11,18 +11,18 @@ import type { TurnStop } from '../support/text';
 
 /**
  * Explicit entry route chosen before phase execution starts: an AI-owned semantic verdict.
- * Execution triggers such as `/trace` and the explicit preview action are represented separately so
- * identical visual wording cannot blur the requested execution mode.
+ * Execution triggers such as `/trace` are represented separately so identical visual wording
+ * cannot blur the requested execution mode.
  */
 export type AgentEntryRoute = 'column_trace' | 'visual_render' | 'discovery';
 
 /** Mechanical source that can select SM without reinterpreting natural-language intent. */
-export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 'preview_button' | 'discovery_budget';
+export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 'discovery_budget';
 
 /**
  * Structured output for the narrow entry-detector model call. `visual_render` identifies explicit
- * visual intent but is not an execution trigger: it enters discovery like `discovery`, and only the
- * host-owned preview action (or another explicit trigger) grants a different route.
+ * visual intent but is not an execution trigger: it enters discovery like `discovery`; only an
+ * explicit trigger grants a different route.
  */
 export const EntryDetectionSchema = z.object({
   entry: z.enum(['column_trace', 'visual_render', 'discovery'])
@@ -71,7 +71,6 @@ type AgentGraphPhase =
   | 'init'
   | 'detect_entry'
   | 'discover'
-  | 'visual_preview'
   | 'sm_entry'
   | 'gate'
   | 'gate_refine'

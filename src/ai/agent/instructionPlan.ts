@@ -36,7 +36,6 @@ import type { PresentResultRepairAuthorization } from '../tools/presentResult';
 export type InstructionPhase =
   | 'detect_entry'
   | 'discover'
-  | 'visual_preview'
   | 'sm_entry'
   | 'active'
   | 'compose'
@@ -143,8 +142,6 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly presentResultRepairSectionTextLeaves?: () => PresentResultRepairAuthorization['sectionTextLeaves'] | null;
   /** Whether a committed report from this run exists for `present_result` to amend; read live. */
   readonly presentResultRetainableSections?: () => boolean;
-  /** Number of served `answer_blocks` the preview's section ranges may name (`B1`..`B<count>`). */
-  readonly presentResultPreviewBlockCount?: number;
   /** Whether the next `submit_findings` is fresh (no held draft or archived angle); read live. */
   readonly freshSubmission?: () => boolean;
   /** The fields a held draft of the focus failed, which a retry must send; `null` without one; read live. */
@@ -228,7 +225,7 @@ function phaseOf(stage: LmStage): InstructionPhase {
  * authorization.
  */
 function stageSupportsPresentResultRepair(stage: LmStage): boolean {
-  return stage.kind === 'synthesis' || stage.kind === 'visual_preview' || stage.kind === 'completed';
+  return stage.kind === 'synthesis' || stage.kind === 'completed';
 }
 
 function freezeStrings(values: readonly string[] | undefined): readonly string[] {
@@ -321,7 +318,6 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     heldFailed,
     hopColumns,
     presentResultRetainableSections,
-    presentResultPreviewBlockCount,
     ...input
   } = draft;
   const phase = phaseOf(stage);
@@ -334,7 +330,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     }
   }
   if (presentResultRepairFields && !stageSupportsPresentResultRepair(stage)) {
-    throw new Error('InstructionPlan: present_result repair authorization is valid only in synthesis, visual preview, or completed.');
+    throw new Error('InstructionPlan: present_result repair authorization is valid only in synthesis or completed.');
   }
   const allowed = getAllowedLmToolNames(stage);
   const filteredRegistry = filterRegistry(sourceRegistry, allowed);
@@ -349,7 +345,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;
   if (stageSupportsPresentResultRepair(stage) && !liveRepairResolver) {
-    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind, null, presentResultRetainableSections?.() ?? false, presentResultPreviewBlockCount));
+    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind, null, presentResultRetainableSections?.() ?? false));
   }
   let registry = schemaOverrides.size
     ? overrideRegistrySchemas(filteredRegistry, schemaOverrides)
@@ -361,7 +357,6 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
         stage.kind,
         presentResultRepairFields(),
         presentResultRetainableSections?.() ?? false,
-        presentResultPreviewBlockCount,
         presentResultRepairHighlightLabelIndexes?.() ?? undefined,
         presentResultRepairSectionTextLeaves?.() ?? undefined,
       ),

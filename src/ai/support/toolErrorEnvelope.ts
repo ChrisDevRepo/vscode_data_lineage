@@ -302,8 +302,8 @@ export const ISSUES = {
   },
   [REJECTION_CODES.missingResultGraph]: {
     category: 'stage',
-    label: 'no preview scope or completed exploration to present',
-    correction: 'Load one bounded scope for a visual preview or complete the active exploration first.',
+    label: 'no completed exploration to present',
+    correction: 'Complete the active exploration first.',
   },
   [REJECTION_CODES.noOpRefine]: {
     category: 'protocol',
@@ -329,11 +329,6 @@ export const ISSUES = {
     category: 'protocol',
     label: 'not executed: an earlier call of this reply closed the step',
     correction: 'Do not retry it.',
-  },
-  [REJECTION_CODES.previewSourceUnavailable]: {
-    category: 'stage',
-    label: 'no discovery behind the preview',
-    correction: 'Run the discovery question again, then request its graph preview.',
   },
   [REJECTION_CODES.queryNotAName]: {
     category: 'value',

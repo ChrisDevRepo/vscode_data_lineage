@@ -14,7 +14,6 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX, isIndirectEdge, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
-import { marked } from 'marked';
 import Graph from 'graphology';
 import { connectedComponents } from 'graphology-components';
 
@@ -26,11 +25,11 @@ type PresentResultFailedField = 'name' | 'summary' | 'title' | 'intro' | 'closin
 
 /**
  * Stage `lineage_present_result` is called from, as classified by the caller. Drives stage-aware
- * wording in {@link presentNodeIdHint}: `visual_preview` and `synthesis` never have
- * `lineage_search_objects` on their tool policy (`toolPolicy.ts`), so a hint naming it there is a
- * guaranteed off-policy retry; only `completed` exposes it.
+ * wording in {@link PRESENT_REAL_ID_ROUTE}: `synthesis` never has `lineage_search_objects` on its
+ * tool policy (`toolPolicy.ts`), so a hint naming it there is a guaranteed off-policy retry; only
+ * `completed` exposes it.
  */
-export type PresentResultStage = 'visual_preview' | 'synthesis' | 'completed';
+export type PresentResultStage = 'synthesis' | 'completed';
 
 /**
  * The state the engine records for a node id the current result graph cannot link. The dispatcher
@@ -81,18 +80,13 @@ export const ADD_NODE_IDS_REVEALS = 'reveals any object in the approved explorat
 const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
   completed: `A real id outside the result graph can be brought into the view with add_node_ids, which ${ADD_NODE_IDS_REVEALS}.`,
   synthesis: 'The result graph is locked this stage.',
-  visual_preview: 'The result graph is locked this stage; the answer text is served as blocks.',
 };
 
 /**
- * Unknown-node-id repair hint for the calling stage: the one action the stage accepts. The route
- * only one stage offers (`add_node_ids`) rides on {@link PRESENT_REAL_ID_ROUTE}.
+ * Unknown-node-id repair hint: the actions every calling stage accepts. The route only one stage
+ * offers (`add_node_ids`) rides on {@link PRESENT_REAL_ID_ROUTE}.
  */
-function presentNodeIdHint(stage: PresentResultStage): string {
-  return stage === 'visual_preview'
-    ? 'Use the accepted canonical ids with their exact catalog casing. Remove the named ids from node_ids.'
-    : 'Use the accepted canonical ids with their exact catalog casing. Remove the named ids from node_ids, or state the fact in sections[].text.';
-}
+const PRESENT_NODE_ID_HINT = 'Use the accepted canonical ids with their exact catalog casing. Remove the named ids from node_ids, or state the fact in sections[].text.';
 
 /**
  * The AI's submission to `lineage_present_result`. The AI writes structured parts (summary, title,
@@ -151,9 +145,8 @@ export interface PresentResultRepairAuthorization {
   readonly sectionOrder?: readonly string[];
 }
 
-/** A preview section carries the served block id it starts at instead of a body. */
-type PresentSection = NonNullable<PresentResultInput['sections']>[number] & { start?: string };
-type PresentSectionPatch = NonNullable<PresentResultBaseRepairPatch['sections']>[number] & { start?: string };
+type PresentSection = NonNullable<PresentResultInput['sections']>[number];
+type PresentSectionPatch = NonNullable<PresentResultBaseRepairPatch['sections']>[number];
 
 /**
  * The validated, engine-assembled result ready for the UI. `description` is the markdown document
@@ -188,97 +181,11 @@ export type PresentResultFailure = {
   repairFields: PresentResultRepairField[];
 };
 
-/** One numbered top-level block of the cached discovery answer, served as `answer_blocks`. */
-export interface AnswerBlock {
-  readonly id: string;
-  readonly text: string;
-}
-
-/**
- * Splits the cached discovery answer into engine-owned title/summary and numbered source blocks.
- *
- * @returns `title` (absent without a leading level-1 heading, ATX or Setext; closing `#`s
- *   stripped), the remaining body as `blocks` (one per top-level Markdown token, ids `B1`..`Bn`),
- *   and a one-line `summary`: the first line of the first non-code block's text (list, blockquote
- *   or task marker stripped), else the title. A fenced code block is never the summary; absent when
- *   neither exists, so the caller rejects rather than inventing prose.
- */
-export function discoveryPreviewNarrative(answer: string): {
-  title?: string;
-  blocks: AnswerBlock[];
-  summary?: string;
-} {
-  const normalized = answer.replace(/\r\n?/g, '\n').trim();
-  const [lead] = marked.lexer(normalized);
-  const heading = lead?.type === 'heading' && lead.depth === 1 ? lead : undefined;
-  const title = heading?.text.trim();
-  const body = heading ? normalized.slice(heading.raw.length).trim() : normalized;
-  const tokens = marked.lexer(body);
-  const first = tokens.find(token => token.type !== 'code' && token.type !== 'hr' && token.type !== 'space');
-  const text: string | undefined = first?.type === 'list' ? first.items[0]?.text : first && 'text' in first ? first.text : first?.raw;
-  const summary = text?.split('\n').find(line => line.trim())?.trim() || title;
-  const texts: string[] = [];
-  const leading: string[] = [];
-  for (const token of tokens) {
-    const raw = token.raw.trim();
-    if (token.type === 'space') continue;
-    if (token.type !== 'hr') texts.push([...leading.splice(0), raw].join('\n\n'));
-    else if (texts.length > 0) texts[texts.length - 1] += `\n\n${raw}`;
-    else leading.push(raw);
-  }
-  if (leading.length > 0) texts.push(leading.join('\n\n'));
-  const blocks = texts.map((blockText, index) => ({ id: `B${index + 1}`, text: blockText }));
-  return { ...(title ? { title } : {}), blocks, summary };
-}
-
-/**
- * Where preview `sections` do not start strictly after the section before them. The first section
- * always begins at B1; the served schema constrains the ids, and order depends on the whole
- * (merged) list, so it is checked here.
- *
- * @returns One entry per departure — the section it concerns and a message naming both sections.
- */
-export function findStartOrderIssues(
-  sections: ReadonlyArray<{ label: string; start?: string }>,
-): Array<{ index: number; message: string }> {
-  const issues: Array<{ index: number; message: string }> = [];
-  for (const [index, { label, start }] of sections.entries()) {
-    if (index === 0 || !start) continue;
-    const before = startBlock(sections, index - 1);
-    if (startBlock(sections, index) <= before) {
-      issues.push({ index, message: `Section "${label}" starts at ${start}, not after "${sections[index - 1].label}" at B${before}; starts ascend strictly.` });
-    }
-  }
-  return issues;
-}
-
-/** The 1-based block a preview section starts at; the first section always begins at B1. */
-function startBlock(sections: ReadonlyArray<{ start?: string }>, index: number): number {
-  return index === 0 ? 1 : Number((sections[index].start ?? 'B1').slice(1));
-}
-
-/**
- * Builds each preview section's `text` from the blocks between its start and the next section's
- * start (the first from B1, the last to the end), so the joined text is the cached answer in its
- * own words.
- */
-export function assemblePreviewSections(
-  blocks: readonly AnswerBlock[],
-  sections: readonly PresentSection[],
-): PresentSection[] {
-  return sections.map(({ start, ...section }, index) => ({
-    ...section,
-    text: start
-      ? blocks.slice(startBlock(sections, index) - 1, index + 1 < sections.length ? startBlock(sections, index + 1) - 1 : blocks.length).map(block => block.text).join('\n\n')
-      : section.text,
-  }));
-}
-
 /**
  * A defect found outside {@link validatePresentResult} but reported through its accumulator.
  *
  * @remarks
- * Checks that need context the validator does not hold — the cached discovery answer, the result
+ * Checks that need context the validator does not hold — the captured evidence, the result
  * graph — are passed in instead, so every rule reports through one accumulator and one rejection.
  */
 export interface PresentResultViolation {
@@ -313,32 +220,25 @@ export function findTextlessNewSectionLabels(
 ): string[] {
   const heldKeys = new Set((held ?? []).map(sectionKey));
   return resent
-    .filter(section => !('remove' in section && section.remove) && !heldKeys.has(sectionKey(section)) && !section.start && !('text' in section && section.text?.trim()))
+    .filter(section => !('remove' in section && section.remove) && !heldKeys.has(sectionKey(section)) && !('text' in section && section.text?.trim()))
     .map(section => section.label);
 }
 
-/** Held preview sections with each `start` replaced by its effective block (the first is B1). */
-function withEffectiveStarts(sections: readonly PresentSection[]): PresentSection[] {
-  return sections.map((section, index) => (section.start ? { ...section, start: `B${startBlock(sections, index)}` } : section));
-}
-
 /**
- * The held sections a repair may key on, as the model-facing view: label and, for a preview
- * section, the block it effectively starts at (the first always B1). The model's own rejected call
- * already carries every body.
+ * The held sections a repair may key on, as the model-facing view: the label only. The model's own
+ * rejected call already carries every body.
  */
-export function heldSectionsForRepair(sections: PresentResultInput['sections']): Array<{ label: string; start?: string }> {
-  return withEffectiveStarts((sections ?? []) as PresentSection[]).map(({ label, start }) => ({ label, ...(start ? { start } : {}) }));
+export function heldSectionsForRepair(sections: PresentResultInput['sections']): Array<{ label: string }> {
+  return (sections ?? []).map(({ label }) => ({ label }));
 }
 
 /**
  * The repair-call sentence a repairable rejection carries, stated once here for every failure: the
- * fields to resend and, when `sections` is among them, how the resend merges under the stage's own
- * section body field — or, when the held draft has no section, that every section is resent.
+ * fields to resend and, when `sections` is among them, how the resend merges under each section's
+ * `text` — or, when the held draft has no section, that every section is resent.
  */
 export function presentResultRepairInstruction(
   resendList: readonly PresentResultRepairField[],
-  stage: PresentResultStage,
   sectionsHeld = true,
   highlightLabelIndexes?: readonly number[],
   sectionTextLeaves?: PresentResultRepairAuthorization['sectionTextLeaves'],
@@ -347,7 +247,7 @@ export function presentResultRepairInstruction(
   return [
     `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`,
     resendList.includes('sections') && !sectionTextLeaves
-      ? (sectionsHeld ? keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids']) : 'No section is held: resend every section.')
+      ? (sectionsHeld ? keyedResendRule('sections', 'label', ['text', 'node_ids']) : 'No section is held: resend every section.')
       : '',
     highlightLabelIndexes
       ? `Repair only the overlong highlight label${highlightLabelIndexes.length === 1 ? '' : 's'}: highlight_groups accepts {index, label} for zero-based ${highlightLabelIndexes.join(', ')}. Replace each rejected label with only its short shared role or status, ending before any dash, colon, example or member list. Leave generous headroom below the served maxLength rather than trimming to its edge. Every color, node_ids list, other label and group position stays held.`
@@ -378,7 +278,6 @@ export function holdRejectedPresentResult(
   store: RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>,
   input: unknown,
   failedPaths: readonly string[],
-  stage: PresentResultStage,
   committed: ReadonlyArray<{ label: string; text?: string }> | null = null,
 ): string | null {
   if (store.get() || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
@@ -447,7 +346,7 @@ export function holdRejectedPresentResult(
   const unheld = unkept.length > 0 && !hasLeafRepair
     ? ` sections for ${quoteIds(unkept)} were not held: the committed report has no body for them. Its sections are ${quoteIds((committed ?? []).map(sec => sec.label))}; omit sections to keep the committed report.`
     : '';
-  return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage, passedSections.length > 0, highlightLabelIndexes, sectionTextLeaves)}`;
+  return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, passedSections.length > 0, highlightLabelIndexes, sectionTextLeaves)}`;
 }
 
 type PresentNote = NonNullable<PresentResultInput['notes']>[number];
@@ -464,9 +363,7 @@ function noteKey(note: Partial<PresentNote>, identifierCaseSensitive: boolean): 
 
 /**
  * Merges a strict repair patch into a held full `present_result` draft. `sections` merge by label
- * ({@link RepairDraftStore.mergeByKey}); a preview list is then ordered by effective start (held
- * first section at B1), so a new mid-answer section never trips the ascending-starts check (two
- * sections sharing a start still do). `notes` merge by node id, so one missing caption is one
+ * ({@link RepairDraftStore.mergeByKey}). `notes` merge by node id, so one missing caption is one
  * resent entry; an ordinary `highlight_groups` repair replaces its list whole. A rejection confined
  * to overlong highlight labels authorizes `{index, label}` leaves; one confined to a section's
  * `label` or `text` authorizes only those indexed leaves. Narrow merges preserve the rest of the
@@ -529,12 +426,10 @@ export function mergePresentResultRepairPatch(
         const index = authorization.sectionOrder?.indexOf(sectionKey(section)) ?? -1;
         return index < 0 ? Number.MAX_SAFE_INTEGER : index;
       };
-      const merged = RepairDraftStore.mergeByKey<PresentSection>(withEffectiveStarts(draft.sections ?? []), value as PresentSectionPatch[], sectionKey)
+      const merged = RepairDraftStore.mergeByKey<PresentSection>(draft.sections ?? [], value as PresentSectionPatch[], sectionKey)
         .map(section => ({ ...section, node_ids: section.node_ids ?? [] }))
         .sort((a, b) => rank(a) - rank(b));
-      updates.sections = merged.every(section => section.start)
-        ? merged.sort((a, b) => Number(a.start!.slice(1)) - Number(b.start!.slice(1)))
-        : merged;
+      updates.sections = merged;
       continue;
     }
     if (key === 'notes' && Array.isArray(value)) {
@@ -1065,12 +960,12 @@ export function findUnrenderedDetailSlotIds(
  * ({@link orderAndAssemble} drops and logs the rest). `assembledDescription` is engine-built and
  * never read from `input`.
  *
- * @param externalViolations - Findings from checks needing context this function lacks (the cached
- *   discovery answer, the result graph), reported alongside the structural rules
+ * @param externalViolations - Findings from checks needing context this function lacks (the
+ *   captured evidence, the result graph), reported alongside the structural rules
  *   ({@link PresentResultViolation}).
- * @param stage - The engine-derived calling stage, keeping the unknown-node-id hint caller-possible
- *   ({@link presentNodeIdHint}). Defaults to `'completed'`, the only stage whose tool policy
- *   includes `lineage_search_objects`.
+ * @param stage - The engine-derived calling stage, keeping the unknown-node-id route
+ *   caller-possible ({@link PRESENT_REAL_ID_ROUTE}). Defaults to `'completed'`, the only stage
+ *   whose tool policy includes `lineage_search_objects`.
  * @param nodeIdState - Classifies an id the result graph cannot link
  *   ({@link PresentNodeIdStateLookup}). Omitted, every offender is `not_in_model`.
  * @returns A request object, or a structured error with correction hints.
@@ -1219,8 +1114,8 @@ export function validatePresentResult(
     const fieldFault = failedFields.size > 0;
     const hint = [
       repairInstructed || !fieldFault ? undefined : `Fix ${[...failedFields].join(', ')}.`,
-      nodeIdHintNeeded ? presentNodeIdHint(stage) : undefined,
-      repairInstructed ? presentResultRepairInstruction(resendList, stage) : undefined,
+      nodeIdHintNeeded ? PRESENT_NODE_ID_HINT : undefined,
+      repairInstructed ? presentResultRepairInstruction(resendList) : undefined,
     ].filter(Boolean).join(' ') || undefined;
     const unlinkable = [...pathUnlinkableIds].map(([path, ids], index) => ({
       path,
