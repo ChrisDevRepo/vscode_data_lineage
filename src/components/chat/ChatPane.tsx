@@ -119,7 +119,17 @@ export function ComposerControls() {
   );
 }
 
-const THREAD_COMPONENTS = { ComposerExtra: ComposerControls };
+/** The empty-thread heading: the template's Welcome slot, in the app's small panel-title style. */
+function ChatWelcome() {
+  return (
+    <div className="mb-4 flex flex-col gap-1 px-2">
+      <p className="text-sm font-semibold">Data Lineage Assistant</p>
+      <p className="text-muted-foreground text-xs">Ask about the lineage of the loaded project.</p>
+    </div>
+  );
+}
+
+const THREAD_COMPONENTS = { ComposerExtra: ComposerControls, Welcome: ChatWelcome };
 
 /**
  * The chat: assistant-ui's Thread over an external-store runtime. The host owns every turn; this
