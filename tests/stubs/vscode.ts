@@ -1,7 +1,3 @@
-export class LanguageModelTextPart {
-  constructor(public readonly value: string) {}
-}
-
 export class CancellationTokenSource {
   private cancelled = false;
   private readonly listeners = new Set<() => void>();

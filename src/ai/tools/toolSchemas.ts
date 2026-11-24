@@ -337,7 +337,7 @@ export const StartExplorationCompletedProviderInputSchema = z.object({
 });
 
 /**
- * Canonical all-phase contract used by persistent VS Code/Copilot registration and manifest parity.
+ * Canonical all-phase contract used by the MCP tool registration.
  * API InstructionPlans replace it with exactly one phase-specific schema before each model call.
  */
 export const StartExplorationProviderInputSchema = z.union([
