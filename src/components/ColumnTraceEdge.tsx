@@ -70,13 +70,15 @@ export const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass
 };
 
 /**
- * The distinct classes an edge marks — one glyph and one label per class. A column edge leaves
- * identity unmarked; a combined line keeps `pass_through`, since there it names a value source off
- * the traced path.
+ * The distinct classes an edge marks — one glyph and one label per class. A value-only column edge
+ * leaves identity unmarked; `pass_through` is kept on a combined line, where it names a value
+ * source off the traced path, and beside a combine/filter class, where it is the value half of a
+ * line that is a value and a key relation at once.
  */
 function markedTransformClasses(transforms: readonly ColumnTransformClass[] | undefined, combinedLine: boolean): ColumnTransformClass[] {
   const classes = [...new Set(transforms ?? [])];
-  return combinedLine ? classes : classes.filter(c => c !== 'pass_through');
+  const keepIdentity = combinedLine || classes.some(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
+  return keepIdentity ? classes : classes.filter(c => c !== 'pass_through');
 }
 
 /**

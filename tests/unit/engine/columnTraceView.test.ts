@@ -294,7 +294,7 @@ describe('columnTraceView', () => {
   it.each([
     [['pass_through', 'combine'], ['combine']],
     [['compute', 'filter'], ['filter']],
-  ] as const)('keeps the direct edge and stores the indirect class of a mixed %j relation apart', (transforms, indirect) => {
+  ] as const)('draws a mixed %j relation as one solid edge with every class and no combined line', (transforms, indirect) => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
     const relations: ColumnTraceRelation[] = [
       { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'CustId', toNode: 'dbo.t', toCol: 'CustId', transforms: [...transforms], note: 'CustId * 1' },
@@ -302,12 +302,34 @@ describe('columnTraceView', () => {
 
     const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     expect(view.edges.filter(e => e.source === 'dbo.s' && e.target === 'dbo.p')).toMatchObject([{ transforms: [...transforms] }]);
-    expect(view.objectEdges.filter(e => e.source === 'dbo.s')).toMatchObject([{ target: 'dbo.p', columns: ['CustId'], transforms: [...indirect] }]);
-    expect(view.objectEdges.find(e => e.source === 'dbo.s')?.note).toBeUndefined();
+    expect(view.objectEdges).toEqual([]);
     const row = findRow(view, 'dbo.s', 'CustId');
     expect(row.indirect).toEqual([...indirect]);
     expect(row.indirectOnly).toBeUndefined();
     expect(row.clause).toBeUndefined();
+  });
+
+  it('keeps the combined line of a mixed relation whose own edge is not drawn', () => {
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'CustId', toNode: 'dbo.t', toCol: 'CustId', transforms: ['pass_through', 'combine'] },
+    ];
+
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    expect(view.edges).toEqual([]);
+    expect(view.objectEdges).toMatchObject([{ source: 'dbo.s', target: 'dbo.p', columns: ['CustId'], transforms: ['combine'] }]);
+  });
+
+  it('carries the key class of a repeated relation on its one solid edge', () => {
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'CustId', toNode: 'dbo.t', toCol: 'CustId', transforms: ['pass_through'] },
+      { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'CustId', toNode: 'dbo.t', toCol: 'CustId', transforms: ['pass_through', 'combine'] },
+    ];
+
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    expect(view.edges).toMatchObject([{ source: 'dbo.s', target: 'dbo.t', transforms: ['pass_through', 'combine'] }]);
+    expect(view.objectEdges).toEqual([]);
   });
 
   it('sizes a transform super node as a compact circle box, not a port card', () => {

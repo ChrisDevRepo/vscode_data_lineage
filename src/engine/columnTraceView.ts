@@ -478,10 +478,11 @@ function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
  * Builds the column-level rendering of an AI column trace.
  *
  * Row order is first-seen order across `input.relations` (no declared ordinal exists here). A
- * relation recorded more than once (same endpoints, same hop node) is skipped before any
- * accumulator write, so a column re-submitted across hops counts once. A relation analysed by a hop
- * node that is neither endpoint but is on the canvas draws as two legs (source to hop, hop to
- * target) rather than one line past it; a collapsed line would leave the hop with no inbound edge,
+ * relation recorded more than once (same endpoints, same hop node) is skipped before any row
+ * write, so a column re-submitted across hops counts once; its classes join the first. A
+ * relation analysed by a hop node that is neither endpoint but is on the canvas draws as two legs
+ * (source to hop, hop to target) rather than one line past it; a collapsed line would leave the
+ * hop with no inbound edge,
  * parked at the left margin, and the target's incoming count and rename signal still describe the
  * original endpoint pair. A relation whose endpoint is absent from `input.objects` is skipped
  * (filtered out of the view, not a lost finding). An object no relation touches is appended as a
@@ -517,7 +518,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   }
 
   const normalized: NormalizedRelation[] = [];
-  const seenRelations = new Set<string>();
+  const seenRelations = new Map<string, NormalizedRelation>();
   const portBridges: ColumnTracePortBridge[] = [];
   const seenBridges = new Set<string>();
 
@@ -538,9 +539,10 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
    * column edge, no port bridge, no row for the traced column, so it never continues a thread. The
    * step is the hop node, or the target when the hop is not on the canvas. A transform hub has no
    * column rows, so its key only reaches the line. A fact with no row to sit on, a hub's or one
-   * naming an object that is not drawn, is kept on the step for its summary line.
+   * naming an object that is not drawn, is kept on the step for its summary line. `ownEdge`: the
+   * relation's own solid edge is drawn and carries every class, so no line is added.
    */
-  function recordIndirect(relation: ColumnTraceRelation, sourceObj: ColumnTraceViewObject | undefined, stepObj: ColumnTraceViewObject | undefined): void {
+  function recordIndirect(relation: ColumnTraceRelation, sourceObj: ColumnTraceViewObject | undefined, stepObj: ColumnTraceViewObject | undefined, ownEdge: boolean): void {
     if (!stepObj) return;
     const sourceAcc = sourceObj && getAcc(sourceObj);
     const stepAcc = getAcc(stepObj);
@@ -567,7 +569,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       sourceAcc.indirect.set(rowKey, use);
       addIndirectFact(use);
     }
-    if (sourceAcc === stepAcc) return;
+    if (sourceAcc === stepAcc || ownEdge) return;
     const pair = JSON.stringify([schemaKey(sourceAcc.object.id, input.identifierCaseSensitive), schemaKey(stepObj.id, input.identifierCaseSensitive)]);
     const use = indirectUses.get(pair) ?? { source: sourceAcc, step: stepAcc, columns: new Map<string, string>(), classes: new Set<ColumnTransformClass>(), notes: [] };
     indirectUses.set(pair, use);
@@ -579,19 +581,24 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const sourceObj = input.objects.get(schemaKey(relation.fromNode, input.identifierCaseSensitive));
     const targetObj = input.objects.get(schemaKey(relation.toNode, input.identifierCaseSensitive));
     const indirectEdge = isIndirectEdge(relation);
+    const ownEdge = !indirectEdge && !!sourceObj && !!targetObj;
     if (indirectEdge || relation.transforms?.some(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT')) {
-      recordIndirect(relation, sourceObj, input.objects.get(schemaKey(relation.hopNode, input.identifierCaseSensitive)) ?? targetObj);
-      if (indirectEdge) return;
+      recordIndirect(relation, sourceObj, input.objects.get(schemaKey(relation.hopNode, input.identifierCaseSensitive)) ?? targetObj, ownEdge);
     }
-    if (!sourceObj || !targetObj) return;
+    if (indirectEdge || !sourceObj || !targetObj) return;
 
     const sourceKey = schemaKey(sourceObj.id, input.identifierCaseSensitive);
     const targetKey = schemaKey(targetObj.id, input.identifierCaseSensitive);
     const hopKey = schemaKey(relation.hopNode, input.identifierCaseSensitive);
 
     const identity = JSON.stringify([sourceKey, normalizeColName(relation.fromCol, input.identifierCaseSensitive), targetKey, normalizeColName(relation.toCol, input.identifierCaseSensitive), hopKey]);
-    if (seenRelations.has(identity)) return;
-    seenRelations.add(identity);
+    const seen = seenRelations.get(identity);
+    const { transforms } = relation;
+    if (seen) {
+      // A repeat adds its classes to the drawn relation, so a key class only it names is shown.
+      if (transforms) seen.transforms = COLUMN_TRANSFORM_CLASSES.filter(c => seen.transforms?.includes(c) || transforms.includes(c));
+      return;
+    }
 
     touchRow(getAcc(sourceObj), relation.fromCol, input.identifierCaseSensitive);
     touchRow(getAcc(targetObj), relation.toCol, input.identifierCaseSensitive);
@@ -614,7 +621,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       }
     }
 
-    normalized.push({
+    const entry: NormalizedRelation = {
       index,
       sourceId: sourceObj.id,
       sourceCol: relation.fromCol,
@@ -622,9 +629,11 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       targetCol: relation.toCol,
       hopNode: relation.hopNode,
       viaId,
-      transforms: relation.transforms,
+      transforms,
       note: relation.note,
-    });
+    };
+    seenRelations.set(identity, entry);
+    normalized.push(entry);
   });
 
   for (const object of input.objects.values()) getAcc(object);
