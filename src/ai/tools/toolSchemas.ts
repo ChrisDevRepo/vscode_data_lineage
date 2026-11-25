@@ -499,7 +499,7 @@ function idSetSchema(ids: readonly [string, ...string[]]) {
 }
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off-answer. */
-export const PruneNeighborSchema = z.object({
+const PruneNeighborSchema = z.object({
   id: z.string().min(1).describe(NEIGHBOR_ID_DESCRIPTION),
   reason: z.string().min(1).describe('What in this node\'s SQL shows the neighbor is off the answer.'),
 }).strict();
