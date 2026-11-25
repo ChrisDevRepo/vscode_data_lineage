@@ -23,7 +23,7 @@ import {
 import type { HeadlessLogChannel } from './headlessLogger';
 
 /**
- * Reads `uiState.screenState.bookmark.id` out of a parsed `--ui-state` buffer.
+ * Reads `uiState.screenState.bookmark.id` out of the `uiState` option.
  *
  * @remarks
  * The buffer is an opaque passthrough by contract (see `AiSession.uiState`), so every step is
@@ -75,7 +75,7 @@ export interface HarnessTurnOptions {
   /** Session trace sink; when present the runtime writes lifecycle and tool records to it. */
   readonly traceWriter?: AiTraceWriter;
   /**
-   * Parsed `--ui-state` buffer, assigned to `session.uiState` verbatim before the turn.
+   * The `uiState` option, assigned to `session.uiState` verbatim before the turn.
    *
    * @remarks
    * A top-level `renderState` key is additionally lifted onto `session.renderState`, and a

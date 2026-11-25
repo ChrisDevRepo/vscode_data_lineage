@@ -3,8 +3,8 @@ import { z } from 'zod';
 import type { AiSession, PendingExplorationProposal } from '../../src/ai/session/session';
 
 /**
- * How one gate round is answered: the user's next chat turn. The `--gate` JSON array is a list of
- * these.
+ * How one gate round is answered: the harness answers via `resumeGate`, like the panel's gate
+ * decision. The `--gate` JSON array is a list of these.
  *
  * @remarks
  * Round *N* answers the run's *N*-th card, counted across its turns; a card past the list has no
