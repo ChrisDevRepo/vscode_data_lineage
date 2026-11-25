@@ -15,7 +15,8 @@ import type { NavigationEngine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
-import { contextBlockBytes, storedEvidenceKindBytes, type TurnTokenBudget } from '../support/tokenBudget';
+import { contextBlockTokens, storedEvidenceKindTokens, type TurnTokenBudget } from '../support/tokenBudget';
+import { countTokens } from '../support/tokenCount';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
@@ -89,8 +90,8 @@ export type ExplorationActivationOutcome =
  */
 const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
 /*
- * Byte bounds for the discovery-evidence message, one evidence item, and the replayed transcript
- * live in `support/tokenBudget.ts` (`contextBlockBytes()`, `storedEvidenceKindBytes()`).
+ * Token bounds for the discovery-evidence message, one evidence item, and the replayed transcript
+ * live in `support/tokenBudget.ts` (`contextBlockTokens()`, `storedEvidenceKindTokens()`).
  */
 /**
  * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn
@@ -350,7 +351,7 @@ export class AiSession {
    * Cleared in {@link resetExploration}.
    */
   public lastDiscoveryAnswer: string | null = null;
-  /** Count- and byte-bounded canonical user/final-assistant discovery turns. */
+  /** Count- and token-bounded canonical user/final-assistant discovery turns. */
   private discoveryTranscript: DiscoveryTranscriptTurn[] = [];
   /** Bounded accepted tool evidence, independent of provider-native transcript shapes. */
   private discoveryEvidence: RetainedDiscoveryEvidence[] = [];
@@ -602,7 +603,7 @@ export class AiSession {
    * Appends canonical conversation text and bounded accepted discovery evidence. Provider-native
    * tool calls and `tool` messages are never retained; evidence is accepted only as valid JSON from
    * a successful graph-owned observation. Oldest evidence and transcript turns are evicted first on
-   * their byte/count bounds; every eviction or drop is normalize-with-log via `debugLog` when
+   * their token/count bounds; every eviction or drop is normalize-with-log via `debugLog` when
    * supplied.
    *
    * @param budget - Budget of the turn that produced the messages (the session is shared by every
@@ -636,7 +637,7 @@ export class AiSession {
         { role: 'assistant', content: assistant },
       ]);
       while (this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS
-        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > contextBlockBytes(budget)) {
+        || countTokens(renderDiscoveryTranscript(this.discoveryTranscript)) > contextBlockTokens(budget)) {
         this.discoveryTranscript.shift();
         debugLog?.(`[AI] [Discovery] oldest transcript turn evicted — turnsRemaining=${this.discoveryTranscript.length} cap=${MAX_DISCOVERY_TRANSCRIPT_TURNS}`);
       }
@@ -647,9 +648,9 @@ export class AiSession {
         debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=missing_tool_name`);
         continue;
       }
-      const resultBytes = Buffer.byteLength(observation.result, 'utf8');
-      if (resultBytes > storedEvidenceKindBytes(budget)) {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized bytes=${resultBytes} cap=${storedEvidenceKindBytes(budget)}`);
+      const resultTokens = countTokens(observation.result);
+      if (resultTokens > storedEvidenceKindTokens(budget)) {
+        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized tokens=${resultTokens} cap=${storedEvidenceKindTokens(budget)}`);
         continue;
       }
       let result: unknown;
@@ -669,7 +670,7 @@ export class AiSession {
       }
       this.discoveryEvidence.push({ toolName: observation.toolName, result });
       while (this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS
-        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > contextBlockBytes(budget)) {
+        || countTokens(this.renderDiscoveryEvidence()) > contextBlockTokens(budget)) {
         const evicted = this.discoveryEvidence.shift();
         debugLog?.(`[AI] [Discovery] oldest evidence observation evicted — tool=${evicted ? trunc(sanitizeForLog(evicted.toolName), 64) : '(unknown)'} remaining=${this.discoveryEvidence.length}`);
       }

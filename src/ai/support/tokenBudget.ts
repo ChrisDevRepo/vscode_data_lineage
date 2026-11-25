@@ -11,14 +11,6 @@ import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { REJECTION_CODES } from './rejectionCodes';
 import { makeRejection, type ToolRejection } from './toolErrorEnvelope';
 
-/** Estimates tokens at 1 token ≈ 4 characters, the usual approximation for JSON/SQL payloads. */
-export function estimateTokens(chars: number): number {
-  return Math.ceil(chars / CHARS_PER_TOKEN);
-}
-
-/** The heuristic ratio behind {@link estimateTokens} and the byte ceilings derived from it. */
-const CHARS_PER_TOKEN = 4;
-
 /** What every `over_discovery_budget` rejection states went wrong. */
 const OVER_DISCOVERY_BUDGET_REASON = 'Scope exceeds the discovery budget.';
 
@@ -180,23 +172,25 @@ const CONTEXT_BLOCK_WINDOW_SHARE = 0.125;
 const UNKNOWN_WINDOW_TOKENS = 131_072;
 
 /** Headroom reserved inside a block for identity fields, so one item never fills the block. */
-const CONTEXT_BLOCK_ITEM_HEADROOM_BYTES = 4_096;
+const CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS = 1_024;
 
 /**
- * Bytes one bounded prompt block may hold on the turn's model: the window share, or the same share
- * of {@link UNKNOWN_WINDOW_TOKENS} when the model reports no window.
+ * Tokens one bounded prompt block may hold on the turn's model: the window share, or the same
+ * share of {@link UNKNOWN_WINDOW_TOKENS} when the model reports no window. A block is measured
+ * with the one token counter (`countTokens` in `tokenCount.ts`, which this module cannot import:
+ * the regex-search worker bundles it), never by its size in bytes.
  */
-export function contextBlockBytes(budget: TurnTokenBudget): number {
+export function contextBlockTokens(budget: TurnTokenBudget): number {
   const window = Number.isFinite(budget.modelWindowTokens) ? budget.modelWindowTokens : UNKNOWN_WINDOW_TOKENS;
-  return Math.max(CONTEXT_BLOCK_ITEM_HEADROOM_BYTES, Math.floor(window * CONTEXT_BLOCK_WINDOW_SHARE * CHARS_PER_TOKEN));
+  return Math.max(CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS, Math.floor(window * CONTEXT_BLOCK_WINDOW_SHARE));
 }
 
 /**
- * Byte budget for one stored evidence kind (observations or rejections) or one canonical discovery
- * result, held below {@link contextBlockBytes} so one entry cannot fill the block.
+ * Token budget for one stored evidence kind (observations or rejections) or one canonical discovery
+ * result, held below {@link contextBlockTokens} so one entry cannot fill the block.
  */
-export function storedEvidenceKindBytes(budget: TurnTokenBudget): number {
-  return contextBlockBytes(budget) - CONTEXT_BLOCK_ITEM_HEADROOM_BYTES;
+export function storedEvidenceKindTokens(budget: TurnTokenBudget): number {
+  return contextBlockTokens(budget) - CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS;
 }
 
 
