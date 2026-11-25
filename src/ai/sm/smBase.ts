@@ -4095,7 +4095,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * A neighbor the AI may name in `prune_neighbors` (spec 06: only an unvisited neighbor): not
+   * A neighbor the AI may name in `prune_neighbors` (only an unvisited neighbor): not
    * visited, removed, the origin, or the carrier contracted into the focus. A queued neighbor and
    * one outside the approved scope stay nameable, a losing vote; {@link castsPruneBallot} says
    * whether the vote counts.
