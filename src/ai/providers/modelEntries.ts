@@ -11,12 +11,14 @@ import { z } from 'zod';
 const MODEL_API_TYPES = ['chat-completions', 'responses'] as const;
 
 /**
- * Request fields the port owns. `requestBody` carries everything else unchanged; a key of this list
- * would replace the conversation, tool offer or stream shape, so an entry naming one is invalid.
- * `input` is the Responses name of `messages`.
+ * Request fields the port owns. `requestBody` carries everything else unchanged; a key of this
+ * list would replace the conversation, tool offer, stream shape or output cap (`maxOutputTokens`
+ * alone sets the cap), so an entry naming one is invalid. `input` is the Responses name of
+ * `messages`.
  */
 const PORT_OWNED_BODY_KEYS: readonly string[] = [
   'model', 'messages', 'input', 'tools', 'tool_choice', 'stream', 'stream_options',
+  'max_tokens', 'max_completion_tokens', 'max_output_tokens',
 ];
 
 /** Prefix of the id a live VS Code language model is offered under; no entry id may start with it. */

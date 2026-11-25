@@ -161,12 +161,6 @@ describe('VscodeLmChatModel modelOptions', () => {
     expect(wires.find((record) => record.type === 'wire-request')).toMatchObject({ body: sent[0].options.modelOptions });
   });
 
-  it('lets requestBody override max_tokens', async () => {
-    const { port, sent } = portOver(replying(new vscode.LanguageModelTextPart('x')), { ...ENTRY, requestBody: { max_tokens: 9 } });
-    await port.completeText({ messages: [new HumanMessage('go')], phase: 't' });
-    expect(sent[0].options.modelOptions).toEqual({ max_tokens: 9 });
-  });
-
   it('sends no modelOptions key for a live selection', async () => {
     const wires: WireRecord[] = [];
     const { port, sent } = portOver(replying(new vscode.LanguageModelTextPart('x')), LIVE_ENTRY, wires);

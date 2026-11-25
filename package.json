@@ -610,11 +610,11 @@
                     "model": { "type": "string", "minLength": 1, "description": "Model name sent in the request." },
                     "apiType": { "type": "string", "enum": ["chat-completions", "responses"], "description": "Wire format of the endpoint." },
                     "maxInputTokens": { "type": "integer", "minimum": 1, "description": "Input window of the model in tokens." },
-                    "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit of the model in tokens; sent as the API's output cap (`max_output_tokens` on Responses, `max_tokens` or `max_completion_tokens` on Chat Completions). A `max_tokens` or `max_completion_tokens` in `requestBody` overrides it on Chat Completions." },
+                    "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit of the model in tokens; sent as the API's output cap (`max_output_tokens` on Responses, `max_tokens` or `max_completion_tokens` on Chat Completions). A cap key in `requestBody` (`max_tokens`, `max_completion_tokens`, `max_output_tokens`) makes the entry invalid." },
                     "supportsReasoningEffort": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Reasoning efforts the model accepts." },
                     "reasoningEffort": { "type": "string", "description": "Reasoning effort sent with each request." },
                     "forcedToolChoice": { "type": "boolean", "default": true, "description": "Whether the endpoint accepts a forced tool choice; when off, `auto` is sent." },
-                    "requestBody": { "type": "object", "markdownDescription": "Extra request parameters, sent unchanged. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream` and `stream_options` are owned by the extension." },
+                    "requestBody": { "type": "object", "markdownDescription": "Extra request parameters, sent unchanged. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream`, `stream_options` and the output-cap keys (`max_tokens`, `max_completion_tokens`, `max_output_tokens`; see `maxOutputTokens`) are owned by the extension." },
                     "requestHeaders": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Extra request headers. Never a key." }
                   }
                 },
@@ -636,8 +636,8 @@
                         "id": { "type": "string", "minLength": 1, "description": "Model id." }
                       }
                     },
-                    "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit sent to the model as `max_tokens` in its options; `requestBody` can override it." },
-                    "requestBody": { "type": "object", "markdownDescription": "Model options (for example `temperature`, `top_p`), sent unchanged. The model's provider decides which it honors. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream` and `stream_options` are owned by the extension." }
+                    "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit sent to the model as `max_tokens` in its options; a cap key in `requestBody` makes the entry invalid." },
+                    "requestBody": { "type": "object", "markdownDescription": "Model options (for example `temperature`, `top_p`), sent unchanged. The model's provider decides which it honors. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream`, `stream_options` and the output-cap keys (`max_tokens`, `max_completion_tokens`, `max_output_tokens`; see `maxOutputTokens`) are owned by the extension." }
                   }
                 }
               ]
