@@ -9,17 +9,25 @@ import o200kBase from 'js-tiktoken/ranks/o200k_base';
 import { checkScopeTokens, type DiscoveryBudgetRejection, type TurnTokenBudget } from './tokenBudget';
 
 /**
- * Factor on every token count. The counter is OpenAI's `o200k_base`; other models tokenize SQL and
- * identifiers into more tokens, and a 32k window has no room for the difference.
+ * Default factor on every token count. The counter is OpenAI's `o200k_base`; other models tokenize
+ * SQL and identifiers into more tokens, and a 32k window has no room for the difference.
  */
-const TOKEN_COUNT_MARGIN = 1.2;
+export const TOKEN_COUNT_MARGIN = 1.2;
 
 let encoder: Tiktoken | undefined;
 
-/** Tokens `text` takes: the `o200k_base` count times the safety margin, rounded up. */
-export function countTokens(text: string): number {
+/** Unscaled `o200k_base` token count of `text`. */
+export function rawTokens(text: string): number {
   encoder ??= new Tiktoken(o200kBase);
-  return Math.ceil(encoder.encode(text).length * TOKEN_COUNT_MARGIN);
+  return encoder.encode(text).length;
+}
+
+/**
+ * Tokens `text` takes: the `o200k_base` count times `margin` (defaults to
+ * {@link TOKEN_COUNT_MARGIN}), rounded up.
+ */
+export function countTokens(text: string, margin = TOKEN_COUNT_MARGIN): number {
+  return Math.ceil(rawTokens(text) * margin);
 }
 
 /**

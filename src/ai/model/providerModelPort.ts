@@ -33,7 +33,7 @@ import {
   sanitizeProviderError,
   sanitizeProviderErrorDiagnostic,
 } from '../support/text';
-import { countTokens } from '../support/tokenCount';
+import { TOKEN_COUNT_MARGIN, countTokens, rawTokens } from '../support/tokenCount';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { coerceStringifiedArguments, parseJson } from '../support/inputNormalization';
@@ -137,6 +137,9 @@ export class ProviderModelPort implements ModelPort {
   /** {@inheritDoc SingleGenerationModelPort.budget} */
   public readonly budget: TurnTokenBudget;
 
+  /** Safety margin on {@link countTokens}; starts at 1.2 and calibrates from usage. */
+  private tokenMargin = TOKEN_COUNT_MARGIN;
+
   public constructor(
     private readonly chat: ProviderChat,
     private readonly options: ProviderModelPortOptions = {},
@@ -149,11 +152,12 @@ export class ProviderModelPort implements ModelPort {
   }
 
   /**
-   * {@link SingleGenerationModelPort.getNumTokens}; the one shared counter. Carries no
-   * cancellation: the caller is `trimMessages`' counter, run outside any generation.
+   * {@link SingleGenerationModelPort.getNumTokens}; the one shared counter scaled by this port's
+   * calibrated margin. Carries no cancellation: the caller is `trimMessages`' counter, run
+   * outside any generation.
    */
   public getNumTokens(content: MessageContent): Promise<number> {
-    return Promise.resolve(countTokens(messageContentToText(content)));
+    return Promise.resolve(countTokens(messageContentToText(content), this.tokenMargin));
   }
 
   /** Runs one tool-capable generation and validates emitted calls against the supplied tools. */
@@ -371,8 +375,9 @@ export class ProviderModelPort implements ModelPort {
       if (requiresTool && tools.length === 0) {
         throw new ModelPortError('invalid_request', 'Required tool mode requires at least one tool.');
       }
+      const sentMessages = system ? [new SystemMessage(system), ...history] : history;
       const request = this.chat.request(
-        system ? [new SystemMessage(system), ...history] : history,
+        sentMessages,
         tools,
         tools.length > 0 || requiresTool ? toToolChoice(choice, tools) : undefined,
       );
@@ -426,6 +431,15 @@ export class ProviderModelPort implements ModelPort {
         latencyMs: Date.now() - startedAt,
         ...(usage ? { usage } : {}),
       });
+      if (usage?.inputTokens !== undefined && usage.inputTokens > 0) {
+        const rawSent = rawTokens(
+          sentMessages.map((item) => JSON.stringify(toWireMessage(item))).join('')
+          + (tools.length > 0 ? JSON.stringify(tools) : ''),
+        );
+        if (rawSent > 0) {
+          this.tokenMargin = Math.max(TOKEN_COUNT_MARGIN, usage.inputTokens / rawSent);
+        }
+      }
       return { message, toolCalls, finishReason, usage };
     } catch (error) {
       const failure = toPortError(error, signal);
