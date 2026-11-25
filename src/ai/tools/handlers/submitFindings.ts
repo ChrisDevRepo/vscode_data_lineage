@@ -1,22 +1,17 @@
 /**
  * Executes active-hop submissions for the `lineage_submit_findings` tool. Raw arguments are parsed
- * once against the current hop's served contract, before id resolution and internal conversion.
+ * once against the current hop's served contract, which names every id reference as the hop's enum.
  * Turn-lease validation and effect serialization stay in the registry.
  */
 import { NavigationEngine } from '../../sm/smBase';
-import { sanitizeForLog } from '../../../utils/log';
 import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionFields } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
 import { combineToolRejections, makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import { routeDirectives } from '../../sm/smRouteValidation';
-import {
-  normalizeSubmitFindingsInputIds,
-  type SubmitFindingsInputObject,
-} from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import type { ColumnFlowEntry } from '../../sm/smTypes';
 import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContract';
-import { type ToolServices, getModelNodeMap } from './toolServices';
+import type { ToolServices } from './toolServices';
 
 /**
  * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
@@ -62,20 +57,8 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         }
         return s.logAndReturn('lineage_submit_findings', rejection, input);
       }
-      const rawInput: SubmitFindingsInputObject = parsed.data;
-
       const model = s.requireModel();
-      const modelNodeMap = getModelNodeMap(model);
-      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap, model.identifierCaseSensitive);
-      const normalizedInput = normalized.input;
-      for (const event of normalized.normalizations) {
-        s.logger.debug(
-          `[Normalize] tool=submit_findings field=${event.field} from=${sanitizeForLog(event.from)} to=${sanitizeForLog(event.to)}`,
-        );
-      }
-      const flat = normalizedInput as typeof parsed.data;
-
-      const finding = toHopFinding(flat);
+      const finding = toHopFinding(parsed.data);
 
       const result = engine.submitFindings(finding);
       if ('code' in result) {
@@ -85,7 +68,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
             if (d.reason) s.logger.debug(`[CT] rejection: id=${d.id ?? '?'} — ${d.reason}`);
           }
         }
-        return s.logAndReturn('lineage_submit_findings', result, normalizedInput);
+        return s.logAndReturn('lineage_submit_findings', result, input);
       }
 
       const diag = engine.getHopDiagnostics();
@@ -110,7 +93,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           sess.stateMachine?.deferredQuestions ?? [],
           model.identifierCaseSensitive,
         );
-        return s.logAndReturn('lineage_submit_findings', { ok: true, done: true, ...envelope }, normalizedInput);
+        return s.logAndReturn('lineage_submit_findings', { ok: true, done: true, ...envelope }, input);
       }
       return s.logAndReturn('lineage_submit_findings', {
         ok: true,
@@ -119,6 +102,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         hop: nextHop.hop,
         next_focus: nextHop.focus_node?.id,
         ...(result.unaccounted_columns ? { unaccounted_columns: result.unaccounted_columns } : {}),
-      }, normalizedInput);
+      }, input);
     } catch (err) { return s.toolError('submit_findings', err); }
 }

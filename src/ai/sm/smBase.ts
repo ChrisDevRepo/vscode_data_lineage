@@ -1,7 +1,7 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE } from './smRouteValidation';
-import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { heldSubmissionFields, hopColumnFlowSchema, hopQuestionSchema, PruneNeighborSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
+import { extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
+import { heldSubmissionFields, hopColumnFlowSchema, hopPruneNeighborSchema, hopQuestionSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { z, type ZodType } from 'zod';
@@ -23,7 +23,6 @@ import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session
 import { CLASSIFICATION_KEPT_ANGLES, sectionField, type ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
-import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ColumnFlowEntry, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
@@ -65,7 +64,7 @@ export interface HopNeighborDisclosure extends HopNeighbor {
   out_of_direction?: boolean;
   /** An open target can receive an in-scope subquestion or an out-of-scope deferred proposal. */
   can_question: boolean;
-  /** A queued, visited, removed or protected target cannot be neighbor-pruned. */
+  /** An unvisited neighbor (the `prune_neighbors[].id` enum); a visited, removed, origin or carrier neighbor cannot be neighbor-pruned. */
   can_prune: boolean;
 }
 
@@ -714,21 +713,17 @@ export class NavigationEngine implements IHopStateMachine {
       stagedColumnEdges.push(...validated.stagedEdges);
     }
 
-    const pruneTargets = pruneNeighbors.map(prune => ({
-      raw: prune.id,
-      resolved: resolveModelNodeId(prune.id, this.nodeMap, this.model.identifierCaseSensitive),
-      path: `prune_neighbors.${prune.index}.id`,
-    }));
-    const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? this.identifierKey(t.raw)));
+    const pruneTargets = pruneNeighbors.map(prune => ({ id: prune.id, path: `prune_neighbors.${prune.index}.id` }));
+    const pruneNeighborIds = new Set(pruneTargets.map(target => target.id));
 
     const columnEndpoints = this.tracer
       ? new Set([...stagedColumnEdges.flatMap(edge => [edge.from_node, edge.to_node]), ...this.readableColumnFlowEndpoints(rawColumnFlow)])
       : new Set<string>();
     for (const target of pruneTargets) {
-      if (!target.resolved || target.resolved === focusId || !columnEndpoints.has(target.resolved)) continue;
+      if (!columnEndpoints.has(target.id)) continue;
       invalidRoutes.push({
         kind: 'prune_column_conflict',
-        id: target.resolved,
+        id: target.id,
         path: target.path,
         reason: 'also named in /column_flow; the same submission cannot map and prune it, and a neighbor used only indirectly is kept with its indirect columns.',
       });
@@ -737,30 +732,8 @@ export class NavigationEngine implements IHopStateMachine {
     const routeRequests: ValidatedHop['routeRequests'] = [];
     const requested = new Set<string>();
     const focusNeighborIds = this.graph.hasNode(focusId) ? new Set(this.graph.neighbors(focusId)) : new Set<string>();
-    // The ids the question check accepts: the focus's neighbors still open to a question.
-    const availableRoutes = questions.length > 0 ? [...focusNeighborIds].filter(id => this.neighborCapabilities(focusId, id).can_question) : [];
     for (const q of questions) {
-      const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.model.identifierCaseSensitive) ?? q.nodeId;
-      if (!focusNeighborIds.has(nid)) {
-        invalidRoutes.push({
-          kind: 'question_not_neighbor',
-          id: nid,
-          path: `questions.${q.index}.nodeId`,
-          reason: `not a neighbor of the focus \`${focusId}\`.`,
-          available_routes: availableRoutes,
-        });
-        continue;
-      }
-      if (this.visited.has(nid) || this.removedSet.has(nid)) {
-        invalidRoutes.push({
-          kind: 'question_closed',
-          id: nid,
-          path: `questions.${q.index}.nodeId`,
-          reason: `already ${this.removedSet.has(nid) ? 'pruned' : 'visited'}; it cannot receive another investigation in this run.`,
-          available_routes: availableRoutes,
-        });
-        continue;
-      }
+      const nid = q.nodeId;
       if (pruneNeighborIds.has(nid)) {
         invalidRoutes.push({
           kind: 'prune_question_conflict',
@@ -794,7 +767,7 @@ export class NavigationEngine implements IHopStateMachine {
       routeRequests.push({ nodeId: nid, question: q.question ?? '', ...(callerContext ? { callerContext } : {}) });
     }
 
-    return { invalidRoutes, stagedColumnEdges, entrySides, pruneTargets, pruneNeighborIds, focusNeighborIds, routeRequests, requested };
+    return { invalidRoutes, stagedColumnEdges, entrySides, pruneNeighborIds, focusNeighborIds, routeRequests, requested };
   }
 
   /** Builds a route rejection whose `issuePaths` invalidate both sides of any prune conflict. */
@@ -814,13 +787,13 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Fatal column, prune and question route faults of a schema-rejected submission against the
-   * current focus (resolving omitted held fields on a retry, an omitted focus_node_id to the current
-   * focus as {@link holdRejectedSubmission} does); a mismatched focus leaves routes unchecked.
+   * current focus (resolving omitted held fields on a retry from the held draft); a call that names
+   * no focus and holds none, or another focus, leaves routes unchecked.
    */
   public submissionRouteFaults(input: unknown): InvalidRoute[] {
     if (!isPlainRecord(input) || !this.currentFocusNodeId || !this.nodeMap.has(this.currentFocusNodeId)) return [];
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
-    const rawFocus = input.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
+    const rawFocus = input.focus_node_id ?? current?.focus_node_id;
     if (typeof rawFocus !== 'string') return [];
     const focusId = resolveModelNodeId(rawFocus, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(rawFocus);
     if (focusId !== this.currentFocusNodeId) return [];
@@ -841,7 +814,7 @@ export class NavigationEngine implements IHopStateMachine {
     const hop = this.hopSubmitColumns;
     const rawFlow = effective('column_flow');
     const columnFlowEntries = passing<ColumnFlowEntry>(rawFlow, hopColumnFlowSchema(hop).element)?.map(({ index, value }) => ({ index, entry: value }));
-    const pruneNeighbors = (passing(effective('prune_neighbors'), PruneNeighborSchema) ?? []).map(({ index, value }) => ({ id: value.id, index }));
+    const pruneNeighbors = (passing(effective('prune_neighbors'), hopPruneNeighborSchema(hop)) ?? []).map(({ index, value }) => ({ id: value.id, index }));
     const questions = (passing(effective('questions'), hopQuestionSchema(this.currentAnalysisMode, hop)) ?? []).map(({ index, value }) => ({ ...value, index }));
     return this.validateHopRoutes(focusId, columnFlowEntries, rawFlow, pruneNeighbors, questions)
       .invalidRoutes
@@ -918,9 +891,9 @@ export class NavigationEngine implements IHopStateMachine {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
     const raw = input as Record<string, unknown>;
     // A retry omits focus_node_id and verdict like any other held field; a call that omits
-    // focus_node_id with no draft held is held under the current focus.
+    // focus_node_id with no draft held holds nothing: its content is never assigned to a focus it did not name.
     const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
-    const focusId = raw.focus_node_id ?? current?.focus_node_id ?? this.currentFocusNodeId;
+    const focusId = raw.focus_node_id ?? current?.focus_node_id;
     const verdict = raw.verdict ?? current?.verdict;
     if ((verdict !== 'analyze' && verdict !== 'passthrough') || typeof focusId !== 'string') return this.heldPartsOfCurrentFocus();
     const focus = resolveModelNodeId(focusId, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(focusId);
@@ -1594,18 +1567,18 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Each `column_flow` object (`upstream_columns[].node`, `writes_to.node`) outside the
-   * approved scope ({@link outsideAdmission}), as a fatal `column_out_of_scope`; the refusal names
+   * Each `column_flow` source object (`upstream_columns[].node`) outside the approved scope
+   * ({@link outsideAdmission}; the served `writes_to.node` enum holds only objects inside it), as a
+   * fatal `column_out_of_scope`; the refusal names
    * the cause. A reference `prior` already refuses keeps its own refusal; every other reference is
    * still checked.
    */
   private columnRefsOutOfScope(focusId: string, finding: Pick<HopFindingKept, 'column_flow'>, prior: readonly InvalidRoute[]): InvalidRoute[] {
-    const refused = new Set(prior.map(route => /^column_flow\.\d+\.(upstream_columns\.\d+|writes_to)/.exec(route.path ?? '')?.[0]));
+    const refused = new Set(prior.map(route => /^column_flow\.\d+\.upstream_columns\.\d+/.exec(route.path ?? '')?.[0]));
     const originWrites = this.originWrittenCarrierIds();
-    const refs = (finding.column_flow ?? []).flatMap((entry, index) => [
-      ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, at: `column_flow.${index}.upstream_columns.${refIndex}` })),
-      ...(entry.writes_to ? [{ node: entry.writes_to.node, at: `column_flow.${index}.writes_to` }] : []),
-    ]).filter(ref => !refused.has(ref.at));
+    const refs = (finding.column_flow ?? []).flatMap((entry, index) =>
+      entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, at: `column_flow.${index}.upstream_columns.${refIndex}` })),
+    ).filter(ref => !refused.has(ref.at));
     return refs.flatMap(({ node: raw, at }) => {
       const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
       const node = id ? this.nodeMap.get(id) : undefined;
@@ -1694,27 +1667,32 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Column facts that narrow this hop's served `column_flow`: the tracked columns an upstream trace
-   * accepts as `out_col`, and whether the focus is a procedure (the only node that may name a
-   * `writes_to` target). Eligible function neighbors narrow caller-context questions; stored column
-   * metadata narrows the admissible `upstream_columns` sources, and the approved scope
-   * ({@link outsideAdmission}) the served `upstream_columns` and `writes_to` objects.
+   * The facts that narrow this hop's served `submit_findings`: the focus, the neighbors it may
+   * prune ({@link isPruneTarget}: every unvisited one) and ask ({@link neighborCapabilities}),
+   * the tracked columns an upstream trace accepts as `out_col`, and whether the focus is a
+   * procedure (the only node that may name a `writes_to` target). Eligible function neighbors
+   * narrow caller-context questions; stored column metadata narrows the admissible
+   * `upstream_columns` sources, and the approved scope ({@link outsideAdmission}) the served
+   * `upstream_columns` and `writes_to` objects.
    */
   public get hopSubmitColumns(): SubmitFindingsHopColumns {
     const focus = this.currentFocusNodeId ? this.nodeMap.get(this.currentFocusNodeId) : undefined;
     const active = this.tracer?.activeColumns.filter(Boolean) ?? [];
+    const neighbors = (keep: (id: string) => boolean) => focus && this.graph.hasNode(focus.id)
+      ? this.graph.neighbors(focus.id).filter(keep).sort() : [];
+    const askable = focus ? neighbors(id => this.neighborCapabilities(focus.id, id).can_question) : [];
     const sources = focus && this.graph.hasNode(focus.id) ? this.columnSourceNodeIds(focus.id) : [];
     const originWrites = this.originWrittenCarrierIds();
     const outOfScope = focus ? sources.filter(id => this.outsideAdmission(id, this.nodeMap.get(id)!, focus.id, originWrites)?.admitted === false) : [];
     const written = focus?.type === 'procedure' ? this.writtenCarrierIds(focus.id) : null;
     return {
+      ...(focus ? { focusNodeId: focus.id, pruneNodeIds: neighbors(id => this.isPruneTarget(focus.id, id)), questionNodeIds: askable } : {}),
       outCols: this.columnTraceDirection() === 'upstream' && !this.getCurrentTasks().some(task => task.kind === 'column_lineage' && task.traversalSide === 'downstream') && active.length > 0
         ? this.resolveActiveColumnsForNode(focus?.id ?? '', active) ?? [...active] : null,
       writesTo: focus?.type === 'procedure',
-      callerContextNodeIds: focus && this.graph.hasNode(focus.id) && getNodeDdl(focus.id, this.nodeMap, this.store ?? undefined)
-        ? this.graph.neighbors(focus.id).filter(id => this.neighborCapabilities(focus.id, id).can_question
-          && this.getCurrentTasks().some(task => task.kind === 'column_lineage' && task.nodeId === focus.id
-            && task.activeColumns.some(col => resolveFunctionCallerTarget(id, { node: focus.id, col }, this.nodeMap, this.model, this.store)))).sort()
+      callerContextNodeIds: focus && getNodeDdl(focus.id, this.nodeMap, this.store ?? undefined)
+        ? askable.filter(id => this.getCurrentTasks().some(task => task.kind === 'column_lineage' && task.nodeId === focus.id
+          && task.activeColumns.some(col => resolveFunctionCallerTarget(id, { node: focus.id, col }, this.nodeMap, this.model, this.store))))
         : [],
       columnSourceNodeIds: sources,
       outOfScopeNodeIds: outOfScope,
@@ -2972,30 +2950,11 @@ export class NavigationEngine implements IHopStateMachine {
     }
     try {
       const routeOutcomes: RouteOutcome[] = [];
-      const rawFocusId = params.focus_node_id;
-      const focusId = resolveModelNodeId(rawFocusId, this.nodeMap, this.model.identifierCaseSensitive) ?? (rawFocusId === undefined ? undefined : this.identifierKey(rawFocusId));
-      if (!focusId || !this.nodeMap.has(focusId)) {
-        return combineToolRejections([...faults(), makeRejection({
-          code: REJECTION_CODES.invalidInput,
-          reason: `focus_node_id \`${rawFocusId ?? ''}\` not found in the loaded model.`,
-          hint: activeSubmitFindingsRecoveryHint(this.currentFocusNodeId ?? undefined),
-        })]);
-      }
-      if (focusId !== this.currentFocusNodeId) {
-        const expected = this.currentFocusNodeId ?? '';
-        return combineToolRejections([...faults(), makeRejection({
-          code: REJECTION_CODES.focusNodeIdMismatch,
-          reason: `focus_node_id names \`${focusId}\`; the current object is \`${expected}\`.`,
-          hint: `Resend the same call with focus_node_id \`${expected}\`.`,
-          issuePaths: ['focus_node_id'],
-          detail: { expected, got: focusId },
-        })]);
-      }
+      const focusId = params.focus_node_id;
       const finding: HopFindingKept = params;
       const acceptedNids = new Set<string>();
       const scopeAddNids = new Set<string>();
       const deferredRoutes: ValidatedHop['deferredRoutes'] = [];
-      const prunedNeighborNids = new Set<string>();
       const stagedCtNodeStates: ValidatedHop['stagedCtNodeStates'] = [];
       const stagedColumnFlowEntries = this.tracer
         ? finding.column_flow?.length ?? 0
@@ -3018,7 +2977,6 @@ export class NavigationEngine implements IHopStateMachine {
         invalidRoutes,
         stagedColumnEdges,
         entrySides,
-        pruneTargets,
         pruneNeighborIds,
         focusNeighborIds,
         routeRequests,
@@ -3118,35 +3076,6 @@ export class NavigationEngine implements IHopStateMachine {
         requested.add(nid);
         routeRequests.push({ nodeId: nid, question: '' });
       }
-      const outOfScopePruneIds = new Set<string>();
-      for (const target of pruneTargets) {
-        if (!target.resolved || target.resolved === this.originNodeId) continue;
-        const targetNode = this.nodeMap.get(target.resolved);
-        if (!targetNode) continue;
-        const { border, depthBreach } = this.admitsRoute(target.resolved, targetNode, focusId);
-        if (border.kind === 'excluded' || border.kind === 'out_of_direction'
-          || depthBreach !== null) {
-          outOfScopePruneIds.add(target.resolved);
-          invalidRoutes.push({
-            kind: 'prune_noop_out_of_scope',
-            id: target.resolved,
-            path: target.path,
-            reason: `\`${target.resolved}\` is outside the approved scope and was never loaded into the graph — there is nothing to prune.`,
-          });
-        }
-      }
-      const actionPolicy = evaluateCurrentHopActionPolicy({
-        originId: this.originNodeId!,
-        pruneTargets: pruneTargets.filter(t => !t.resolved || !outOfScopePruneIds.has(t.resolved)),
-        visitedIds: new Set([
-          ...this.visited,
-          ...pruneTargets.flatMap(t => t.resolved && this.isCarrierInto(t.resolved, focusId) ? [t.resolved] : []),
-        ]),
-        removedIds: this.removedSet,
-        notedIds: new Set(this.memory.notedNodeIds),
-        agendaIds: new Set(this._agenda.entries.map(entry => entry.nodeId)),
-      });
-
       for (const req of routeRequests) {
         const nid = req.nodeId;
         const nNode = this.nodeMap.get(nid);
@@ -3174,9 +3103,6 @@ export class NavigationEngine implements IHopStateMachine {
         routeOutcomes.push({ nodeId: nNode.id, accepted: true });
         if (!this.scopeNodeIds.has(nid)) scopeAddNids.add(nid);
         this.log('debug', `[Agenda] route accept hop=${this.hopCount} id=${nNode.id} ← ${focusId} subq=${trunc(req.question, 80)}`);
-      }
-      for (const nid of actionPolicy.acceptedPruneIds) {
-        prunedNeighborNids.add(nid);
       }
 
       const stagedSections: ValidatedHop['stagedSections'] = finding.sections ?? [];
@@ -3240,14 +3166,15 @@ export class NavigationEngine implements IHopStateMachine {
       const sectionFaults = faults();
       if (sectionFaults.length > 0) return heldRejection(sectionFaults);
 
-      const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
+      const notices = invalidRoutes.filter(r => isAbsentKind(r.kind));
       for (const notice of notices) {
         this.memory.recordRejection(notice.id, notice.reason, this.hopCount);
         this.log('debug', `[Notice] hop=${this.hopCount} id=${notice.id} kind=${notice.kind} code=${ROUTE_REJECTION_CODE[notice.kind]}`);
       }
 
       return this.applyValidatedHop({
-        focusId, finding, routeRequests, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
+        focusId, finding, routeRequests, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes,
+        prunedNeighborNids: new Set([...pruneNeighborIds].filter(id => this.castsPruneBallot(focusId, id))),
         carryByNode, routeContexts, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges, stagedCtNodeStates,
         stagedColumnFlowEntries, unaccountedColumns,
       });
@@ -4164,11 +4091,24 @@ export class NavigationEngine implements IHopStateMachine {
   private neighborCapabilities(focusId: string, nodeId: string): Pick<HopNeighborDisclosure, 'can_question' | 'can_prune'> {
     const node = this.nodeMap.get(nodeId);
     const open = !!node && !this.visited.has(nodeId) && !this.removedSet.has(nodeId);
-    return { can_question: open,
-      can_prune: open && this.admitsRoute(nodeId, node!, focusId).admitted
-        && !this._agenda.has(nodeId) && !this.memory.notedNodeIds.includes(nodeId)
-        && nodeId !== this.originNodeId && !this.isCarrierInto(nodeId, focusId),
-    };
+    return { can_question: open, can_prune: this.isPruneTarget(focusId, nodeId) };
+  }
+
+  /**
+   * A neighbor the AI may name in `prune_neighbors` (spec 06: only an unvisited neighbor): not
+   * visited, removed, the origin, or the carrier contracted into the focus. A queued neighbor and
+   * one outside the approved scope stay nameable, a losing vote; {@link castsPruneBallot} says
+   * whether the vote counts.
+   */
+  private isPruneTarget(focusId: string, nodeId: string): boolean {
+    return this.nodeMap.has(nodeId) && !this.visited.has(nodeId) && !this.removedSet.has(nodeId)
+      && nodeId !== this.originNodeId && !this.isCarrierInto(nodeId, focusId);
+  }
+
+  /** Whether a prune of `nodeId` from the focus is a ballot: not queued or analyzed, and routable inside the approved scope. */
+  private castsPruneBallot(focusId: string, nodeId: string): boolean {
+    return this.admitsRoute(nodeId, this.nodeMap.get(nodeId)!, focusId).admitted
+      && !this._agenda.has(nodeId) && !this.memory.notedNodeIds.includes(nodeId);
   }
 
   /**

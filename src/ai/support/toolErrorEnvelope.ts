@@ -221,11 +221,6 @@ export const ISSUES = {
     label: 'upstream entry identical to its output destination',
     correction: 'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in the section fields.',
   },
-  [REJECTION_CODES.writesToNamesReader]: {
-    category: 'reference',
-    label: 'a downstream reader, not a write destination',
-    correction: 'Set writes_to to the table and column this hop\'s SQL writes, or to null when it writes no table or only a table outside the approved scope. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
-  },
   [REJECTION_CODES.prunedContributor]: {
     category: 'reference',
     label: 'node already pruned this run',
@@ -259,11 +254,6 @@ export const ISSUES = {
     category: 'stage',
     label: 'exploration complete',
     correction: 'Call lineage_present_result to assemble the report.',
-  },
-  [REJECTION_CODES.focusNodeIdMismatch]: {
-    category: 'reference',
-    label: 'not the current object',
-    correction: 'Use the id of the current object.',
   },
   [REJECTION_CODES.invalidToolInput]: {
     category: 'shape',

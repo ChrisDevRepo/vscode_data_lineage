@@ -480,11 +480,23 @@ const KEPT_VERDICT_ONLY = 'Only with analyze or passthrough: ';
  */
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path. A named neighbor is removed, with whatever only it leads to, once every branch that reaches it also prunes it. '
-  + 'An open neighbor named nowhere here is kept and visited. '
+  + 'An in-scope neighbor named nowhere here is kept. '
   + 'The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
 
 /** Single source for the neighbor id describe text of `prune_neighbors[].id` and `questions[].nodeId`. */
 const NEIGHBOR_ID_DESCRIPTION = 'A neighbor id from `<hop_context>`.';
+
+/** Single source for the `focus_node_id` describe text of the strict and the permissive schemas. */
+const FOCUS_NODE_ID_DESCRIPTION = '`focus_node.id` from `<hop_context>`.';
+
+/**
+ * An id reference as the JSON Schema of the ids the hop discloses: `const` for one id, `enum` for
+ * several, the same for the parse and the served schema. The caller serves only the exit of a
+ * field whose set is empty.
+ */
+function idSetSchema(ids: readonly [string, ...string[]]) {
+  return ids.length === 1 ? z.literal(ids[0]) : z.enum(ids);
+}
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off-answer. */
 export const PruneNeighborSchema = z.object({
@@ -494,8 +506,8 @@ export const PruneNeighborSchema = z.object({
 
 /** Single source of the `questions` describe text; CT adds the column-continuation clause, BB has none. */
 const questionsDescription = (clause: string): string =>
-  `A question is optional. Ask an open neighbor (neither \`already_visited\` nor \`already_removed\`) only what its SQL must answer${clause}. `
-  + 'An out-of-scope neighbor you ask is a follow-up after the answer. No question to a pruned neighbor.';
+  `A question is optional. Ask an open neighbor only what its SQL must answer${clause}. `
+  + 'An out-of-scope neighbor you ask is a follow-up after the answer.';
 const QUESTIONS_DESCRIPTION = questionsDescription('');
 const CT_QUESTIONS_DESCRIPTION = questionsDescription(' beyond the column continuation');
 
@@ -592,7 +604,7 @@ const SUMMARY_DESCRIPTION =
  * and enforced by {@link refineSubmitFindingsShape} at parse.
  */
 const HopFindingBaseSchema = z.object({
-  focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),
+  focus_node_id: z.string().describe(FOCUS_NODE_ID_DESCRIPTION),
   verdict: HopVerdictSchema,
   summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
   badge_label: z.string().max(SUBMIT_FINDINGS_BADGE_LABEL_MAX).min(1)
@@ -745,12 +757,20 @@ export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindi
 const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>();
 
 /**
- * Per-hop column facts that narrow the served CT `column_flow` entry. `outCols` is the hop's
- * tracked columns when the validator accepts nothing else as `out_col` (an upstream trace), `[]`
- * when no tracked local output is eligible, `null` when any focus column is accepted. `writesTo` is
- * true only for a procedure focus, the one node that writes a column elsewhere.
+ * Per-hop facts that narrow the served `submit_findings` schema. The id fields are the ids the hop
+ * already discloses, served as `const` (one id) or `enum`; a field absent here serves its base
+ * string. `outCols` is the hop's tracked columns when the validator accepts nothing else as
+ * `out_col` (an upstream trace), `[]` when no tracked local output is eligible, `null` when any
+ * focus column is accepted. `writesTo` is true only for a procedure focus, the one node that writes
+ * a column elsewhere.
  */
 export interface SubmitFindingsHopColumns {
+  /** The hop's focus: the one value `focus_node_id` accepts. */
+  readonly focusNodeId?: string;
+  /** The neighbors disclosed with `can_prune: true` (every unvisited one): the `prune_neighbors[].id` enum; none serves only the exit. */
+  readonly pruneNodeIds?: readonly string[];
+  /** The neighbors disclosed with `can_question: true`: the `questions[].nodeId` enum; none serves only the exit. */
+  readonly questionNodeIds?: readonly string[];
   readonly outCols: readonly string[] | null;
   readonly writesTo: boolean;
   readonly returnTargets?: readonly { readonly node: string; readonly col: string }[];
@@ -768,8 +788,8 @@ export interface SubmitFindingsHopColumns {
    * admitted by the parse so the scope check refuses them as `column_out_of_scope`.
    */
   readonly outOfScopeNodeIds?: readonly string[];
-  /** A procedure focus's in-scope write targets: an empty list serves only the `writes_to: null`
-   * exit. The ids are not served as a node enum. */
+  /** A procedure focus's in-scope write targets: the `writes_to.node` enum; an empty list serves
+   * only the `writes_to: null` exit. */
   readonly writesToNodeIds?: readonly string[];
 }
 
@@ -790,10 +810,10 @@ function columnSourceNodeSchema(sources: readonly string[], offered: readonly st
 /**
  * Projects {@link ColumnFlowSchema} onto one hop: `out_col` as the tracked-column enum, `writes_to`
  * for procedures. The `upstream_columns[].node` enum serves only the ids the approved-scope check
- * admits; with none, the field serves only its exit (`upstream_columns: []`). `writes_to` serves the
- * base object-or-null shape, or only its exit (`writes_to: null`) when no written object is in
- * scope. The parse still admits every metadata source and write target, so the scope check states
- * its own refusal.
+ * admits; with none, the field serves only its exit (`upstream_columns: []`). The parse still
+ * admits every metadata source, so the scope check states its own refusal. `writes_to` is the
+ * nullable object whose `node` is the enum of the in-scope written objects, or only its exit
+ * (`writes_to: null`) when none is.
  */
 function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const [first, ...rest] = hop.outCols ?? [];
@@ -806,11 +826,10 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const upstreamColumns = sourceRefs
     ? (offered.length ? sourceRefs : sourceRefs.meta({ maxItems: 0 })).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
     : ColumnFlowEntrySchema.shape.upstream_columns;
-  const writeTargets = hop.writesToNodeIds;
-  const anyWrite = ColumnFlowEntrySchema.shape.writes_to.unwrap();
-  // No served node enum: nested in the null anyOf it induced bare-object column_flow on small
-  // local models; the scope check refuses an out-of-scope destination on its own.
-  const writesTo = writeTargets?.length === 0 ? anyWrite.meta({ anyOf: [{ type: 'null' }] }) : anyWrite;
+  const [firstWrite, ...otherWrites] = hop.writesToNodeIds ?? [];
+  const writesTo = hop.writesToNodeIds === undefined ? ColumnFlowEntrySchema.shape.writes_to.unwrap()
+    : firstWrite === undefined ? z.null()
+      : ColumnFlowWritesToObject.extend({ node: idSetSchema([firstWrite, ...otherWrites]) }).strict().nullable();
   const shape = {
     out_col: outCol,
     upstream_columns: upstreamColumns,
@@ -841,18 +860,47 @@ export function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
   return hop ? columnFlowSchemaForHop(hop) : ColumnFlowSchema;
 }
 
+/** The `prune_neighbors[]` item a hop serves: `id` is one of the neighbors the hop discloses as prunable. */
+export function hopPruneNeighborSchema(hop?: SubmitFindingsHopColumns) {
+  const [first, ...rest] = hop?.pruneNodeIds ?? [];
+  return first === undefined ? PruneNeighborSchema
+    : PruneNeighborSchema.extend({ id: idSetSchema([first, ...rest]).describe(NEIGHBOR_ID_DESCRIPTION) }).strict();
+}
+
 /**
- * The `questions[]` item a hop serves: BB has no `caller_context`; a CT hop that names its
- * function neighbours serves `caller_context` for those ids only.
+ * The `questions[]` item a hop serves: `nodeId` is one of the neighbors the hop discloses as
+ * askable. BB has no `caller_context`; a CT hop that names its function neighbours serves
+ * `caller_context` for those ids only.
  */
 export function hopQuestionSchema(mode: 'bb' | 'ct', hop?: SubmitFindingsHopColumns) {
-  if (mode !== 'ct') return NeighborQuestionSchema;
-  if (!hop?.callerContextNodeIds) return CtNeighborQuestionSchema;
-  const [first, ...rest] = hop.callerContextNodeIds;
-  return first === undefined ? NeighborQuestionSchema : z.union([
-    NeighborQuestionSchema,
-    CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]).describe(NEIGHBOR_ID_DESCRIPTION) }),
+  const [first, ...rest] = hop?.questionNodeIds ?? [];
+  const nodeId = first === undefined ? NeighborQuestionSchema.shape.nodeId : idSetSchema([first, ...rest]).describe(NEIGHBOR_ID_DESCRIPTION);
+  const plain = NeighborQuestionSchema.extend({ nodeId }).strict();
+  if (mode !== 'ct') return plain;
+  const callers = hop?.callerContextNodeIds;
+  if (!callers) return CtNeighborQuestionSchema.extend({ nodeId }).strict();
+  const [firstCaller, ...restCallers] = callers;
+  return firstCaller === undefined ? plain : z.union([
+    plain,
+    CtNeighborQuestionSchema.extend({ nodeId: idSetSchema([firstCaller, ...restCallers]).describe(NEIGHBOR_ID_DESCRIPTION) }).strict(),
   ]);
+}
+
+/**
+ * The `focus_node_id`, `prune_neighbors` and `questions` fields a hop serves; a field whose set the
+ * hop does not name keeps its base shape. An empty set serves only the field's exit (`maxItems: 0`).
+ */
+function hopIdFields(mode: 'bb' | 'ct', hop: SubmitFindingsHopColumns) {
+  const list = (ids: readonly string[] | undefined) => (ids?.length === 0 ? 0 : MAX_ID_LIST_LENGTH);
+  return {
+    ...(hop.focusNodeId === undefined ? {} : { focus_node_id: z.literal(hop.focusNodeId).describe(FOCUS_NODE_ID_DESCRIPTION) }),
+    ...(hop.pruneNodeIds === undefined ? {} : {
+      prune_neighbors: z.array(hopPruneNeighborSchema(hop)).max(list(hop.pruneNodeIds)).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
+    }),
+    ...(hop.questionNodeIds === undefined && !(mode === 'ct' && hop.callerContextNodeIds) ? {} : {
+      questions: z.array(hopQuestionSchema(mode, hop)).max(list(hop.questionNodeIds)).optional().describe(mode === 'ct' ? CT_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION),
+    }),
+  };
 }
 
 /**
@@ -866,9 +914,10 @@ export function hopQuestionSchema(mode: 'bb' | 'ct', hop?: SubmitFindingsHopColu
  *
  * @param freshSubmission - Refuse a missing kept section field and an empty `summary`; unset so
  *   a held draft or archived angle still validates.
- * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col`, offers
- *   `writes_to` for a procedure focus alone and, with column-source metadata, restricts
- *   `upstream_columns[].node` to the hop's column-carrying sources.
+ * @param hop - The active hop's facts: `focus_node_id`, `prune_neighbors[].id` and
+ *   `questions[].nodeId` are the ids the hop discloses; in CT it also narrows `column_flow[].out_col`,
+ *   offers `writes_to` for a procedure focus alone (its `node` the written objects) and, with
+ *   column-source metadata, restricts `upstream_columns[].node` to the hop's column-carrying sources.
  * @param heldFailed - The fields a held draft of this focus failed: a retry must send those and may
  *   omit every other field, which the engine restores. `null` without a held draft.
  * @returns The strict provider schema; a pure validator whose output is the flat, angle-keyed shape
@@ -881,7 +930,8 @@ export function submitFindingsSchemaForMode(
   hop?: SubmitFindingsHopColumns,
   heldFailed: readonly string[] | null = null,
 ): z.ZodType<FlatSubmitFindings> {
-  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}:${JSON.stringify(hop.outOfScopeNodeIds ?? null)}:${JSON.stringify(hop.writesToNodeIds ?? null)}` : '';
+  const hopKey = hop ? JSON.stringify([hop.focusNodeId, hop.pruneNodeIds, hop.questionNodeIds,
+    ...(mode === 'ct' ? [hop.writesTo, hop.outCols, hop.returnTargets ?? [], hop.callerContextNodeIds, hop.columnSourceNodeIds, hop.outOfScopeNodeIds, hop.writesToNodeIds] : [])]) : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
@@ -889,10 +939,8 @@ export function submitFindingsSchemaForMode(
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
-  if (hopKey && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
-  if (mode === 'ct' && hop?.callerContextNodeIds) {
-    narrowed = narrowed.extend({ questions: z.array(hopQuestionSchema(mode, hop)).max(MAX_ID_LIST_LENGTH).optional().describe(CT_QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
-  }
+  if (hop) narrowed = narrowed.extend(hopIdFields(mode, hop)).strict() as unknown as typeof HopFindingCtBaseSchema;
+  if (mode === 'ct' && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
   if (classification) {
     const dropped = CLASSIFICATION_KEPT_ANGLES.both.filter(angle => !CLASSIFICATION_KEPT_ANGLES[classification].includes(angle));
     const mask: Partial<Record<keyof typeof SECTION_FIELDS, true>> = Object.fromEntries(dropped.map(angle => [sectionField(angle), true]));
@@ -1528,7 +1576,7 @@ const PresentResultRetainingSynthesisModelSchema = withRetainableSections(Presen
  * is dispatched internally and not registered with VS Code.
  */
 export const SubmitFindingsModelSchema = z.object({
-  focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),
+  focus_node_id: z.string().describe(FOCUS_NODE_ID_DESCRIPTION),
   verdict: HopVerdictSchema,
   summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),

@@ -941,21 +941,12 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'untracked_out_col'
       | 'bad_contributor_col'
       | 'self_loop_column'
-      | 'bad_writes_to_target'
       | 'bad_return_target'
       | 'bad_caller_context'
       | 'pruned_contributor'
       | 'column_out_of_scope'
-      | 'prune_absent'
-      | 'prune_noop_removed'
-      | 'prune_noop_visited'
-      | 'prune_noop_analyzed'
-      | 'prune_noop_queued'
-      | 'prune_noop_out_of_scope'
       | 'prune_question_conflict'
-      | 'prune_column_conflict'
-      | 'question_not_neighbor'
-      | 'question_closed';
+      | 'prune_column_conflict';
 
 /** Represents an invalid route returned during validation. */
 export interface InvalidRoute {
@@ -967,18 +958,10 @@ export interface InvalidRoute {
     reason: string;
     /** Exact submit_findings field path that must be corrected. */
     path?: string;
-    /**
-     * Valid column set for a column-content failure, or the tracked columns a refused prune
-     * carries.
-     */
+    /** Valid column set for a column-content failure. */
     available_columns?: string[];
     /** Complete catalog column names of this object, never tracked subsets or input unions. */
     actual_columns?: string[];
-    /**
-     * The ids the question check accepts at `path`: the neighbours the focus may still question
-     * (`question_not_neighbor`, `question_closed`).
-     */
-    available_routes?: string[];
 }
 
 /** Discriminated union representing the engine's current aspect mode. */
