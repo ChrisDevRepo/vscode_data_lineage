@@ -6,9 +6,12 @@ import type * as vscode from 'vscode';
 import { z } from 'zod';
 import { sanitizeProviderErrorDiagnostic } from '../../src/ai/support/text';
 import { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
-import { parseModelEntries, type OpenAiModelEntry } from '../../src/ai/providers/modelEntries';
+import { parseModelEntries, type OpenAiModelEntry, type VscodeLmModelEntry } from '../../src/ai/providers/modelEntries';
+import { createConfiguredModelPort } from '../../src/ai/providers/modelPortFactory';
 import { createProviderModelPort } from '../../src/ai/providers/openAiTransport';
+import { findLmModel, loadLmCatalog } from '../../src/ai/providers/vscodeLmTransport';
 import { RUN_TRACE_TRIGGER, expandRunTracePrompt } from '../../src/ai/prompting/prompts';
+import type { ProviderModelPortOptions } from '../../src/ai/model/providerModelPort';
 import type { AiSession } from '../../src/ai/session/session';
 import { followupButtons } from '../../src/bridge/followupButtons';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
@@ -33,6 +36,8 @@ AI runs one model entry on the product provider port: AI_TEST_ENDPOINT (the entr
 AI_TEST_API_KEY, AI_TEST_MODEL, AI_TEST_API_TYPE (chat-completions|responses),
 AI_TEST_MAX_INPUT_TOKENS, AI_TEST_MAX_OUTPUT_TOKENS, optional AI_TEST_REASONING_EFFORT,
 AI_TEST_FORCED_TOOL_CHOICE (false sends auto) and AI_TEST_REQUEST_BODY (JSON).
+A VS Code language model instead (only inside an extension host that lists it; the shim has no vscode.lm):
+AI_TEST_VSCODE_LM_ENTRY, one \`vscode-lm\` ai.models entry as JSON; no endpoint, key or input window (the model reports it).
 DB uses DB_TEST_SERVER, DB_TEST_DATABASE, DB_TEST_USER, DB_TEST_PASSWORD, optional
 DB_TEST_PORT, DB_TEST_ENCRYPT and DB_TEST_TRUST_SERVER_CERTIFICATE. All services require explicit setup.
 Artifacts are written only under ignored test-results/headless. AI gates are
@@ -143,17 +148,31 @@ export function aiTestEntry(env: NodeJS.ProcessEnv): OpenAiModelEntry {
   return entry;
 }
 
+/** The `vscode-lm` entry AI_TEST_VSCODE_LM_ENTRY holds (JSON), read by the product's own entry schema; faults name the variable, never a value. */
+export function aiTestLmEntry(env: NodeJS.ProcessEnv): VscodeLmModelEntry {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(env.AI_TEST_VSCODE_LM_ENTRY ?? '');
+  } catch {
+    throw new Error('AI_TEST_VSCODE_LM_ENTRY must be JSON.');
+  }
+  const { entries, invalid } = parseModelEntries([raw]);
+  const entry = entries.find((e): e is VscodeLmModelEntry => e.apiType === 'vscode-lm');
+  if (!entry) throw new Error(`Invalid AI_TEST_VSCODE_LM_ENTRY: ${invalid.flatMap(item => item.issues).join('; ') || 'not a vscode-lm entry'}.`);
+  return entry;
+}
+
 /** Runs one selected smoke with explicit configuration and its runtime outcome. */
 export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<number> {
   if (args.includes('--help')) { console.log(HELP); return 0; }
   let options: ReturnType<typeof parseOptions>;
-  let entry: OpenAiModelEntry | undefined;
+  let entry: OpenAiModelEntry | VscodeLmModelEntry | undefined;
   let db: ReturnType<typeof databaseConfig> | undefined;
   try {
     options = parseOptions(kind, args);
     if (kind === 'db') db = databaseConfig(process.env);
     else {
-      entry = aiTestEntry(process.env);
+      entry = process.env.AI_TEST_VSCODE_LM_ENTRY ? aiTestLmEntry(process.env) : aiTestEntry(process.env);
     }
   } catch (error) {
     const detail = error instanceof z.ZodError
@@ -221,17 +240,23 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
     } else {
       traceWriter = new AiTraceWriter();
       await traceWriter.enable(runDir, { origin: 'headless-harness', verbose: options.verbose });
-      const { session, budget } = await createHarnessSession({ dacpacPath: options.dacpac, contextWindow: entry!.maxInputTokens });
-      result.model = entry!.model;
+      // A `vscode-lm` entry takes its model and window from the host (the product's own selector resolution); an OpenAI entry runs on its key.
+      const lmEntry = entry!.apiType === 'vscode-lm' ? entry : undefined;
+      const lm = lmEntry ? await loadLmCatalog([lmEntry]) : undefined;
+      const lmInfo = lmEntry ? lm!.resolved.get(lmEntry.id) : undefined;
+      if (lmEntry && !lmInfo) throw new Error(`No VS Code language model matches model entry "${lmEntry.id}".`);
+      const { session, budget } = await createHarnessSession({ dacpacPath: options.dacpac, contextWindow: lmInfo ? lmInfo.maxInputTokens : (entry as OpenAiModelEntry).maxInputTokens });
+      result.model = lmInfo ? lmInfo.id : (entry as OpenAiModelEntry).model;
       result.apiType = entry!.apiType;
       const turns: Array<{ outcome: string; modelCalls: number; gates: unknown; unansweredCard?: true }> = [];
       let answeredCards = 0;
       for (const [index, step] of [options.prompt, ...options.followups].entries()) {
         const prompt = index === 0 ? step : followupPrompt(step, session);
         const requestId = randomUUID();
-        const port = createProviderModelPort(entry!, process.env.AI_TEST_API_KEY!.trim(), {
-          requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); },
-        });
+        const portOptions: ProviderModelPortOptions = { requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } };
+        const port = lmEntry
+          ? await createConfiguredModelPort({ models: [lmEntry], defaultModel: lmEntry.id, secrets: { get: async () => undefined }, lmModel: id => findLmModel(lm, id) }, portOptions)
+          : createProviderModelPort(entry as OpenAiModelEntry, process.env.AI_TEST_API_KEY!.trim(), portOptions);
         const turn = await runHarnessTurn({ session, model: port, requestId, prompt, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter, ...(options.gate ? { gate: options.gate, gateOffset: answeredCards } : {}) });
         answeredCards += turn.gates.length;
         turns.push({ outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls, gates: turn.gates, ...(turn.unansweredCard ? { unansweredCard: true as const } : {}) });
