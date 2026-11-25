@@ -104,8 +104,9 @@ the built-in list stays.
 ## Upgrading a custom overlay
 
 A custom file is applied only when its `schemaVersion` equals the version the
-installed release expects. The version changes whenever the shipped file adds,
-removes, renames or retypes a key or field; a wording change does not.
+installed release expects. The version changes when the shipped file retypes a
+field or removes a field from a template. Added templates or fields, removed
+templates and wording changes keep the version.
 Version 3 adds `shared_capture` and moves the grain and plan-evidence coverage
 into it, so a version 2 file is rejected with the warning.
 

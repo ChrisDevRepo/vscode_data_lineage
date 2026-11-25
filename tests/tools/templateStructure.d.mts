@@ -2,3 +2,4 @@
 export type TemplateStructure = Record<string, Record<string, string>>;
 export function templateStructure(text: string): TemplateStructure;
 export function structureDiff(before: TemplateStructure, after: TemplateStructure): string[];
+export function needsVersionBump(line: string): boolean;

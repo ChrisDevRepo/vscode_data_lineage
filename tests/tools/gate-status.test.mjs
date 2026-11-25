@@ -1,7 +1,7 @@
 // Covers how gate steps report a skipped comparison, and when the template-version step may skip.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -71,3 +71,43 @@ test('with origin/main present the comparison runs and passes', () => withRepo((
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.match(run.stdout, /^PASS .*unchanged since origin\/main/);
 }));
+
+/** Baselines the copy at `origin/main`, rewrites the templates asset in the working tree, then runs the check under CI. */
+function checkEditedAsset(edit) {
+  return withRepo((dir, git) => {
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    const asset = join(dir, 'assets', 'aiOutputTemplates.yaml');
+    const before = readFileSync(asset, 'utf8');
+    const after = edit(before);
+    assert.notEqual(after, before, 'the edit must change the asset');
+    writeFileSync(asset, after);
+    return runCheck(dir, 'true');
+  });
+}
+
+test('a removed template with an unchanged version passes: an old overlay is skipped by the unknown-key warning', () => {
+  const run = checkEditedAsset((text) => text.replace(/^loading_pattern:\n(?:[ \t]+.*\n|\n)*/m, ''));
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /^PASS /);
+  assert.match(run.stdout, /- loading_pattern \(template removed\)/);
+});
+
+test('an added template with an unchanged version passes: an old overlay falls back to the built-in', () => {
+  const run = checkEditedAsset((text) => `${text}\nextra_template:\n  instruction: x\n`);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /^PASS /);
+  assert.match(run.stdout, /\+ extra_template \(new template\)/);
+});
+
+test('a retyped field with an unchanged version fails: an old overlay would be read against the wrong shape', () => {
+  const run = checkEditedAsset((text) => text.replace('title:\n  stages: [synthesis]', 'title:\n  stages: synthesis'));
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stderr, /~ title\.stages: array → string/);
+  assert.doesNotMatch(run.stderr, /Any added, removed/);
+});
+
+test('a removed field with an unchanged version fails: the loader ignores an unknown field inside a template without a warning', () => {
+  const run = checkEditedAsset((text) => text.replace('title:\n  stages: [synthesis]\n', 'title:\n'));
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stderr, /- title\.stages: array/);
+});

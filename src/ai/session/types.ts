@@ -83,8 +83,10 @@ export interface ResultGraph {
 
 /**
  * Schema version of the AI output-templates contract (`aiOutputTemplates.yaml`). A custom overlay
- * (`ai.outputTemplateFile`) is honoured only when its `schemaVersion` equals this. Bump whenever the
- * shipped file adds, removes, renames or retypes a key or field; a wording change never bumps. On
+ * (`ai.outputTemplateFile`) is honoured only when its `schemaVersion` equals this. Bump when the shipped
+ * file retypes a field or removes a field from a template (an old overlay's extra field passes
+ * unwarned); an added template or field falls back to the built-in, a removed template is skipped
+ * with the unknown-key warning, and wording never bumps. On
  * mismatch the overlay is skipped with an Output-channel warning; there is no migration code.
  */
 export const AI_TEMPLATE_SCHEMA_VERSION = 3;

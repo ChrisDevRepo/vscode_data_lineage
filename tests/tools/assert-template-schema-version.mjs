@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { isCi, SKIP_EXIT_CODE } from './gate-status.mjs';
-import { structureDiff, templateStructure } from './templateStructure.mjs';
+import { needsVersionBump, structureDiff, templateStructure } from './templateStructure.mjs';
 
 const ASSET = 'assets/aiOutputTemplates.yaml';
 const TYPES = 'src/ai/session/types.ts';
@@ -97,7 +97,9 @@ if (baselineAsset === currentAsset) {
 }
 
 const changes = structureDiff(templateStructure(baselineAsset), templateStructure(currentAsset));
-const formattedChanges = changes.map((line) => `      ${line}`).join('\n');
+const bumpChanges = changes.filter(needsVersionBump);
+const formatLines = (lines) => lines.map((line) => `      ${line}`).join('\n');
+const formattedChanges = formatLines(changes);
 
 const baselineTypes = showAtTag(baseline, TYPES);
 if (baselineTypes === undefined) {
@@ -113,13 +115,14 @@ if (constantVersion < baselineVersion) {
   process.exit(1);
 }
 
-if (changes.length > 0 && baselineVersion === constantVersion) {
+if (bumpChanges.length > 0 && baselineVersion === constantVersion) {
   console.error(
     `FAIL  ${ASSET} changed structure since ${baselineLabel} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}:\n` +
-    `${formattedChanges}\n` +
-    `      Any added, removed, renamed or retyped template key or field needs a new version. A ${baselineLabel} ` +
+    `${formatLines(bumpChanges)}\n` +
+    `      A retyped template field, or a field removed from a template, needs a new version. A ${baselineLabel} ` +
     `custom overlay would match this version, be accepted, and be read against a shape it\n` +
-    `      no longer fits, with no warning and no fallback. Bump the constant in ${TYPES} and\n` +
+    `      no longer fits, with no warning. (An added template or field falls back to the built-in, and a removed\n` +
+    `      template is skipped by the loader's unknown-key warning, so neither needs a bump.) Bump the constant in ${TYPES} and\n` +
     `      schemaVersion in ${ASSET}, then record the change in CHANGELOG.md.`,
   );
   process.exit(1);
@@ -130,6 +133,14 @@ if (baselineVersion !== constantVersion) {
     `PASS  AI_TEMPLATE_SCHEMA_VERSION bumped ${baselineVersion} → ${constantVersion} since ${baselineLabel}; ` +
     `an older custom file is ignored with a warning.` +
     (changes.length > 0 ? `\n${formattedChanges}` : ''),
+  );
+  process.exit(0);
+}
+
+if (changes.length > 0) {
+  console.log(
+    `PASS  ${ASSET} added or removed templates, or added fields, since ${baselineLabel}; schemaVersion ${assetVersion} stays. ` +
+    `An older custom overlay falls back to the built-in for an added key and skips a removed template with an unknown-key warning.\n${formattedChanges}`,
   );
   process.exit(0);
 }
