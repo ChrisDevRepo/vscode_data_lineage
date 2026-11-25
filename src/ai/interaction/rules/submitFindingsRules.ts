@@ -36,25 +36,11 @@ export function validateSectionsAgainstClassification(
  * purpose: a blank or non-string body is absent, so it never counts toward coverage and never
  * overwrites a held body.
  *
- * @param input - The raw or normalized tool input.
+ * @param input - The raw tool input.
  */
 export function extractRawSectionAngles(input: Readonly<Record<string, unknown>>): CapturedSection[] {
   return CLASSIFICATION_KEPT_ANGLES.both.flatMap(angle => {
     const text = input[sectionField(angle)];
     return typeof text === 'string' && text.trim() !== '' ? [{ angle, text }] : [];
   });
-}
-
-/**
- * Returns phase-valid recovery guidance for an active-hop `submit_findings` focus rejection. Active
- * SM exposes only `lineage_submit_findings` and `lineage_get_neighbor_columns`, so the hint never
- * points at discovery tools; an unresolved focus must be corrected from the current-hop focus ID
- * already in the worker context.
- *
- * @param expectedFocusNodeId - Expected focus id for focus mismatch errors.
- */
-export function activeSubmitFindingsRecoveryHint(expectedFocusNodeId?: string): string {
-  return expectedFocusNodeId
-    ? `Retry lineage_submit_findings with the exact current-hop focus_node.id: \`${expectedFocusNodeId}\`.`
-    : 'Retry lineage_submit_findings with the exact focus_node_id from the current hop focus_node.id.';
 }

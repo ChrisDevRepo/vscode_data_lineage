@@ -354,10 +354,6 @@ export class ColumnTracer {
       const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap, model.identifierCaseSensitive);
       const toNodeId = resolvedTarget?.attributionTo ?? null;
       const toNodeObj = toNodeId ? nodeMap.get(toNodeId) : null;
-      if (entry.writes_to && !toNodeObj) {
-        invalidRoutes.push({ kind: 'absent_contributor', id: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to target "${entry.writes_to.node}" is absent from the loaded model.` });
-        continue;
-      }
       const verbs = new Set<string>();
       if (entry.writes_to && toNodeObj && toNodeId && identifierKey(toNodeId) !== identifierKey(focusId)) {
         const focusLower = identifierKey(focusId);
@@ -366,14 +362,6 @@ export class ColumnTracer {
           if (identifierKey(e.source) === focusLower && identifierKey(e.target) === toLower) {
             verbs.add(edgeApiType(e, focusNode.type));
           }
-        }
-        if (verbs.size === 0) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it — a write destination is a node this hop writes.` });
-          continue;
-        }
-        if ([...verbs].every((v) => v === 'read')) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination.` });
-          continue;
         }
       }
       if (entry.writes_to === null && focusNode.type === 'procedure'

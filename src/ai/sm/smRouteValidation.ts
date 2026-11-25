@@ -12,9 +12,7 @@ import { ISSUES, jsonPointer, makeRejection, type ToolRejection } from '../suppo
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
-  return kind === 'absent_contributor'
-    || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
-    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued' || kind === 'prune_noop_out_of_scope';
+  return kind === 'absent_contributor';
 }
 
 /**
@@ -36,29 +34,12 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Supply one column_flow entry for each exact caller_output_targets destination, with returns_to matching that node and column and out_col matching its column. Do not use writes_to on scalar-return tasks; identify real contributors from the supplied caller and function SQL.',
   bad_caller_context:
     'Use questions[].caller_context only for a neighboring function with supplied caller SQL and an active real caller output; otherwise omit caller_context and keep the question.',
-  bad_writes_to_target: ISSUES[REJECTION_CODES.writesToNamesReader].correction,
   pruned_contributor: ISSUES[REJECTION_CODES.prunedContributor].correction,
   column_out_of_scope: ISSUES[REJECTION_CODES.columnOutOfScope].correction,
-  prune_absent:
-    'This id is not in the loaded model — there is nothing to prune. Remove it from prune_neighbors.',
-  prune_noop_removed:
-    'This node was already pruned on an earlier hop. Remove it from prune_neighbors.',
-  prune_noop_visited:
-    'This node was already visited on an earlier hop — analyzed, or passed through as the carrier that led to this focus — and is retained; a prune cannot remove it. Remove it from prune_neighbors.',
-  prune_noop_analyzed:
-    'This node is already recorded as an analyzed (noted) node and is retained. Remove it from prune_neighbors.',
-  prune_noop_queued:
-    'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
-  prune_noop_out_of_scope:
-    'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors.',
-  question_not_neighbor:
-    'An entry of /questions can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from /questions.',
   prune_question_conflict:
     'Choose one action for this neighbor: remove it from /prune_neighbors to investigate it, or remove its /questions entry to prune it.',
   prune_column_conflict:
     'Choose one action for this neighbor: remove it from /prune_neighbors to keep its /column_flow mapping, or remove its /column_flow entries to prune it.',
-  question_closed:
-    'Remove the /questions entries for visited or pruned nodes. Attach new checks only to eligible unvisited neighbors; queued unvisited work can receive a question.',
 };
 
 /**
@@ -69,7 +50,7 @@ const DETACHED_LINK_DIRECTIVE =
   'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in the section fields; do not invent a write.';
 
 /** Served kinds whose directive removes a list entry; the retry resends that failed list. */
-const ENTRY_REMOVAL_KINDS: ReadonlySet<InvalidRouteKind> = new Set(['question_not_neighbor', 'prune_question_conflict', 'prune_column_conflict', 'question_closed']);
+const ENTRY_REMOVAL_KINDS: ReadonlySet<InvalidRouteKind> = new Set(['prune_question_conflict', 'prune_column_conflict']);
 
 /** How a removal directive's list is sent once it has no entries left. */
 const EMPTIED_LIST_DIRECTIVE = 'Send a list left with no entries as [].';
@@ -88,19 +69,10 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   self_loop_column: REJECTION_CODES.columnSelfLoop,
   bad_return_target: REJECTION_CODES.routeValidationFailed,
   bad_caller_context: REJECTION_CODES.routeValidationFailed,
-  bad_writes_to_target: REJECTION_CODES.writesToNamesReader,
   pruned_contributor: REJECTION_CODES.prunedContributor,
   column_out_of_scope: REJECTION_CODES.columnOutOfScope,
-  prune_absent: REJECTION_CODES.routeValidationFailed,
-  prune_noop_removed: REJECTION_CODES.routeValidationFailed,
-  prune_noop_visited: REJECTION_CODES.routeValidationFailed,
-  prune_noop_analyzed: REJECTION_CODES.routeValidationFailed,
-  prune_noop_queued: REJECTION_CODES.routeValidationFailed,
-  prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
-  question_not_neighbor: REJECTION_CODES.routeValidationFailed,
   prune_question_conflict: REJECTION_CODES.routeValidationFailed,
   prune_column_conflict: REJECTION_CODES.routeValidationFailed,
-  question_closed: REJECTION_CODES.routeValidationFailed,
 };
 
 /**
@@ -146,7 +118,6 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejec
       reason: e.reason,
       ...(e.available_columns ? { available_columns: e.available_columns } : {}),
       ...(e.actual_columns ? { actual_columns: e.actual_columns } : {}),
-      ...(e.available_routes ? { available_routes: e.available_routes } : {}),
     })),
     issuePaths: errors.flatMap(e => (e.path ? [e.path] : [])),
   });

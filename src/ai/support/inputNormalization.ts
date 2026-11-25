@@ -11,32 +11,6 @@ import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../u
  */
 export { resolveModelNodeId };
 
-/** Raw object-like `submit_findings` payload before strict BB/CT schema validation. */
-export type SubmitFindingsInputObject = Record<string, unknown> & {
-  focus_node_id?: unknown;
-  prune_neighbors?: unknown;
-  questions?: unknown;
-  column_flow?: unknown;
-};
-
-/** One field-level ID canonicalization applied to a cloned `submit_findings` payload. */
-interface SubmitFindingsIdNormalization {
-  /** Dot-path of the normalized field in the cloned input. */
-  readonly field: string;
-  /** Original model-supplied ID spelling. */
-  readonly from: string;
-  /** Canonical model ID used for validation and dispatch. */
-  readonly to: string;
-}
-
-/** Result of cloned `submit_findings` ID normalization. */
-export interface SubmitFindingsNormalizationResult {
-  /** Cloned payload passed to strict mode-specific Zod validation. */
-  readonly input: SubmitFindingsInputObject;
-  /** Canonicalization events emitted for debug logging. */
-  readonly normalizations: SubmitFindingsIdNormalization[];
-}
-
 /**
  * Resolves multiple node ids, preserving order and removing duplicates; returns resolved and
  * unresolved id arrays.
@@ -63,51 +37,6 @@ export function resolveModelNodeIds(
     resolved.push(id);
   }
   return { resolved, unresolved };
-}
-
-/**
- * Normalizes submit_findings node-id encodings into a cloned input object. Deliberately narrow:
- * canonicalizes bracket/case/name encodings only and never removes unknown fields or changes the
- * model's raw object. Source case sensitivity preserves spelling and never substitutes a distinct
- * object. The caller must still run the clone through the strict BB/CT Zod schema.
- *
- * @returns The cloned input and a list of field-level normalization events.
- */
-export function normalizeSubmitFindingsInputIds(
-  rawInput: SubmitFindingsInputObject,
-  nodeMap: Map<string, unknown>,
-  identifierCaseSensitive = false,
-): SubmitFindingsNormalizationResult {
-  const input: SubmitFindingsInputObject = { ...rawInput };
-  const normalizations: SubmitFindingsIdNormalization[] = [];
-  const note = (field: string, from: string, to: string): void => {
-    if (from !== to) normalizations.push({ field, from, to });
-  };
-
-  if (typeof rawInput.focus_node_id === 'string') {
-    const resolved = resolveModelNodeId(rawInput.focus_node_id, nodeMap, identifierCaseSensitive);
-    if (resolved) {
-      input.focus_node_id = resolved;
-      note('focus_node_id', rawInput.focus_node_id, resolved);
-    }
-  }
-
-  const normalizeEntryIds = (list: unknown[], listName: string, key: string): unknown[] => list.map((entry, index) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
-    const value = (entry as Record<string, unknown>)[key];
-    if (typeof value !== 'string') return entry;
-    const resolved = resolveModelNodeId(value, nodeMap, identifierCaseSensitive) ?? value;
-    note(`${listName}.${index}.${key}`, value, resolved);
-    return { ...(entry as Record<string, unknown>), [key]: resolved };
-  });
-  if (Array.isArray(rawInput.prune_neighbors)) {
-    input.prune_neighbors = normalizeEntryIds(rawInput.prune_neighbors, 'prune_neighbors', 'id');
-  }
-  if (Array.isArray(rawInput.questions)) {
-    input.questions = normalizeEntryIds(rawInput.questions, 'questions', 'nodeId');
-  }
-
-  return { input, normalizations };
 }
 
 /** Catalog facts {@link normalizeSearchQueryInput} uses to confirm a reading of a dotted name. */

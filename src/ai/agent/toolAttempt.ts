@@ -830,18 +830,13 @@ function rejectionText(rejection: ToolRejection, call: RejectedCall, priorState?
 }
 
 /**
- * The facts a failed check holds as data: the actual columns of an object, the ids the question
- * check accepts at a path (`available_routes`).
+ * The facts a failed check holds as data: the actual columns of an object.
  */
 function checkFacts(detail: unknown): string[] {
   if (!Array.isArray(detail)) return [];
-  type CheckFault = { id?: string; path?: string; actual_columns?: string[]; available_routes?: string[] };
-  return detail.flatMap(({ id, path, actual_columns: columns, available_routes: routes }: CheckFault) => [
-    ...(columns ? [`Actual columns of ${id}: ${columns.join(', ') || '(none)'}.`] : []),
-    ...(routes && path
-      ? [`${jsonPointer(path.split('.'))} takes one of: ${routes.map(route => `\`${route}\``).join(', ') || '(none)'}.`]
-      : []),
-  ]);
+  type CheckFault = { id?: string; actual_columns?: string[] };
+  return detail.flatMap(({ id, actual_columns: columns }: CheckFault) =>
+    columns ? [`Actual columns of ${id}: ${columns.join(', ') || '(none)'}.`] : []);
 }
 
 /**

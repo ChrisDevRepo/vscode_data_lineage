@@ -5,10 +5,10 @@ import { z } from 'zod';
 
 describe("tool-error-envelope", () => {
   it("readToolError: makeRejection shape round-trips through JSON", () => {
-    const made = makeRejection({ code: 'focus_node_id_mismatch', hint: 'use the expected id', detail: { expected: 'a', got: 'b' } });
+    const made = makeRejection({ code: 'invalid_input', hint: 'send the served id', detail: { expected: 'a', got: 'b' } });
     const r = readToolError(JSON.parse(JSON.stringify(made)));
     expect(r, 'the rejection reads back as itself').toEqual(made);
-    expect(r!.reason, 'reason falls back to the code').toBe('focus_node_id_mismatch');
+    expect(r!.reason, 'reason falls back to the code').toBe('invalid_input');
   });
 
   it("readToolError: an object carrying an unrecognized key is not a rejection", () => {

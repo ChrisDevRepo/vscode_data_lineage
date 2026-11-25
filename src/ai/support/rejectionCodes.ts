@@ -97,11 +97,6 @@ export const REJECTION_CODES = {
    * (`self_loop_column` kind, `smRouteValidation.ts`).
    */
   columnSelfLoop: 'column_self_loop',
-  /**
-   * `writes_to` names a downstream reader rather than the node this hop actually writes
-   * (`bad_writes_to_target` kind, `smRouteValidation.ts`).
-   */
-  writesToNamesReader: 'writes_to_names_reader',
   /** An `upstream_columns` entry names a node already pruned earlier this run. */
   prunedContributor: 'pruned_contributor',
   /** A `column_flow` node outside the approved scope. */
@@ -131,10 +126,6 @@ export const REJECTION_CODES = {
   invalidStatus: 'invalid_status',
   /** `submit_findings` reached an engine whose exploration is already `complete` (`smBase.ts`). */
   explorationComplete: 'exploration_complete',
-  /**
-   * `submit_findings.focus_node_id` is a real node other than the current hop focus (`smBase.ts`).
-   */
-  focusNodeIdMismatch: 'focus_node_id_mismatch',
   /**
    * A provider tool call failed its tool's input schema before dispatch; raised by a model port
    * that validates arguments itself (`modelPort.ts`, `toolAttempt.ts`).
