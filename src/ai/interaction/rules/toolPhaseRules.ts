@@ -4,7 +4,7 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { makeRejection } from '../../support/toolErrorEnvelope';
 
 function offPolicyHint(toolName: string, stage: LmStage): string {
-  if (stage.kind !== 'active') return 'Wait for the appropriate phase or call a different tool.';
+  if (stage.kind !== 'active') return 'Call one of the offered tools.';
   switch (toolName) {
     case 'lineage_search_objects':
     case 'lineage_search_ddl':
@@ -34,10 +34,9 @@ export function evaluateToolPhaseRule(
   allowed: ReadonlySet<string>,
 ): InteractionRuleResult {
   if (allowed.has(toolName)) return null;
-  const stageLabel = stage.kind === 'active' ? `active(${stage.mode})` : stage.kind;
   return makeRejection({
     code: REJECTION_CODES.offPolicy,
-    reason: `Tool ${toolName.replace('lineage_', '')} is not available in stage ${stageLabel}.`,
-    hint: `Allowed tools this stage: ${[...allowed].map(n => n.replace('lineage_', '')).join(', ')}. ${offPolicyHint(toolName, stage)}`,
+    reason: `Tool ${toolName} is not offered in this step.`,
+    hint: offPolicyHint(toolName, stage),
   });
 }

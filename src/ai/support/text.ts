@@ -286,13 +286,13 @@ export function sanitizeDescriptionForChat(description: string): string {
 }
 
 /**
- * Renders ids as a backticked, comma-separated list for a rejection message (the single home for
+ * Renders ids as a double-quoted, comma-separated list for a rejection message (the single home for
  * the quoting rule). Quoting keeps an invisible defect (zero-width or padding characters) from
  * making an offending id look identical to a valid one, which would make the model re-send it and
  * waste a repair round.
  */
 export function quoteIds(ids: readonly string[]): string {
-  return ids.map(id => `\`${id}\``).join(', ');
+  return ids.map(id => JSON.stringify(id)).join(', ');
 }
 
 /** Reads a `cursor` (a prior `next_cursor`) as the next page's zero-based offset; 0 if none. */

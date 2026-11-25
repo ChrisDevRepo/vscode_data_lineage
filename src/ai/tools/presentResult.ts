@@ -7,9 +7,8 @@ import {
   PRESENT_RESULT_REPAIR_FIELDS,
   type PresentResultRepairField,
 } from './toolSchemas';
-import { quoteIds } from '../support/text';
 import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
-import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { jsonPointer, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX, isIndirectEdge, type AIViewMetadata, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
@@ -255,9 +254,64 @@ export function presentResultRepairInstruction(
     sectionTextLeaves
       ? `Repair only the rejected section text leaves: sections accepts one indexed object containing exactly the listed replacement field or fields for ${sectionTextLeaves.map(leaf => `zero-based ${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Every node_ids list, other section field and section position stays held.`
       : '',
-    resendList.includes('notes') ? `${keyedResendRule('notes', 'node_id')} {node_id: …, remove: true} drops a held note.` : '',
+    resendList.includes('notes') ? `${keyedResendRule('notes', 'node_id')} An entry sent with its node_id and remove true drops that held note.` : '',
     wholeFields.length > 0 ? `${wholeFields.join(', ')}: a resend replaces the held list whole, so send every entry, corrected.` : '',
   ].filter(Boolean).join(' ');
+}
+
+/**
+ * The leaf-only repairs a held draft authorizes (`{index, label}` highlight entries,
+ * `{index, text}` section entries) that a call is held to: none for a list the call resends whole
+ * (entries with their label), which the contract accepts as a full resend whose values replace
+ * the held ones and which the ordinary patch schema checks.
+ */
+export function leafRepairsSent(
+  input: unknown,
+  authorization: Pick<PresentResultRepairAuthorization, 'highlightLabelIndexes' | 'sectionTextLeaves'>,
+): Pick<PresentResultRepairAuthorization, 'highlightLabelIndexes' | 'sectionTextLeaves'> {
+  const whole = (field: 'highlight_groups' | 'sections'): boolean => {
+    const list = typeof input === 'object' && input !== null ? (input as Record<string, unknown>)[field] : undefined;
+    return Array.isArray(list) && list.some(entry => typeof entry !== 'object' || entry === null || !('index' in entry));
+  };
+  return {
+    ...(authorization.highlightLabelIndexes && !whole('highlight_groups') ? { highlightLabelIndexes: authorization.highlightLabelIndexes } : {}),
+    ...(authorization.sectionTextLeaves && !whole('sections') ? { sectionTextLeaves: authorization.sectionTextLeaves } : {}),
+  };
+}
+
+/**
+ * Derives narrow leaf-only repair authorizations from dotted issue paths when every fault inside an
+ * editable list (`highlight_groups` labels or `sections` label/text) addresses replaceable leaves
+ * within the submitted arrays.
+ */
+export function leafRepairsFromPaths(
+  failedPaths: readonly string[],
+  rawHighlightGroups: unknown,
+  rawSections: unknown,
+): Pick<PresentResultRepairAuthorization, 'highlightLabelIndexes' | 'sectionTextLeaves'> {
+  const highlightGroupPaths = failedPaths.filter(path => path.startsWith('highlight_groups'));
+  const highlightLabelPaths = highlightGroupPaths.filter(path => /^highlight_groups\.\d+\.label$/.test(path));
+  const highlightLabelIndexes = highlightLabelPaths.length > 0
+    && highlightLabelPaths.length === highlightGroupPaths.length
+    && Array.isArray(rawHighlightGroups)
+    && highlightLabelPaths.every(path => Number(path.split('.')[1]) < rawHighlightGroups.length)
+    ? [...new Set(highlightLabelPaths.map(path => Number(path.split('.')[1])))].sort((left, right) => left - right)
+    : undefined;
+  const sectionPaths = failedPaths.filter(path => path.startsWith('sections'));
+  const sectionLeafPaths = sectionPaths.filter(path => /^sections\.\d+\.(label|text)$/.test(path));
+  const sectionTextLeaves = sectionLeafPaths.length > 0
+    && sectionLeafPaths.length === sectionPaths.length
+    && Array.isArray(rawSections)
+    && sectionLeafPaths.every(path => Number(path.split('.')[1]) < rawSections.length)
+    ? [...new Set(sectionLeafPaths.map(path => Number(path.split('.')[1])))].sort((left, right) => left - right).map(index => ({
+      index,
+      fields: [...new Set(sectionLeafPaths.filter(path => Number(path.split('.')[1]) === index).map(path => path.split('.')[2] as 'label' | 'text'))].sort(),
+    }))
+    : undefined;
+  return {
+    ...(highlightLabelIndexes ? { highlightLabelIndexes } : {}),
+    ...(sectionTextLeaves ? { sectionTextLeaves } : {}),
+  };
 }
 
 /**
@@ -286,37 +340,27 @@ export function holdRejectedPresentResult(
   const undefinedKeys = new Set(failedKeys.filter(key => !PRESENT_RESULT_DEFINED_FIELDS.has(key)));
   const failed = failedKeys.filter(key => !undefinedKeys.has(key));
   if (failed.length === 0 || !failed.every(field => repairable.has(field))) return null;
-  const highlightGroupPaths = failedPaths.filter(path => path.startsWith('highlight_groups'));
-  const highlightLabelPaths = highlightGroupPaths.filter(path => /^highlight_groups\.\d+\.label$/.test(path));
   const rawHighlightGroups = (input as Record<string, unknown>).highlight_groups;
-  const highlightLabelIndexes = highlightLabelPaths.length > 0
-    && highlightLabelPaths.length === highlightGroupPaths.length
-    && Array.isArray(rawHighlightGroups)
-    && highlightLabelPaths.every(path => Number(path.split('.')[1]) < rawHighlightGroups.length)
-    ? [...new Set(highlightLabelPaths.map(path => Number(path.split('.')[1])))].sort((left, right) => left - right)
-    : undefined;
-  const sectionPaths = failedPaths.filter(path => path.startsWith('sections'));
-  const sectionLeafPaths = sectionPaths.filter(path => /^sections\.\d+\.(label|text)$/.test(path));
   const rawSections = (input as Record<string, unknown>).sections;
-  const sectionTextLeaves = sectionLeafPaths.length > 0
-    && sectionLeafPaths.length === sectionPaths.length
-    && Array.isArray(rawSections)
-    && sectionLeafPaths.every(path => Number(path.split('.')[1]) < rawSections.length)
-    ? [...new Set(sectionLeafPaths.map(path => Number(path.split('.')[1])))].sort((left, right) => left - right).map(index => ({
-      index,
-      fields: [...new Set(sectionLeafPaths.filter(path => Number(path.split('.')[1]) === index).map(path => path.split('.')[2] as 'label' | 'text'))].sort(),
-    }))
-    : undefined;
+  const { highlightLabelIndexes, sectionTextLeaves } = leafRepairsFromPaths(failedPaths, rawHighlightGroups, rawSections);
+  const sectionPaths = failedPaths.filter(path => path.startsWith('sections'));
   const hasLeafRepair = highlightLabelIndexes || sectionTextLeaves;
   const bodies = new Set((committed ?? []).filter(sec => sec.text).map(sectionKey));
-  const unkept = Array.isArray(rawSections) && committed
-    ? (rawSections as PresentSectionPatch[]).filter(sec => !('text' in sec && sec.text?.trim()) && !bodies.has(sectionKey(sec))).map(sec => sec.label)
+  const unkeptPointers = Array.isArray(rawSections) && committed
+    ? rawSections.flatMap((sec, index) => (
+      typeof sec === 'object' && sec !== null && !Array.isArray(sec)
+        && (sec.text === undefined || (typeof sec.text === 'string' && !sec.text.trim()))
+        && typeof sec.label === 'string'
+        && !bodies.has(sectionKey(sec))
+        ? [`/sections/${index}`]
+        : []
+    ))
     : [];
-  if (unkept.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
+  if (unkeptPointers.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
   // A section that fails outside its label and text leaves fails alone; the sections that passed
   // are held and a resend keys on their labels.
   const failedSections = new Set(sectionPaths.map(path => Number(path.split('.')[1])));
-  const passedSections = failed.includes('sections') && !hasLeafRepair && unkept.length === 0
+  const passedSections = failed.includes('sections') && !hasLeafRepair && unkeptPointers.length === 0
     && Array.isArray(rawSections) && sectionPaths.every(path => /^sections\.\d+(\.|$)/.test(path))
     ? rawSections.filter((_, index) => !failedSections.has(index))
     : [];
@@ -343,8 +387,8 @@ export function holdRejectedPresentResult(
   const heldDescription = hasLeafRepair
     ? 'Held from this call: every valid report field and the complete affected lists; only the offending text is replaceable.'
     : `Held from this call: every field except ${fields.map(field => (field === 'sections' && passedSections.length > 0 ? 'the failed sections' : field)).join(', ')}.`;
-  const unheld = unkept.length > 0 && !hasLeafRepair
-    ? ` sections for ${quoteIds(unkept)} were not held: the committed report has no body for them. Its sections are ${quoteIds((committed ?? []).map(sec => sec.label))}; omit sections to keep the committed report.`
+  const unheld = unkeptPointers.length > 0 && !hasLeafRepair
+    ? ` ${unkeptPointers.join(', ')} ${unkeptPointers.length > 1 ? 'were' : 'was'} not held: the committed report has no body for ${unkeptPointers.length > 1 ? 'them' : 'it'}. Send full section text, or omit sections to keep the committed report.`
     : '';
   return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, passedSections.length > 0, highlightLabelIndexes, sectionTextLeaves)}`;
 }
@@ -438,11 +482,9 @@ export function mergePresentResultRepairPatch(
     }
     Object.assign(updates, { [key]: value });
   }
-  return {
-    ...draft,
-    ...updates,
-    is_update: draft.is_update,
-  };
+  const merged = { ...draft, ...updates };
+  if (draft.is_update === undefined) delete (merged as { is_update?: boolean }).is_update;
+  return merged;
 }
 
 /**
@@ -1058,11 +1100,13 @@ export function validatePresentResult(
     }
     return state;
   };
-  const unlinkableNodeIds = [...new Set([
-    ...(input.sections ?? []).flatMap(section => section.node_ids ?? []),
-    ...(input.notes ?? []).map(note => note.node_id),
-    ...(input.highlight_groups ?? []).flatMap(group => group.node_ids ?? []),
-  ].filter(id => !resolvedSet.has(id)))];
+  /** Each sent id the result graph cannot link, at its JSON Pointer. */
+  const unlinkable: ReadonlyArray<{ readonly pointer: string; readonly id: string }> = [
+    ...(input.sections ?? []).flatMap((section, s) => (section.node_ids ?? []).map((id, i) => ({ pointer: jsonPointer(['sections', s, 'node_ids', i]), id }))),
+    ...(input.notes ?? []).map((note, n) => ({ pointer: jsonPointer(['notes', n, 'node_id']), id: note.node_id })),
+    ...(input.highlight_groups ?? []).flatMap((group, g) => (group.node_ids ?? []).map((id, i) => ({ pointer: jsonPointer(['highlight_groups', g, 'node_ids', i]), id }))),
+  ].filter(({ id }) => !resolvedSet.has(id));
+  const unlinkableNodeIds = [...new Set(unlinkable.map(({ id }) => id))];
   const allHallucinated = unlinkableNodeIds.every(id => stateOf(id) === 'not_in_model');
   /**
    * `add_node_ids` accepts any id inside the approved scope — pruned, render-dropped or
@@ -1073,27 +1117,34 @@ export function validatePresentResult(
   const nodeIdNoun = allHallucinated
     ? 'contains unknown IDs'
     : 'names IDs the result graph cannot link';
-  const renderNodeIdStates = (ids: readonly string[]): string => {
+  /**
+   * The unlinkable ids under `prefix`, by pointer and state; never the sent id (backend contract).
+   */
+  const unlinkableUnder = (prefix: string) => unlinkable.filter(({ pointer }) => pointer.startsWith(`${prefix}/`));
+  const renderNodeIdStates = (sites: typeof unlinkable): string => {
     const byState = new Map<PresentNodeIdState, string[]>();
-    for (const id of ids) byState.set(stateOf(id), [...(byState.get(stateOf(id)) ?? []), id]);
-    return [...byState].map(([state, group]) => `${quoteIds(group)} — ${PRESENT_NODE_ID_STATE_TEXT[state]}`).join('; ');
+    for (const { pointer, id } of sites) byState.set(stateOf(id), [...(byState.get(stateOf(id)) ?? []), pointer]);
+    return [...byState].map(([state, pointers]) => `${pointers.join(', ')} — ${PRESENT_NODE_ID_STATE_TEXT[state]}`).join('; ');
   };
-  /** The valid set and the route back, stated once at the first offending site. */
+  /**
+   * Unlinkable sites on another field and the route back, stated once at the first offending site;
+   * accepted node ids ride `detail` for feedback 2 instead of lengthening feedback 1.
+   */
   let nodeIdHintNeeded = false;
-  const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
+  const nodeIdRejectionTail = (sitesAtThisPath: typeof unlinkable): string => {
     if (nodeIdHintNeeded) return '';
     nodeIdHintNeeded = true;
     if (stage === 'completed' && routeServed) repairFields.add('add_node_ids');
-    const elsewhere = unlinkableNodeIds.filter(id => !idsAtThisPath.includes(id));
+    const elsewhere = unlinkable.filter(site => !sitesAtThisPath.includes(site));
     return (elsewhere.length > 0 ? ` Also unlinkable here: ${renderNodeIdStates(elsewhere)}.` : '')
-      + ` Accepted ids (current result graph): ${quoteIds(resolvedNodeIds)}.`
       + (routeServed ? ` ${PRESENT_REAL_ID_ROUTE[stage]}` : '');
   };
 
   for (const [sectionIndex, sec] of (input.sections ?? []).entries()) {
     const unknownIds = (sec.node_ids ?? []).filter(id => !resolvedSet.has(id));
     if (unknownIds.length > 0) {
-      addError('sections', `Section "${sec.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
+      const sites = unlinkableUnder(jsonPointer(['sections', sectionIndex]));
+      addError('sections', `${jsonPointer(['sections', sectionIndex])}: node_ids ${nodeIdNoun}: ${renderNodeIdStates(sites)}.${nodeIdRejectionTail(sites)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
     }
     for (const nodeId of sec.node_ids ?? []) {
       if (resolvedSet.has(nodeId)) sectionLinkedNodeIds.add(nodeId);
@@ -1106,7 +1157,8 @@ export function validatePresentResult(
       if (resolvedSet.has(note.node_id)) {
         noteNodeIds.add(note.node_id);
       } else {
-        addError('notes', `notes[].node_id ${nodeIdNoun}: ${renderNodeIdStates([note.node_id])}.${nodeIdRejectionTail([note.node_id])}`, ['notes'], [`notes.${noteIndex}.node_id`], [note.node_id]);
+        const sites = unlinkableUnder(jsonPointer(['notes', noteIndex]));
+        addError('notes', `${jsonPointer(['notes', noteIndex, 'node_id'])} ${nodeIdNoun}: ${renderNodeIdStates(sites)}.${nodeIdRejectionTail(sites)}`, ['notes'], [`notes.${noteIndex}.node_id`], [note.node_id]);
       }
     }
   }
@@ -1119,7 +1171,8 @@ export function validatePresentResult(
   for (const [groupIndex, g] of (input.highlight_groups ?? []).entries()) {
     const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
     if (unknownIds.length > 0) {
-      addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
+      const sites = unlinkableUnder(jsonPointer(['highlight_groups', groupIndex]));
+      addError('highlight_groups', `${jsonPointer(['highlight_groups', groupIndex])}: node_ids ${nodeIdNoun}: ${renderNodeIdStates(sites)}.${nodeIdRejectionTail(sites)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
     }
     for (const nodeId of g.node_ids ?? []) {
       if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);

@@ -34,9 +34,9 @@ export interface CurrentHopActionPolicyResult {
 }
 
 /**
- * Classifies current-hop prune actions without mutating engine state. Unresolved and no-op prunes
- * are notices; the origin and queued, visited and removed targets are protected instead of becoming
- * a retry-loop rejection.
+ * Classifies current-hop prune actions without mutating engine state. No-op prunes are notices;
+ * the origin and queued, visited and removed targets are protected instead of becoming a
+ * retry-loop rejection.
  */
 export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInput): CurrentHopActionPolicyResult {
   const notices: InvalidRoute[] = [];
@@ -44,10 +44,8 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
 
   for (const target of input.pruneTargets) {
     const id = target.resolved;
-    if (!id) {
-      notices.push({ kind: 'prune_absent', id: target.raw, path: target.path, reason: `\`${target.raw}\` is not in the loaded model.` });
-      continue;
-    }
+    // An unresolved id is a rejection of the route check, never a notice.
+    if (!id) continue;
     if (id === input.originId) {
       notices.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` is the origin node and anchors the lineage; a prune cannot remove it.` });
       continue;

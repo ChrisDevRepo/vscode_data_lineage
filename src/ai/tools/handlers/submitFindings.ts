@@ -1,6 +1,7 @@
 /**
  * Executes active-hop submissions for the `lineage_submit_findings` tool. Raw arguments are parsed
- * once against the current hop's served contract, before id resolution and internal conversion.
+ * once against the current hop's served contract, before id resolution and internal conversion; the
+ * `column_flow` ids and column names first canonicalize to the served spelling they denote.
  * Turn-lease validation and effect serialization stay in the registry.
  */
 import { NavigationEngine } from '../../sm/smBase';
@@ -10,6 +11,7 @@ import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
 import { combineToolRejections, makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import { routeDirectives } from '../../sm/smRouteValidation';
 import {
+  canonicalizeColumnFlowIds,
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
 } from '../../support/inputNormalization';
@@ -49,15 +51,22 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
       const focus = engine.currentFocus;
       const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
-      const schema = submitFindingsSchemaForMode(engine.currentAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldFailed);
-      const parsed = schema.safeParse(input);
+      const hop = engine.hopSubmitColumns;
+      const schema = submitFindingsSchemaForMode(engine.currentAnalysisMode, sess.classification ?? undefined, fresh, hop, engine.heldFailed);
+      const { input: canonicalInput, rewrites } = canonicalizeColumnFlowIds(input, hop, engine.identifierCaseSensitive);
+      for (const { field, from, to } of rewrites) {
+        s.logger.debug(
+          `[Normalize] tool=submit_findings field=${field} from=${sanitizeForLog(from)} to=${sanitizeForLog(to)}`,
+        );
+      }
+      const parsed = schema.safeParse(canonicalInput);
       if (!parsed.success) {
-        const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const routes = engine.submissionRouteFaults(input);
+        const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: canonicalInput, schema });
+        const routes = engine.submissionRouteFaults(canonicalInput);
         const rejection = routes.length > 0 ? combineToolRejections([schemaFault, engine.routeRejection(routes)]) : schemaFault;
-        const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
+        const held = engine.holdRejectedSubmission(canonicalInput, rejection.issuePaths ?? []);
         if (held) {
-          rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes)].filter(Boolean).join(' ');
+          rejection.hint = [zodFieldRepairHint(parsed.error, canonicalInput, schema), ...routeDirectives(routes)].filter(Boolean).join(' ');
           rejection.held = heldSubmissionFields(held);
         }
         return s.logAndReturn('lineage_submit_findings', rejection, input);

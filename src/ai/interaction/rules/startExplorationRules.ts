@@ -33,7 +33,7 @@ export function resolveCanonicalQuestion(sources: {
 export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | undefined): InteractionRuleResult {
   if (!targetColumns?.length) return null;
   const { label, correction } = ISSUES[REJECTION_CODES.ctFieldForbiddenInBb];
-  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, reason: `${label}.`, hint: correction });
+  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, reason: `${label}.`, hint: correction, issuePaths: ['targetColumns'] });
 }
 
 /**

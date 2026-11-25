@@ -65,5 +65,5 @@ export class RepairDraftStore<TFull, TAuthorization = undefined> {
 export function keyedResendRule(field: string, key: string, partialFields: readonly string[] = []): string {
   const rule = `${field}: resend only the entries you add or change, each under its held ${key}; a held entry left unnamed is kept as authored.`;
   if (partialFields.length === 0) return rule;
-  return `${rule} Omit a resent entry's ${partialFields.join(' or ')} to keep the held value; a ${key} not on file appends a new entry and needs its ${partialFields[0]}; {${key}: …, remove: true} drops a held entry.`;
+  return `${rule} Omit a resent entry's ${partialFields.join(' or ')} to keep the held value; a ${key} not on file appends a new entry and needs its ${partialFields[0]}; an entry sent with its ${key} and remove true drops that held entry.`;
 }

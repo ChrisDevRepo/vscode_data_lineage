@@ -204,10 +204,10 @@ const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 function validateQuery(query: string): ToolRejection | null {
   const trimmed = query.trim();
   if (trimmed.length < 1) {
-    return makeRejection({ code: REJECTION_CODES.queryTooShort, reason: 'The query is empty.', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryTooShort, reason: 'The query is empty.', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}`, issuePaths: ['query'] });
   }
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
-    return makeRejection({ code: REJECTION_CODES.queryNotAName, reason: 'In substring mode the query is punctuation only; no object name contains it.', hint: `Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryNotAName, reason: 'In substring mode the query is punctuation only; no object name contains it.', hint: `Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}`, issuePaths: ['query'] });
   }
   return null;
 }
@@ -259,14 +259,14 @@ export async function searchObjects(
     && WILDCARD_ALL_TOKENS.has((isRegex ? query : normalizedQuery.query).trim());
 
   if (!isWildcardAllQuery && normalizedQuery.query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_TOO_LONG });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_TOO_LONG, issuePaths: ['query'] });
   }
 
   const effectiveQuery = isWildcardAllQuery ? '' : (isRegex ? normalizedQuery.query : normalizedQuery.query.trim());
   if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_NOT_COMPILED, hint: regexRejectHint(effectiveQuery, compiled) });
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_NOT_COMPILED, hint: regexRejectHint(effectiveQuery, compiled), issuePaths: ['query'] });
     }
   }
   const listAllInSchemas = effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0;
@@ -294,7 +294,7 @@ export async function searchObjects(
       return model.nodes.filter(node => hits.has(node.id));
     } catch (error: unknown) {
       if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
-        return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_DEADLINE });
+        return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_DEADLINE, issuePaths: ['query'] });
       }
       throw error;
     }
@@ -423,8 +423,11 @@ const NEIGHBOR_PAGE = 25;
  */
 const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact object ID.';
 
-/** The reason of `not_found` and `origin_not_found`: the ids the loaded model does not hold, as sent. */
-export const notInModel = (ids: readonly string[]) => `Not in the loaded model: ${quoteIds(ids)}.`;
+/**
+ * The reason of `not_found` and `origin_not_found`: the fields, by JSON Pointer, whose id the
+ * loaded model does not hold (a sent id is never echoed).
+ */
+export const notInModel = (pointers: readonly string[]) => `${pointers.join(', ')}: not an object of the loaded model.`;
 
 /**
  * Full metadata for one object (DDL, columns, neighbors): the primary drill-down tool. Upstream and
@@ -450,7 +453,7 @@ export function getObjectDetail(
   }
   const node      = nodeMap.get(normalizedId);
   if (!node) {
-    return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel([id]), hint: SEARCH_OBJECTS_HINT });
+    return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel(['/id']), hint: SEARCH_OBJECTS_HINT, issuePaths: ['id'] });
   }
 
   const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
@@ -531,7 +534,7 @@ export function getScopeBundle(
   }
   const originNode = nodeMap.get(origin);
   if (!originNode) {
-    return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel([input.origin]), hint: 'Call lineage_search_objects to resolve the canonical origin ID.' });
+    return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel(['/origin']), hint: 'Call lineage_search_objects to resolve the canonical origin ID.', issuePaths: ['origin'] });
   }
 
   const direction = input.direction ?? 'bidirectional';
@@ -546,6 +549,7 @@ export function getScopeBundle(
       code: REJECTION_CODES.asymmetricDepthBothZero,
       reason: '/upstream_depth and /downstream_depth are both 0, which would return only the origin node with no neighbors.',
       hint: 'Set at least one side above 0, or call lineage_get_object_detail for a single object.',
+      issuePaths: ['upstream_depth', 'downstream_depth'],
     });
   }
 
@@ -689,12 +693,15 @@ function graphNodeRows(model: DatabaseModel, activeFilter: SerializedFilterState
   });
 }
 
-/** Canonical ids of `raw`, or the `not_found` rejection naming the ids the model does not hold. */
-function resolveGraphIds(model: DatabaseModel, raw: readonly string[]): string[] | ToolRejection {
+/**
+ * Canonical ids of `raw` (`pointers[i]` locates `raw[i]` in the call), or the `not_found`
+ * rejection naming the fields whose id the model does not hold.
+ */
+function resolveGraphIds(model: DatabaseModel, raw: readonly string[], pointers: readonly string[]): string[] | ToolRejection {
   const nodeMap = getModelNodeMap(model);
   const resolved = raw.map(id => resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive));
-  const unknown = raw.filter((_, index) => !resolved[index]);
-  if (unknown.length > 0) return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel(unknown), hint: SEARCH_OBJECTS_HINT });
+  const unknown = pointers.filter((_, index) => !resolved[index]);
+  if (unknown.length > 0) return makeRejection({ code: REJECTION_CODES.notFound, reason: notInModel(unknown), hint: SEARCH_OBJECTS_HINT, issuePaths: unknown.map(pointer => pointer.slice(1).split('/').join('.')) });
   return resolved as string[];
 }
 
@@ -705,7 +712,7 @@ function resolveGraphIds(model: DatabaseModel, raw: readonly string[]): string[]
  * walked.
  */
 export function getTrace(model: DatabaseModel, activeFilter: SerializedFilterState | null, input: GetTraceInput): object {
-  const ids = resolveGraphIds(model, [input.origin]);
+  const ids = resolveGraphIds(model, [input.origin], ['/origin']);
   if (!Array.isArray(ids)) return ids;
   const [origin] = ids;
   const levels = (value: number | 'all') => (value === 'all' ? TRACE_ALL_LEVELS : value);
@@ -725,7 +732,7 @@ export function getTrace(model: DatabaseModel, activeFilter: SerializedFilterSta
  * in path order, `found: false` with no nodes when neither direction connects them.
  */
 export function getPath(model: DatabaseModel, activeFilter: SerializedFilterState | null, input: GetPathInput): object {
-  const ids = resolveGraphIds(model, [input.start, input.end]);
+  const ids = resolveGraphIds(model, [input.start, input.end], ['/start', '/end']);
   if (!Array.isArray(ids)) return ids;
   const [start, end] = ids;
   const graph = buildBareGraph(walkedModel(model, input.include_dml));
@@ -749,13 +756,14 @@ export function getGraphPreviewScope(model: DatabaseModel, activeFilter: Seriali
   const highlights = input.highlight_groups ?? [];
   const sections = input.sections ?? [];
   const notes = input.notes ?? [];
-  const raw = [
-    ...input.ids,
-    ...highlights.flatMap(group => group.node_ids),
-    ...sections.flatMap(section => section.node_ids),
-    ...notes.map(note => note.node_id),
+  const located = [
+    ...input.ids.map((id, i) => [id, `/ids/${i}`] as const),
+    ...highlights.flatMap((group, g) => group.node_ids.map((id, i) => [id, `/highlight_groups/${g}/node_ids/${i}`] as const)),
+    ...sections.flatMap((section, s) => section.node_ids.map((id, i) => [id, `/sections/${s}/node_ids/${i}`] as const)),
+    ...notes.map((note, n) => [note.node_id, `/notes/${n}/node_id`] as const),
   ];
-  const resolved = resolveGraphIds(model, raw);
+  const raw = located.map(([id]) => id);
+  const resolved = resolveGraphIds(model, raw, located.map(([, pointer]) => pointer));
   if (!Array.isArray(resolved)) return resolved;
   const canonical = new Map(raw.map((id, index) => [id, resolved[index]]));
   const canon = (id: string) => canonical.get(id)!;
@@ -977,12 +985,12 @@ export async function searchDdl(
   signal?: AbortSignal,
 ): Promise<object> {
   if (query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_TOO_LONG });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_TOO_LONG, issuePaths: ['query'] });
   }
 
   const compiled = compileSearchRegex(query, onDebug);
   if (!compiled.ok) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_NOT_COMPILED, hint: regexRejectHint(query, compiled) });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_NOT_COMPILED, hint: regexRejectHint(query, compiled), issuePaths: ['query'] });
   }
 
   const ddlTypes: ObjectType[] = types
@@ -1011,7 +1019,7 @@ export async function searchDdl(
     };
   } catch (error: unknown) {
     if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_DEADLINE });
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, ...REGEX_DEADLINE, issuePaths: ['query'] });
     }
     throw error;
   }

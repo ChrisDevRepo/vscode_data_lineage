@@ -1,6 +1,6 @@
 /** Zod input schemas and lightweight runtime validation for the AI tools; no VS Code imports. */
 import { z } from 'zod';
-import { quotedWindow, resolveModelNodeId, WINDOW_AFTER } from '../support/inputNormalization';
+import { quotedWindow, WINDOW_AFTER } from '../support/inputNormalization';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
@@ -775,14 +775,15 @@ export interface SubmitFindingsHopColumns {
 }
 
 /**
- * Advertises the `offered` ids as the served `node` enum while admitting the equivalent spellings
- * ({@link resolveModelNodeId}) of every metadata-eligible contributor the engine itself resolves,
- * so normalized object references keep passing the boundary a columnless function cannot.
+ * Advertises the `offered` ids as the served `node` enum while the parse admits every
+ * metadata-eligible contributor (`sources`), so a source outside the approved scope reaches its own
+ * scope refusal and a columnless function is refused here. Another spelling of an id is
+ * canonicalized before the parse ({@link canonicalizeColumnFlowIds}), never admitted by it.
  */
 function columnSourceNodeSchema(sources: readonly string[], offered: readonly string[]) {
-  const resolvable = new Map(sources.map(id => [id, id] as const));
+  const admitted = new Set(sources);
   const node = ColumnNodeIdSchema.refine(
-    value => resolveModelNodeId(value, resolvable) !== null,
+    value => admitted.has(value),
     { message: 'This node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
   );
   return offered.length ? node.meta({ enum: [...offered] }) : node;
@@ -1094,7 +1095,8 @@ function rejectDuplicateSectionLabels(hint: string) {
   return (sections: ReadonlyArray<{ label: string }>, ctx: z.core.$RefinementCtx): void => {
     if (!Array.isArray(sections)) return;
     const seen = new Set<string>();
-    for (const [index, { label }] of sections.entries()) {
+    for (const [index, section] of sections.entries()) {
+      const label = typeof section === 'object' && section !== null ? (section as { label?: unknown }).label : undefined;
       if (typeof label !== 'string') continue;
       const key = normalizePresentSectionLabel(label);
       if (seen.has(key)) {
@@ -1376,7 +1378,7 @@ export const PRESENT_RESULT_REPAIR_FIELDS = [
 ] as const;
 
 /** Graph-edit fields that only a rejection of that same edit authorizes for repair. */
-const PRESENT_RESULT_GRAPH_EDIT_FIELDS = ['prune_node_ids', 'add_node_ids'] as const;
+export const PRESENT_RESULT_GRAPH_EDIT_FIELDS = ['prune_node_ids', 'add_node_ids'] as const;
 
 /** Every top-level field `lineage_present_result` defines in any stage; other keys are no field. */
 export const PRESENT_RESULT_DEFINED_FIELDS: ReadonlySet<string> = new Set(Object.keys(PresentResultModelSchema.shape));
@@ -1467,11 +1469,16 @@ export function presentResultRepairPatchSchemaForFields(
         .describe(`Correct only rejected text leaves on held sections: ${sectionLeaves.map(leaf => `${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Node links, other text and order remain held.`),
     });
   }
-  const declared = labelIndexes || sectionLeaves
-    ? staged.required(Object.fromEntries(keys.map(key => [key, true])) as Record<string, true>)
-    // A committed report keeps its sections when the repair omits them, so a lone `sections` field is optional then.
-    : keys.length === 1 && !(retainable && keys[0] === 'sections')
-    ? (staged as z.ZodObject<z.ZodRawShape>).required({ [keys[0]]: true })
+  const requiredFields = labelIndexes || sectionLeaves
+    ? keys
+    // A committed report keeps its sections when the repair omits them, so a lone `sections` field
+    // stays optional, while unheld required scalars (`name`, `summary`) always stay required.
+    : [
+        ...(keys.length === 1 && !(retainable && keys[0] === 'sections') ? keys : []),
+        ...keys.filter(key => key === 'name' || key === 'summary'),
+      ];
+  const declared = requiredFields.length > 0
+    ? staged.required(Object.fromEntries(requiredFields.map(key => [key, true])) as Record<string, true>)
     : staged;
   const strict = declared.strict().superRefine((data, ctx) => {
     if (keys.length < 2) return;

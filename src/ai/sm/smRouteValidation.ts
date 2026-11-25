@@ -13,7 +13,7 @@ import { ISSUES, jsonPointer, makeRejection, type ToolRejection } from '../suppo
 /** True for nonfatal drop/refuse-with-notice kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
   return kind === 'absent_contributor'
-    || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
+    || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
     || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued' || kind === 'prune_noop_out_of_scope';
 }
 
@@ -40,7 +40,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   pruned_contributor: ISSUES[REJECTION_CODES.prunedContributor].correction,
   column_out_of_scope: ISSUES[REJECTION_CODES.columnOutOfScope].correction,
   prune_absent:
-    'This id is not in the loaded model — there is nothing to prune. Remove it from prune_neighbors.',
+    'Name a neighbor of the focus that /prune_neighbors may remove, or remove the entry from /prune_neighbors.',
   prune_noop_removed:
     'This node was already pruned on an earlier hop. Remove it from prune_neighbors.',
   prune_noop_visited:
@@ -69,7 +69,7 @@ const DETACHED_LINK_DIRECTIVE =
   'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in the section fields; do not invent a write.';
 
 /** Served kinds whose directive removes a list entry; the retry resends that failed list. */
-const ENTRY_REMOVAL_KINDS: ReadonlySet<InvalidRouteKind> = new Set(['question_not_neighbor', 'prune_question_conflict', 'prune_column_conflict', 'question_closed']);
+const ENTRY_REMOVAL_KINDS: ReadonlySet<InvalidRouteKind> = new Set(['prune_absent', 'question_not_neighbor', 'prune_question_conflict', 'prune_column_conflict', 'question_closed']);
 
 /** How a removal directive's list is sent once it has no entries left. */
 const EMPTIED_LIST_DIRECTIVE = 'Send a list left with no entries as [].';
@@ -91,13 +91,13 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   bad_writes_to_target: REJECTION_CODES.writesToNamesReader,
   pruned_contributor: REJECTION_CODES.prunedContributor,
   column_out_of_scope: REJECTION_CODES.columnOutOfScope,
-  prune_absent: REJECTION_CODES.routeValidationFailed,
+  prune_absent: REJECTION_CODES.invalidInput,
   prune_noop_removed: REJECTION_CODES.routeValidationFailed,
   prune_noop_visited: REJECTION_CODES.routeValidationFailed,
   prune_noop_analyzed: REJECTION_CODES.routeValidationFailed,
   prune_noop_queued: REJECTION_CODES.routeValidationFailed,
   prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
-  question_not_neighbor: REJECTION_CODES.routeValidationFailed,
+  question_not_neighbor: REJECTION_CODES.invalidInput,
   prune_question_conflict: REJECTION_CODES.routeValidationFailed,
   prune_column_conflict: REJECTION_CODES.routeValidationFailed,
   question_closed: REJECTION_CODES.routeValidationFailed,
@@ -105,7 +105,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
 
 /**
  * One model-facing reason line per validation failure: the offending path and what was wrong. The
- * ids a check accepts ride `detail` for the last feedback.
+ * ids a check accepts ride `detail` for feedback 2.
  */
 function routeErrorLine(error: InvalidRoute): string {
   return error.path ? `${jsonPointer(error.path.split('.'))}: ${error.reason}` : error.reason;

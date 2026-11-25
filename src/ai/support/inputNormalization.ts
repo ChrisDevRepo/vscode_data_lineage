@@ -3,9 +3,10 @@
  * reusable across tool handlers, state-machine init and prompt rendering.
  */
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
-import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
+import { normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { isRecord } from '../../utils/isRecord';
 import { schemaBranches, type JsonSchemaShape } from '../tools/jsonSchema';
+import type { SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 /**
  * Re-exported so AI callers keep importing node-id resolution from here; the implementation lives
@@ -110,6 +111,65 @@ export function normalizeSubmitFindingsInputIds(
   }
 
   return { input, normalizations };
+}
+
+/** One served column or node id a spelling was rewritten to, for the debug log. */
+export interface SubmitFindingsIdRewrite {
+  /** Dot-path of the rewritten field in the payload. */
+  readonly field: string;
+  /** The model-supplied spelling. */
+  readonly from: string;
+  /** The served value it denotes. */
+  readonly to: string;
+}
+
+/**
+ * The boundary canonicalization of the `column_flow` ids and column names of `submit_findings`,
+ * before its single strict parse: a value the model sent in another spelling than the one the hop
+ * serves is rewritten to that served value when the source's identifier policy makes the two the
+ * same identifier (a delimiter or quote encoding; letter case only under a case-insensitive
+ * source) and exactly one served value is meant. Anything else, an ambiguous match included,
+ * stays as sent so the parse names it. The input is never mutated; `upstream_columns[].node` is
+ * matched against every id the parse admits, so an out-of-scope source reaches its scope refusal.
+ *
+ * @param identifierCaseSensitive - Checked source catalog policy; true never rewrites letter case.
+ */
+export function canonicalizeColumnFlowIds(
+  rawInput: unknown,
+  hop: SubmitFindingsHopColumns,
+  identifierCaseSensitive: boolean,
+): { input: unknown; rewrites: SubmitFindingsIdRewrite[] } {
+  const rewrites: SubmitFindingsIdRewrite[] = [];
+  if (!isRecord(rawInput) || !Array.isArray(rawInput.column_flow)) return { input: rawInput, rewrites };
+  const cs = identifierCaseSensitive;
+  const nodeDenotes = (raw: string, id: string): boolean => resolveModelNodeId(raw, new Map([[id, null]]), cs) === id;
+  const columnDenotes = (raw: string, col: string): boolean => normalizeColName(raw, cs) === normalizeColName(col, cs);
+  const served = (...lists: Array<readonly string[] | undefined>): string[] => [...new Set(lists.flatMap(list => list ?? []))];
+  const withKey = (object: Record<string, unknown>, key: string, set: readonly string[], denotes: (raw: string, value: string) => boolean, path: string): Record<string, unknown> => {
+    const value = object[key];
+    if (typeof value !== 'string' || set.length === 0 || set.includes(value)) return object;
+    const meant = set.filter(candidate => denotes(value, candidate));
+    if (meant.length !== 1) return object;
+    rewrites.push({ field: `${path}.${key}`, from: value, to: meant[0]! });
+    return { ...object, [key]: meant[0] };
+  };
+  const eachEntry = (value: unknown, path: string, edit: (entry: Record<string, unknown>, at: string) => Record<string, unknown>): unknown =>
+    Array.isArray(value) ? value.map((entry, index) => (isRecord(entry) ? edit(entry, `${path}.${index}`) : entry)) : value;
+
+  const targets = hop.returnTargets ?? [];
+  const outCols = targets.length ? served(targets.map(target => target.col)) : served(hop.outCols ?? undefined);
+  const column_flow = eachEntry(rawInput.column_flow, 'column_flow', (flow, at) => {
+    const entry = withKey(flow, 'out_col', outCols, columnDenotes, at);
+    const nested = (key: string, edit: (object: Record<string, unknown>, path: string) => Record<string, unknown>) =>
+      isRecord(entry[key]) ? { [key]: edit(entry[key], `${at}.${key}`) } : {};
+    return {
+      ...entry,
+      ...nested('writes_to', (object, path) => withKey(object, 'node', served(hop.writesToNodeIds), nodeDenotes, path)),
+      ...nested('returns_to', (object, path) => withKey(withKey(object, 'node', served(targets.map(target => target.node)), nodeDenotes, path), 'col', outCols, columnDenotes, path)),
+      ...(Array.isArray(entry.upstream_columns) ? { upstream_columns: eachEntry(entry.upstream_columns, `${at}.upstream_columns`, (ref, refAt) => withKey(ref, 'node', served(hop.columnSourceNodeIds), nodeDenotes, refAt)) } : {}),
+    };
+  });
+  return { input: { ...rawInput, column_flow }, rewrites };
 }
 
 /** Catalog facts {@link normalizeSearchQueryInput} uses to confirm a reading of a dotted name. */

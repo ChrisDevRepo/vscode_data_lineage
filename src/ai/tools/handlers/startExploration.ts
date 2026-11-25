@@ -138,6 +138,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
           code: REJECTION_CODES.staleProposalRevision,
           reason: '/proposalRevision is sent while no approval gate awaits refinement.',
           hint: 'Omit /proposalRevision and send a fresh proposal with /origin.',
+          issuePaths: ['proposalRevision'],
         }), loggedInput);
       }
       if (isRefining && data.proposalRevision !== sess.pendingExploration!.revision) {

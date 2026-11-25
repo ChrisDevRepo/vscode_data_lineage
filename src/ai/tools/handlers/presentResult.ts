@@ -13,8 +13,10 @@ import {
   findBareNonPrunedNodes, findUnrenderedDetailSlotIds, requiredDetailSlotIds, buildColumnChainPreface,
   mergePresentResultRepairPatch,
   holdRejectedPresentResult,
+  leafRepairsFromPaths,
   requiredCtChainNodeIds,
   findTextlessNewSectionLabels,
+  leafRepairsSent,
   presentResultRepairInstruction,
   assignEvidenceIds,
   expandEvidenceRefs,
@@ -26,11 +28,11 @@ import {
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
+import { MergedSectionsSchema, PRESENT_RESULT_GRAPH_EDIT_FIELDS, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase, type PresentResultRepairField } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
-import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
+import { combineToolRejections, jsonPointer, makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
@@ -127,6 +129,77 @@ function captureCheckpoint(sess: AiSession, logger: ToolServices['logger']): Pre
   }
 }
 
+/**
+ * What the evidence-fence check found in authored texts: the unknown ids with their field and the
+ * unclosed fences.
+ */
+interface EvidenceScan {
+  readonly unknown: Array<{ readonly id: string; readonly path: string }>;
+  readonly malformed: PresentResultViolation[];
+}
+
+/** Expands the evidence references of one authored text, recording what the fence check finds. */
+function expandChecked(text: string, fieldPath: string, blocks: Parameters<typeof expandEvidenceRefs>[1], scan: EvidenceScan): string {
+  const expanded = expandEvidenceRefs(text, blocks);
+  scan.unknown.push(...expanded.unknownIds.map(id => ({ id, path: fieldPath })));
+  if (expanded.malformedRefs.length > 0) {
+    const field = fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing';
+    scan.malformed.push({
+      field,
+      messages: [`Unclosed SQL fence in ${jsonPointer(fieldPath.split('.'))}. Close each block with a bare triple-backtick marker; another language opener is not a closing marker. Retain every surrounding business paragraph.`],
+      repairFields: [field],
+      paths: [fieldPath],
+    });
+  }
+  return expanded.text;
+}
+
+/**
+ * The violation of the evidence ids that name no captured SQL block, by the fields that carry
+ * them.
+ */
+function unknownEvidenceViolation(scan: EvidenceScan): PresentResultViolation[] {
+  if (scan.unknown.length === 0) return [];
+  const paths = [...new Set(scan.unknown.map(({ path }) => path))];
+  return [{
+    field: 'sections',
+    messages: [
+      `Evidence id(s) in ${paths.map(path => jsonPointer(path.split('.'))).join(', ')} name no captured SQL block. `
+      + 'Use an id shown on a ```sql fence line in detail_slots, or write the SQL inside that fence yourself.',
+    ],
+    repairFields: ['sections'],
+    paths: ['sections'],
+    entryIds: [...new Set(scan.unknown.map(({ id }) => id))],
+  }];
+}
+
+/**
+ * The evidence-fence faults of the authored texts of a call that failed the schema: a check that
+ * needs no valid call is owed at the first reply, not hidden behind the schema fault.
+ */
+function rawEvidenceRejection(input: unknown, sess: AiSession): ToolRejection | undefined {
+  if (typeof input !== 'object' || input === null) return undefined;
+  const raw = input as { title?: unknown; intro?: unknown; closing?: unknown; sections?: unknown };
+  const { blocks } = assignEvidenceIds(sess.memory.getResult().detail_slots);
+  const scan: EvidenceScan = { unknown: [], malformed: [] };
+  for (const field of ['title', 'intro', 'closing'] as const) {
+    if (typeof raw[field] === 'string') expandChecked(raw[field], field, blocks, scan);
+  }
+  if (Array.isArray(raw.sections)) {
+    raw.sections.forEach((section: unknown, index) => {
+      const text = typeof section === 'object' && section !== null ? (section as { text?: unknown }).text : undefined;
+      if (typeof text === 'string') expandChecked(text, `sections.${index}.text`, blocks, scan);
+    });
+  }
+  const violations = [...scan.malformed, ...unknownEvidenceViolation(scan)];
+  if (violations.length === 0) return undefined;
+  return makeRejection({
+    code: REJECTION_CODES.validation,
+    reason: violations.flatMap(violation => violation.messages).join('\n'),
+    issuePaths: [...new Set(scan.malformed.flatMap(violation => violation.paths).concat(scan.unknown.map(({ path }) => path)))],
+  });
+}
+
 /** Builds and persists the final lineage presentation for the active turn. */
 export async function executePresentResult(input: unknown, s: ToolServices): Promise<string> {
     try {
@@ -152,22 +225,42 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       const presentResultStage: PresentResultStage = sess.phase.kind === 'completed' ? 'completed' : 'synthesis';
       const retainableSections = sess.retainableReportSections();
+      const leaves = leafRepairsSent(input, {
+        highlightLabelIndexes: sess.presentResultRepairHighlightLabelIndexes ?? undefined,
+        sectionTextLeaves: sess.presentResultRepairSectionTextLeaves ?? undefined,
+      });
       const schema = presentResultSchemaForPhase(
         presentResultStage, sess.presentResultRepairFields, retainableSections !== null,
-        sess.presentResultRepairHighlightLabelIndexes ?? undefined,
-        sess.presentResultRepairSectionTextLeaves ?? undefined,
+        leaves.highlightLabelIndexes, leaves.sectionTextLeaves,
       );
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
-        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+        const content = rawEvidenceRejection(input, sess);
+        const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+        const rejection = content ? combineToolRejections([schemaFault, content]) : schemaFault;
         const repair = holdRejectedPresentResult(sess.presentResultRepairDraft, input, rejection.issuePaths ?? [], retainableSections);
         const authorization = sess.presentResultRepairDraft.getAuthorization();
         const held = sess.presentResultRepairDraft.get();
-        if (held && authorization) rejection.hint = [
-          zodFieldRepairHint(parsed.error, input, schema),
-          repair ?? presentResultRepairInstruction(authorization.fields,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionTextLeaves),
-        ].filter(Boolean).join(' ');
+        if (held && authorization) {
+          const failedKeySet = new Set((rejection.issuePaths ?? []).map(path => path.split('.')[0]));
+          const repairableFields: readonly PresentResultRepairField[] = [...PRESENT_RESULT_REPAIR_FIELDS, ...PRESENT_RESULT_GRAPH_EDIT_FIELDS];
+          const graphEditSet = new Set<string>(PRESENT_RESULT_GRAPH_EDIT_FIELDS);
+          const retryFields = repair
+            ? authorization.fields
+            : repairableFields.filter(field => failedKeySet.has(field)
+              || (authorization.fields.includes(field) && (field === 'sections'
+                ? (!retainableSections && (authorization.sectionOrder ? (held.sections?.length ?? 0) < authorization.sectionOrder.length : !(held.sections?.length)))
+                : graphEditSet.has(field) || held[field] === undefined)));
+          const committedLabels = (retainableSections ?? []).filter(sec => sec.text).map(sec => sec.label);
+          if (committedLabels.length > 0 && authorization.fields.includes('sections') && !rejection.detail) {
+            rejection.detail = [{ path: 'sections.0.label', available_routes: committedLabels }];
+          }
+          rejection.hint = [
+            zodFieldRepairHint(parsed.error, input, schema),
+            repair ?? presentResultRepairInstruction(retryFields,
+              (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionTextLeaves),
+          ].filter(Boolean).join(' ');
+        }
         return reject(rejection);
       }
       input = parsed.data;
@@ -177,7 +270,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let presentInput: PresentResultInput;
       if (held && authorization) {
         const patch = input as PresentResultRepairPatch;
-        const textlessNewLabels = authorization.sectionTextLeaves
+        const textlessNewLabels = leaves.sectionTextLeaves
           ? []
           : findTextlessNewSectionLabels(
             held.sections,
@@ -195,7 +288,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             issuePaths: ['sections'],
           }));
         }
-        presentInput = mergePresentResultRepairPatch(held, patch, authorization, model.identifierCaseSensitive);
+        presentInput = mergePresentResultRepairPatch(held, patch, { ...authorization, highlightLabelIndexes: leaves.highlightLabelIndexes, sectionTextLeaves: leaves.sectionTextLeaves }, model.identifierCaseSensitive);
         const merged = presentInput.sections === undefined && retainableSections
           ? { success: true as const }
           : MergedSectionsSchema.safeParse({ sections: presentInput.sections });
@@ -240,6 +333,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // it.
       let graphEdited = false;
 
+      /** The JSON Pointers of the entries of a node id list the model does not hold. */
+      const unknownEntries = (field: string, ids: readonly string[]): string => ids
+        .flatMap((id, index) => (resolveModelNodeId(id, modelNodeMap, model.identifierCaseSensitive) ? [] : [`/${field}/${index}`])).join(', ');
+
       const canonicalNodeId = (id: string, field: string): string => {
         const resolved = resolveModelNodeId(id, modelNodeMap, model.identifierCaseSensitive) ?? id;
         if (resolved !== id) {
@@ -277,7 +374,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (addResolution.unresolved.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
+            reason: `${unknownEntries('add_node_ids', presentInput.add_node_ids)}: not an object of the loaded model after bracket/case normalization.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['add_node_ids'],
           }));
@@ -290,7 +387,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (outOfScope.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `add_node_ids names objects outside the approved exploration scope: ${quoteIds(outOfScope)}.`,
+            reason: `/add_node_ids names ${outOfScope.length} object(s) outside the approved exploration scope.`,
             hint: 'If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
             issuePaths: ['add_node_ids'],
           }));
@@ -308,7 +405,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (pruneResolution.unresolved.length > 0) {
           return rejectGraphEdit('prune_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
+            reason: `${unknownEntries('prune_node_ids', presentInput.prune_node_ids)}: not an object of the loaded model after bracket/case normalization.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['prune_node_ids'],
           }));
@@ -355,33 +452,50 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         presentInput.sections = retained.sections;
       }
 
-      const unknownEvidenceIds: string[] = [];
-      const malformedEvidence: PresentResultViolation[] = [];
+      if (held && authorization) {
+        const stageSchema = presentResultSchemaForPhase(
+          presentResultStage, null, retainableSections !== null,
+        );
+        const fullStage = stageSchema.safeParse(presentInput);
+        if (!fullStage.success) {
+          const failed = new Set(fullStage.error.issues.map(issue => String(issue.path[0] ?? '')));
+          const owed = new Set<string>([
+            ...failed,
+            ...authorization.fields.filter(field => presentInput[field] === undefined),
+          ]);
+          const fields = PRESENT_RESULT_REPAIR_FIELDS.filter(field => owed.has(field));
+          const sectionsHeld = (presentInput.sections?.length ?? 0) > 0;
+          const sectionTextLeaves = sectionsHeld ? sectionTextLeavesFromIssues(fullStage.error.issues) : undefined;
+          sess.presentResultRepairDraft.hold(presentInput, {
+            fields,
+            ...(sectionTextLeaves ? { sectionTextLeaves } : {}),
+          });
+          return reject(rejectionFromZodError(fullStage.error, {
+            code: REJECTION_CODES.invalidInput,
+            input: presentInput,
+            schema: stageSchema,
+            hint: [
+              zodFieldRepairHint(fullStage.error, presentInput, stageSchema),
+              presentResultRepairInstruction(fields, sectionsHeld, undefined, sectionTextLeaves),
+            ].filter(Boolean).join(' '),
+          }));
+        }
+      }
+
+      const scan: EvidenceScan = { unknown: [], malformed: [] };
       let renderInput: PresentResultInput = presentInput;
       if (presentInput.sections?.length) {
         const { blocks: evidenceBlocks } = assignEvidenceIds(sess.memory.getResult().detail_slots);
-        const expand = (text: string, fieldLabel: string, fieldPath = fieldLabel): string => {
-          const expanded = expandEvidenceRefs(text, evidenceBlocks);
-          unknownEvidenceIds.push(...expanded.unknownIds);
-          if (expanded.malformedRefs.length > 0) {
-            malformedEvidence.push({
-              field: fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing',
-              messages: [`Unclosed SQL fence(s) ${quoteIds(expanded.malformedRefs)} in ${fieldLabel}. Close each block with a bare triple-backtick marker; another language opener is not a closing marker. Retain every surrounding business paragraph.`,],
-              repairFields: [fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing'],
-              paths: [fieldPath],
-            });
-          }
-          return expanded.text;
-        };
-        const expandOptional = (text: string | undefined, fieldLabel: string): string | undefined =>
-          text === undefined ? text : expand(text, fieldLabel);
+        const expand = (text: string, fieldPath: string): string => expandChecked(text, fieldPath, evidenceBlocks, scan);
+        const expandOptional = (text: string | undefined, fieldPath: string): string | undefined =>
+          text === undefined ? text : expand(text, fieldPath);
         renderInput = {
           ...presentInput,
           title: expandOptional(presentInput.title, 'title'),
           intro: expandOptional(presentInput.intro, 'intro'),
           closing: expandOptional(presentInput.closing, 'closing'),
           sections: presentInput.sections.map((sec, index) => {
-            const expanded = expand(sec.text, `section "${trunc(sec.label, 60)}"`, `sections.${index}.text`);
+            const expanded = expand(sec.text, `sections.${index}.text`);
             return expanded === sec.text ? sec : { ...sec, text: expanded };
           }),
         };
@@ -440,7 +554,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       );
       s.logger.debug(`[Presentation] Output assembled title="${trunc(presentInput.title ?? '(none)', 60)}"`);
 
-      const externalViolations: PresentResultViolation[] = [...malformedEvidence];
+      const externalViolations: PresentResultViolation[] = [...scan.malformed];
       const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds, model.identifierCaseSensitive);
       if (uncoveredCtNodes.length > 0) {
         externalViolations.push({
@@ -466,18 +580,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           entryIds: unrenderedSlotIds,
         });
       }
-      if (unknownEvidenceIds.length > 0) {
-        externalViolations.push({
-          field: 'sections',
-          messages: [
-            `Evidence id(s) ${quoteIds([...new Set(unknownEvidenceIds)])} name no captured SQL block. `
-            + 'Use an id shown on a ```sql fence line in detail_slots, or write the SQL inside that fence yourself.',
-          ],
-          repairFields: ['sections'],
-          paths: ['sections'],
-          entryIds: [...new Set(unknownEvidenceIds)],
-        });
-      }
+      externalViolations.push(...unknownEvidenceViolation(scan));
 
       let smSnapshot: SmState | null | undefined;
       const nodeIdState: PresentNodeIdStateLookup = (nodeId): PresentNodeIdState => {
@@ -493,11 +596,35 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!validation.success) {
         if (validation.repairable) {
-          const scopedHint = malformedEvidence.length > 0
-            ? holdRejectedPresentResult(sess.presentResultRepairDraft, presentInput, validation.rejection.issuePaths ?? [])
+          const paths = validation.rejection.issuePaths ?? [];
+          const scopedHint = scan.malformed.length > 0
+            ? holdRejectedPresentResult(sess.presentResultRepairDraft, presentInput, paths)
             : null;
-          if (scopedHint) validation.rejection.hint = scopedHint;
-          else sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
+          if (scopedHint) {
+            validation.rejection.hint = scopedHint;
+          } else {
+            const narrowLeaves = held
+              ? leafRepairsFromPaths(
+                paths,
+                leaves.highlightLabelIndexes ? presentInput.highlight_groups : undefined,
+                leaves.sectionTextLeaves || scan.malformed.length > 0 ? presentInput.sections : undefined,
+              )
+              : {};
+            const { highlightLabelIndexes, sectionTextLeaves } = narrowLeaves;
+            sess.presentResultRepairDraft.hold(presentInput, {
+              fields: validation.repairFields,
+              ...(highlightLabelIndexes ? { highlightLabelIndexes } : {}),
+              ...(sectionTextLeaves ? { sectionTextLeaves } : {}),
+            });
+            if (highlightLabelIndexes || sectionTextLeaves) {
+              validation.rejection.hint = presentResultRepairInstruction(
+                validation.repairFields,
+                (presentInput.sections?.length ?? 0) > 0,
+                highlightLabelIndexes,
+                sectionTextLeaves,
+              );
+            }
+          }
         }
         return reject(validation.rejection);
       }

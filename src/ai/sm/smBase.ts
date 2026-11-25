@@ -657,6 +657,17 @@ export class NavigationEngine {
     const columnEndpoints = this.tracer
       ? new Set([...stagedColumnEdges.flatMap(edge => [edge.from_node, edge.to_node]), ...this.readableColumnFlowEndpoints(rawColumnFlow)])
       : new Set<string>();
+    const focusNeighbors = this.graph.hasNode(focusId) ? this.graph.neighbors(focusId) : [];
+    const prunable = focusNeighbors.filter(id => this.neighborCapabilities(focusId, id).can_prune);
+    for (const target of pruneTargets.filter(({ resolved }) => !resolved)) {
+      invalidRoutes.push({
+        kind: 'prune_absent',
+        id: target.raw,
+        path: target.path,
+        reason: 'not an object of the loaded model.',
+        available_routes: prunable,
+      });
+    }
     for (const target of pruneTargets) {
       if (!target.resolved || target.resolved === focusId || !columnEndpoints.has(target.resolved)) continue;
       invalidRoutes.push({
@@ -679,7 +690,7 @@ export class NavigationEngine {
           kind: 'question_not_neighbor',
           id: nid,
           path: `questions.${q.index}.nodeId`,
-          reason: `not a neighbor of the focus \`${focusId}\`.`,
+          reason: 'not a neighbor of the focus.',
           available_routes: availableRoutes,
         });
         continue;
@@ -714,9 +725,10 @@ export class NavigationEngine {
             .flatMap(task => task.kind === 'column_lineage' && task.nodeId === focusId ? task.activeColumns : []))];
           invalidRoutes.push({
             kind: 'bad_caller_context',
-            id: nid,
+            id: focusId,
             path: `questions.${q.index}.caller_context`,
-            reason: `caller_context must name an active real output of the current caller, which reads this loaded function.${activeOutputs.length > 0 ? ` Active outputs of \`${focusId}\`: ${activeOutputs.join(', ')}.` : ''}`,
+            reason: 'caller_context must name an active real output of the current caller, which reads this loaded function.',
+            ...(activeOutputs.length > 0 ? { actual_columns: activeOutputs } : {}),
           });
           continue;
         }
@@ -1204,11 +1216,12 @@ export class NavigationEngine {
    * legitimate alternatives built in so the model never has to guess: BB for the object, real
    * columns for CT.
    */
-  private rejectNodeRefColumnTargets(nodeRefs: string[]): ToolRejection {
+  private rejectNodeRefColumnTargets(_nodeRefs: string[]): ToolRejection {
     return makeRejection({
       code: NavigationEngine.TARGET_COLUMNS_NAME_OBJECTS,
-      reason: `/targetColumns [${nodeRefs.join(', ')}] resolve to objects in the loaded model, not columns.`,
+      reason: '/targetColumns names objects in the loaded model, not columns.',
       hint: 'To trace an object, omit /targetColumns and set /analysisMode to "bb". To trace columns, name the user-named columns of the origin instead.',
+      issuePaths: ['targetColumns'],
     });
   }
 
@@ -1953,6 +1966,7 @@ export class NavigationEngine {
         code: REJECTION_CODES.missingField,
         reason: '/analysisMode "ct" has no /targetColumns value.',
         hint: 'Name at least one /targetColumns value, or set /analysisMode to "bb".',
+        issuePaths: ['targetColumns'],
       });
     }
     if (params.analysisMode === 'bb' && params.targetColumns !== undefined) {
@@ -1960,6 +1974,7 @@ export class NavigationEngine {
         code: REJECTION_CODES.ctFieldForbiddenInBb,
         reason: `${ISSUES[REJECTION_CODES.ctFieldForbiddenInBb].label}.`,
         hint: ISSUES[REJECTION_CODES.ctFieldForbiddenInBb].correction,
+        issuePaths: ['targetColumns'],
       });
     }
     const wasRefine = this.initSnapshot !== null;
@@ -1979,14 +1994,16 @@ export class NavigationEngine {
     const passIds = partition(params.passNodeIds ?? []);
     if (excludeIds.unresolved.length > 0 || passIds.unresolved.length > 0) {
       this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
+      const issuePaths = [
+        ...(excludeIds.unresolved.length > 0 ? ['excludeNodeIds'] : []),
+        ...(passIds.unresolved.length > 0 ? ['passNodeIds'] : []),
+      ];
       return makeRejection({
         code: REJECTION_CODES.unknownNodeIds,
-        reason: [
-          ...(excludeIds.unresolved.length > 0 ? [`excludeNodeIds not in the loaded model: ${excludeIds.unresolved.join(', ')}`] : []),
-          ...(passIds.unresolved.length > 0 ? [`passNodeIds not in the loaded model: ${passIds.unresolved.join(', ')}`] : []),
-        ].join('; '),
+        reason: notInModel(issuePaths.map(path => `/${path}`)),
         hint: "Call lineage_search_objects with each user-named identifier to resolve the canonical schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
         detail: { unresolved_excludeNodeIds: excludeIds.unresolved, unresolved_passNodeIds: passIds.unresolved },
+        issuePaths,
       });
     }
     if (excludeIds.resolved.length + passIds.resolved.length > 0) {
@@ -1998,8 +2015,9 @@ export class NavigationEngine {
     if (!originNode) {
       return makeRejection({
         code: REJECTION_CODES.originNotFound,
-        reason: notInModel([params.origin]),
+        reason: notInModel(['/origin']),
         hint: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns.',
+        issuePaths: ['origin'],
       });
     }
 
@@ -2021,8 +2039,10 @@ export class NavigationEngine {
         this.log('debug', `[AI] [CT] requested columns [${effectiveTargetColumns.join(',')}] offending=[${offending.join(',')}] not on origin ${originNode.id} — rejecting (no partial-trace fallback)`);
         return makeRejection({
           code: REJECTION_CODES.unknownColumns,
-          reason: `/targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}${declaredNames.length > 0 ? '' : ', which exposes no column metadata of its own'}.`,
-          hint: `${declaredNames.length > 0 ? `Its columns are: [${declaredNames.join(', ')}]. ` : ''}Provide valid columns, ask the user to clarify, or set /analysisMode to "bb".`
+          reason: `/targetColumns names columns that are not on ${originNode.id}${declaredNames.length > 0 ? '' : ', which exposes no column metadata of its own'}.`,
+          hint: 'Provide valid columns, ask the user to clarify, or set /analysisMode to "bb".',
+          issuePaths: ['targetColumns'],
+          ...(declaredNames.length > 0 ? { detail: [{ id: originNode.id, path: 'targetColumns', actual_columns: declaredNames }] } : {}),
         });
       }
       this.log('debug', `[Admit] guard=ct_target_columns phase=init focus=${originNode.id} active=${resolved.length} — tracing [${resolved.join(', ')}]`);
@@ -2913,8 +2933,10 @@ export class NavigationEngine {
       if (!focusId || !this.nodeMap.has(focusId)) {
         return combineToolRejections([...faults(), makeRejection({
           code: REJECTION_CODES.invalidInput,
-          reason: `focus_node_id \`${rawFocusId ?? ''}\` not found in the loaded model.`,
+          reason: '/focus_node_id: not an object of the loaded model.',
           hint: activeSubmitFindingsRecoveryHint(this.currentFocusNodeId ?? undefined),
+          issuePaths: ['focus_node_id'],
+          ...(this.currentFocusNodeId ? { detail: [{ path: 'focus_node_id', available_routes: [this.currentFocusNodeId] }] } : {}),
         })]);
       }
       if (focusId !== this.currentFocusNodeId) {

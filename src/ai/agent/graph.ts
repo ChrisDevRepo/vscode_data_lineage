@@ -375,9 +375,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       + `${startedAt !== undefined ? ` durationMs=${Math.max(0, Date.now() - startedAt)}` : ''}`
       + `${last ? ` lastReject=${last.toolName}:${last.code}` : ''}`,
     );
-    // Escalation level 3 only; levels 1 and 2 stay at debug.
+    // Escalation from the last feedback (level 3) on; levels 1 and 2 stay at debug.
     const level = rejectionLevel(priorAttempt);
-    if (last && res.rejections.length > 0 && level === MAX_TOOL_PROVIDER_CALLS) {
+    if (last && res.rejections.length > 0 && level >= MAX_TOOL_PROVIDER_CALLS - 1) {
       deps.logger?.warn(`[AI] [Escalation] phase=${nextAttempt.phase} tool=${last.toolName} code=${last.code} level=${level}`);
     }
     return nextAttempt;
