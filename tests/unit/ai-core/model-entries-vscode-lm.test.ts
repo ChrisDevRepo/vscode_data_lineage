@@ -26,6 +26,16 @@ describe('vscode-lm entry parsing', () => {
     expect(parseModelEntries([{ id: 'x', name: 'X', apiType: 'vscode-lm', selector: {} }]).invalid).toEqual([]);
   });
 
+  it('defaults forcedToolChoice to true and accepts false on a vscode-lm entry', () => {
+    const defaulted = parseModelEntries([LM]);
+    expect(defaulted.invalid).toEqual([]);
+    expect(defaulted.entries[0]).toMatchObject({ forcedToolChoice: true });
+
+    const optedOut = parseModelEntries([{ ...LM, forcedToolChoice: false }]);
+    expect(optedOut.invalid).toEqual([]);
+    expect(optedOut.entries[0]).toMatchObject({ forcedToolChoice: false });
+  });
+
   it('rejects url, key, model and maxInputTokens on a vscode-lm entry', () => {
     for (const extra of [{ url: 'https://example.test/v1/' }, { apiKey: 'k' }, { model: 'm' }, { maxInputTokens: 1000 }]) {
       expect(invalidIssues({ ...LM, ...extra }), JSON.stringify(extra)).not.toEqual([]);

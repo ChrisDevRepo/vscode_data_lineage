@@ -113,6 +113,8 @@ const VscodeLmEntrySchema = z.strictObject({
     id: z.string().min(1).optional(),
   }),
   maxOutputTokens: z.number().int().positive().optional(),
+  /** False for a model that rejects a forced tool choice; the port then sends `auto`. */
+  forcedToolChoice: z.boolean().default(true),
   requestBody: z.record(z.string().min(1), z.unknown()).optional(),
 }).superRefine(checkRequestBody);
 

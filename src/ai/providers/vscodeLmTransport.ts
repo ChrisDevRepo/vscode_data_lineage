@@ -131,6 +131,11 @@ const FAILURE_CODES: Readonly<Record<string, ModelPortErrorCode>> = {
   NotFound: 'model_not_found',
 };
 
+/** Whether a provider tool choice forces the model to call a tool rather than leaving it optional or off. */
+function isForcedToolChoice(choice: unknown): boolean {
+  return choice !== undefined && choice !== 'auto' && choice !== 'none';
+}
+
 /** The call options: the OpenAI-form tools and the choice the port binds with {@link VscodeLmChatModel.bindTools}. */
 interface VscodeLmCallOptions extends BaseChatModelCallOptions {
   tools?: ChatTool[];
@@ -185,7 +190,9 @@ export class VscodeLmChatModel extends BaseChatModel<VscodeLmCallOptions> {
     const chunk = (message: AIMessageChunk) => new ChatGenerationChunk({ message, text: typeof message.content === 'string' ? message.content : '' });
     try {
       if (signal?.aborted) throw cancelledError();
-      const toolMode = toolChoice !== undefined && toolChoice !== 'auto' ? vscode.LanguageModelChatToolMode.Required : vscode.LanguageModelChatToolMode.Auto;
+      const toolMode = isForcedToolChoice(toolChoice)
+        ? vscode.LanguageModelChatToolMode.Required
+        : vscode.LanguageModelChatToolMode.Auto;
       const response = await this.model.sendRequest(messages.map(toVscodeMessage), {
         ...(tools.length > 0 ? { tools: tools.map(({ function: { name, description, parameters } }) => ({ name, description, inputSchema: parameters })), toolMode } : {}),
         ...(Object.keys(this.modelOptions).length > 0 ? { modelOptions: this.modelOptions } : {}),
@@ -229,9 +236,12 @@ export function createVscodeLmChat(entry: VscodeLmModelEntry, model: vscode.Lang
   return {
     id: `provider:${entry.id}`,
     identity: { id: entry.id, name: entry.name, vendor: model.vendor, family: model.family, version: model.version },
-    request: (messages, tools, toolChoice) => ({
-      model: tools.length > 0 ? chat.bindTools([...tools], { tool_choice: toolChoice }) : chat,
-      messages: [...messages],
-    }),
+    request: (messages, tools, toolChoice) => {
+      const sentChoice = isForcedToolChoice(toolChoice) && !entry.forcedToolChoice ? 'auto' : toolChoice;
+      return {
+        model: tools.length > 0 ? chat.bindTools([...tools], { tool_choice: sentChoice }) : chat,
+        messages: [...messages],
+      };
+    },
   };
 }

@@ -637,6 +637,7 @@
                       }
                     },
                     "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit sent to the model as `max_tokens` in its options; a cap key in `requestBody` makes the entry invalid." },
+                    "forcedToolChoice": { "type": "boolean", "default": true, "description": "Whether the model accepts a forced tool choice; when off, `auto` is sent." },
                     "requestBody": { "type": "object", "markdownDescription": "Model options (for example `temperature`, `top_p`), sent unchanged. The model's provider decides which it honors. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream`, `stream_options` and the output-cap keys (`max_tokens`, `max_completion_tokens`, `max_output_tokens`; see `maxOutputTokens`) are owned by the extension." }
                   }
                 }

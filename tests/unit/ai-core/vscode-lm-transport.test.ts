@@ -15,8 +15,8 @@ import { createVscodeLmChat, loadLmCatalog, onLmModelsChanged, preferredStartMod
  * structured-output round trip through the port's forced synthetic tool. No real language model is
  * called.
  */
-const ENTRY: VscodeLmModelEntry = { id: 'e', name: 'Entry', apiType: 'vscode-lm', selector: { vendor: 'v' }, requestBody: { temperature: 0.1, top_p: 1 }, maxOutputTokens: 500 };
-const LIVE_ENTRY: VscodeLmModelEntry = { id: 'lm:v/m', name: 'M', apiType: 'vscode-lm', selector: {} };
+const ENTRY: VscodeLmModelEntry = { id: 'e', name: 'Entry', apiType: 'vscode-lm', selector: { vendor: 'v' }, forcedToolChoice: true, requestBody: { temperature: 0.1, top_p: 1 }, maxOutputTokens: 500 };
+const LIVE_ENTRY: VscodeLmModelEntry = { id: 'lm:v/m', name: 'M', apiType: 'vscode-lm', selector: {}, forcedToolChoice: true };
 const tools: Array<{ name: string; description: string; inputSchema: z.ZodType }> = [{ name: 'lineage_search', description: 'd', inputSchema: z.object({ q: z.string() }) }];
 
 type Part = vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart | { mimeType: string; data: Uint8Array } | { value: string };
@@ -126,6 +126,30 @@ describe('VscodeLmChatModel tool mode', () => {
     expect(await modeOf('required', two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required });
     expect((await modeOf('required', two)).tools).toHaveLength(2);
     expect(await modeOf(undefined, two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
+  });
+
+  it('sends Auto and records toolMode 1 when forcedToolChoice is false, keeping Required and toolMode 2 when true', async () => {
+    const two = [...tools, { name: 'other', description: 'd', inputSchema: z.object({}) }];
+    const runWith = async (forcedToolChoice: boolean, choice: Parameters<ProviderModelPort['generateToolTurn']>[0]['toolChoice']) => {
+      const wires: WireRecord[] = [];
+      const { port, sent } = portOver(
+        replying(new vscode.LanguageModelTextPart('x')),
+        { ...ENTRY, forcedToolChoice },
+        wires,
+      );
+      await port.generateToolTurn({ messages: [new HumanMessage('go')], tools: two, toolChoice: choice, phase: 't' });
+      return { options: sent[0].options, wireRequest: wires.find((record) => record.type === 'wire-request') };
+    };
+
+    for (const choice of ['required', { type: 'tool', toolName: 'lineage_search' }] as const) {
+      const optedOut = await runWith(false, choice);
+      expect(optedOut.options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
+      expect(optedOut.wireRequest).toMatchObject({ toolMode: 1 });
+
+      const forced = await runWith(true, choice);
+      expect(forced.options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required });
+      expect(forced.wireRequest).toMatchObject({ toolMode: 2 });
+    }
   });
 
   it('sends no tools and no toolMode when none are offered', async () => {

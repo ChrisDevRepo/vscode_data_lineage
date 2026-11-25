@@ -39,7 +39,7 @@ export async function createConfiguredModelPort(
   const { entryId = sources.defaultModel, ...portOptions } = options;
   if (entryId?.startsWith(LIVE_MODEL_ID_PREFIX)) {
     const info = sources.lmModel(entryId);
-    return lmPort(info, { id: entryId, name: info?.name ?? entryId, apiType: 'vscode-lm', selector: {} }, portOptions);
+    return lmPort(info, { id: entryId, name: info?.name ?? entryId, apiType: 'vscode-lm', selector: {}, forcedToolChoice: true }, portOptions);
   }
   const { entries, invalid } = parseModelEntries(sources.models);
   const entry = entries.find((candidate) => candidate.id === entryId);
