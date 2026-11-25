@@ -112,8 +112,7 @@ export function createTurnTokenBudget(settings: {
 }
 
 /**
- * The budget where no turn selected one: shipped defaults, no model window. A caller outside any
- * turn that wants no limit at all passes `null`.
+ * The budget where no turn selected one: shipped defaults, no model window.
  */
 export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget();
 
@@ -127,8 +126,7 @@ export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget(
  * `tokenCount.ts`, which this module cannot import: the regex-search worker bundles it), so the
  * check and the request's own token figure share one counter.
  *
- * @param budget - The calling turn's budget; a caller outside a turn (the MCP server) passes `null`
- *   and every request fits.
+ * @param budget - The calling turn's budget.
  * @param requestedNodes - Nodes the request would load (e.g. BFS result size).
  * @param requestedDdlTokens - Tokens the request's DDL takes.
  * @param requestedDdlBytes - The same DDL's length, reported in the rejection's counts.
@@ -136,12 +134,11 @@ export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget(
  *   limits in `detail` and the AI-facing hint.
  */
 export function checkScopeTokens(
-  budget: TurnTokenBudget | null,
+  budget: TurnTokenBudget,
   requestedNodes: number,
   requestedDdlTokens: number,
   requestedDdlBytes: number,
 ): DiscoveryBudgetRejection | null {
-  if (!budget) return null;
   if (!exceedsPhaseBudget(budget.discovery, requestedNodes, requestedDdlTokens)) return null;
   return {
     ...makeRejection({
@@ -271,8 +268,7 @@ function scopeRefusal(limit: ScopeRefusalLimit, reached: string, wayOut: string)
  *
  * @returns `null` when the scope is admitted; otherwise the refusal.
  */
-export function checkScopeAdmission(budget: TurnTokenBudget | null, scope: ProposedScope): ScopeRefusal | null {
-  if (!budget) return null;
+export function checkScopeAdmission(budget: TurnTokenBudget, scope: ProposedScope): ScopeRefusal | null {
   const { maxRounds, maxTraceColumns } = budget.exploration;
   if (scope.rounds > maxRounds) {
     return scopeRefusal(

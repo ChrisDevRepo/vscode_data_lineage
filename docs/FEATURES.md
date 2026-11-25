@@ -191,22 +191,9 @@ Tables above `tableStatistics.sampleThreshold` rows are sampled instead of fully
 
 ---
 
-## MCP server
-
-A local MCP server lets other AI clients call the lineage tools. It covers the discovery phase: lookup tools (context, screen state, object search, object detail, graph patterns, DDL search) plus trace, path and graph preview. The client's own model does the reasoning and writes the answer; the server returns each result or an error result. Everything after discovery is in the chat panel, which uses your configured model (see [AI chat panel](#ai-chat-panel)). The nine tools run the same code as in the chat panel.
-
-- **Tools.** `lineage_get_context`, `lineage_get_screen_state`, `lineage_search_objects`, `lineage_get_object_detail`, `lineage_detect_graph_patterns`, `lineage_search_ddl`, `lineage_get_trace`, `lineage_get_path` and `lineage_create_graph_preview`. They read the loaded model and are inactive when none is loaded. Nothing connects to the database. The graph preview opens its view in the graph panel.
-- **Failed calls.** A call that is refused returns an error result with a corrective message and a structured error. The server keeps no state, retries nothing and sets no call limit; the client decides whether to retry.
-- **Turn on or off.** Run **Data Lineage: Enable MCP Server** (it offers "Show servers") or set `dataLineageViz.mcp.enabled`; set it to `false` to stop the server. `dataLineageViz.ai.enabled` has no effect on it.
-- **Clients.** Claude Code CLI and GitHub Copilot agent mode are verified; any client that supports MCP over HTTP can connect, including clients that do not use sessions. VS Code clients such as Copilot get the server definition from the extension. For other clients run **Data Lineage: Copy MCP Config**.
-- **Access.** The server listens on 127.0.0.1 only and needs a bearer token; a request with a foreign `Host` or `Origin` gets 403. The copied config contains the token, so the client writes it into its own config file. For its own MCP clients, VS Code also keeps the server definition with the token in plaintext in the VS Code user profile (sometimes in workspace state). The token works only on 127.0.0.1 while the server runs. To revoke it, run **Data Lineage: Rotate MCP Token**: old configs stop working and VS Code clients pick up the new definition; update copied configs of other clients.
-- **Data.** What a tool returns (object metadata and SQL) goes to the client and to the model endpoint that client uses.
-
----
-
 ## AI chat panel
 
-The graph view has its own chat pane, docked on the right edge. It answers lineage questions on the loaded model with the model you configure. It is separate from the [MCP server](#mcp-server), which serves the lineage tools to other AI clients. With `dataLineageViz.ai.enabled` off, the graph shows no chat at all; the MCP server has its own switch. Toolbar controls that do not fit beside the pane move into the **…** menu, and the graph scrolls instead of being cut off.
+The graph view has its own chat pane, docked on the right edge. It answers lineage questions on the loaded model with the model you configure. With `dataLineageViz.ai.enabled` off, the graph shows no chat at all. Toolbar controls that do not fit beside the pane move into the **…** menu, and the graph scrolls instead of being cut off.
 
 - **Open and use.** Click **Chat** on the right edge of the graph; drag the pane's left edge (or focus it and use the arrow keys) to resize it, **Esc** collapses it, and a running answer keeps streaming while it is collapsed. **New chat** starts a fresh conversation and stops a running answer. Closing the graph panel ends the chat the same way, so a pending approval card does not outlive its panel.
 - **Commands.** Type `/` in the composer to list them. `/search` answers from the lookup tools only; `/trace` (optionally with `[schema].[table].[column]`) plans a hop-by-hop exploration; `/clear` (alias `/new`) starts a new chat, like **New chat**, with no model call.
@@ -217,10 +204,9 @@ The graph view has its own chat pane, docked on the right edge. It answers linea
 - **Approval.** Before a hop-by-hop exploration reads any object, an approval card shows the plan, with **Show full plan (N objects)** for the full list: **Approve**, **Refine** (describe the change, then **Send change**) or **Cancel**. When the exploration replaces the analysis shown now, the card says so.
 - **Token guard.** A question whose discovery would pull more than `ai.discoveryNodeCap` objects or `ai.discoveryTokenBudget` tokens of DDL is not answered directly; it is offered as a hop-by-hop exploration for your approval.
 - **Follow-up buttons.** **Start deeper hop-by-hop analysis** (when an exploration is offered), **Next questions and related objects** (after a completed answer) and **Show full description** (when the answer has a longer description).
-- **Tools.** The lineage tools the chat uses are also available to other clients: see the [MCP server](#mcp-server).
 - **Output templates.** **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml), which controls the summary, badges and notes. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
-What a model reads (the SQL and metadata the tools return) is sent to the endpoint of the entry used, including for a local DACPAC. To turn the chat panel off, set `dataLineageViz.ai.enabled` to `false` and reload the window; the MCP server follows `dataLineageViz.mcp.enabled` only.
+What a model reads (the SQL and metadata the tools return) is sent to the endpoint of the entry used, including for a local DACPAC. To turn the chat panel off, set `dataLineageViz.ai.enabled` to `false` and reload the window.
 
 ---
 
@@ -309,5 +295,3 @@ Database import only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 | `ai.outputTemplateFile` | empty | Custom output templates YAML; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |
 | `ai.models` | empty list | OpenAI-compatible endpoints (Chat Completions or Responses) or VS Code language models, one entry each. A `vscode-lm` entry has `id`, `name`, `apiType` `vscode-lm`, `selector` (`vendor`, `family`, `id`, each optional), optional `maxOutputTokens` (sent as `max_tokens`) and `requestBody` (sent unchanged as the model's options); no `url`, key or `maxInputTokens`. An API entry has: `id`, `name`, `url`, `model`, `apiType`, `maxInputTokens`, `maxOutputTokens` (sent as the output cap; a `max_tokens` or `max_completion_tokens` in `requestBody` overrides it on Chat Completions), optional `supportsReasoningEffort`, `reasoningEffort`, `forcedToolChoice`, `requestBody` (extra parameters, sent unchanged) and `requestHeaders`. An invalid entry is named and not offered. Keys are never settings: they are stored by **Add AI Model** or **Update AI Model Key**. |
 | `ai.defaultModel` | empty | The `id` of the `ai.models` entry used by default. The chat always lists the language models VS Code provides too; empty: it starts on your last pick, else on a Copilot model. |
-| `mcp.enabled` | off | Runs the [MCP server](#mcp-server); independent of `ai.enabled`. **Data Lineage: Enable MCP Server** sets it. |
-| `mcp.port` | 47633 (1024–65535) | Port of the local MCP server. The first VS Code window takes it; other windows report that it is in use. |

@@ -12,7 +12,6 @@ import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } f
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
 import { buildAiToolRegistry } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
-import { registerMcp } from './ai/mcp/mcpServer';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
 import { parseModelEntries, type VscodeLmModelEntry } from './ai/providers/modelEntries';
 import { findLmModel, loadLmCatalog, onLmModelsChanged, type LmCatalog } from './ai/providers/vscodeLmTransport';
@@ -203,13 +202,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   getSession().outputTemplates = templateSet.templates;
   getSession().outputSections = templateSet.sections;
 
-  // The MCP server follows `mcp.enabled` alone, not `ai.enabled`.
-  if (typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function') {
-    registerMcp(context, { getSession, outputChannel, getPanel: getActivePanel, host: aiToolHost });
-  } else {
-    logger.info('MCP server unavailable — this editor does not provide vscode.lm MCP server definitions.');
-  }
-
   const configLogger = Logger.create(outputChannel, 'Config');
   const RELOAD_KEYS: Array<{ key: string; label: string }> = [
     { key: 'dataLineageViz.parseRulesFile', label: 'Parse rules file' },
@@ -308,7 +300,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
 /**
  * Deactivation needs no cleanup: every disposable from {@link activateRuntime} (output channel,
- * commands, tree provider, config listener, MCP server) is on
+ * commands, tree provider, config listener) is on
  * `context.subscriptions` and torn down by VS Code. Panel resources such as database connections
  * are released by each panel's own `onDidDispose`.
  */

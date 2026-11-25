@@ -785,7 +785,7 @@ interface RecordedToolOutcome {
 }
 
 /** The call a rejection answers, as {@link renderRejection} renders it. */
-export interface RejectedCall {
+interface RejectedCall {
   readonly toolName: string;
   /** The tool's input schema as served when the rejection renders. */
   readonly schema?: () => z.ZodType | undefined;
@@ -816,10 +816,9 @@ function rejectionParts(rejection: ToolRejection, call: RejectedCall, unsent: re
 }
 
 /**
- * One rejection as the plain text a model reads at its first level: the one renderer of the chat
- * loop's feedback and of every MCP tool error, which is stateless and so has no later level.
+ * One rejection as the plain text a model reads at its first level.
  */
-export function renderRejection(rejection: ToolRejection, call: RejectedCall, unsent: readonly string[] = []): string {
+function renderRejection(rejection: ToolRejection, call: RejectedCall, unsent: readonly string[] = []): string {
   const { faults, hint, after } = rejectionParts(rejection, call, unsent);
   return [...faults, ...hint, ...after].join('\n');
 }

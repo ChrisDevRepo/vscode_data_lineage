@@ -326,7 +326,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
           Run <span className="font-bold font-mono ln-text-link">Data Lineage: Add AI Model</span> (or <strong>Add model</strong> in the chat) to pick a provider, enter the endpoint, model and key, and test the connection. Models are kept in <code>dataLineageViz.ai.models</code>; the key is kept in VS Code secret storage, never in settings.
         </p>
         <p className="text-xs mt-3 ln-text-muted">Open the chat with <strong>Chat</strong> on the right edge of the graph. Type <code>/</code> for <code>/search</code>, <code>/trace</code> and <code>/clear</code>; pick the model and effort in the composer.</p>
-        <p className="text-xs mt-3 ln-text-muted">The lineage tools read only the loaded graph and are inactive when none is loaded. Local MCP clients such as Claude Code or Copilot agent mode can call them when <code>dataLineageViz.mcp.enabled</code> is on (run <strong>Data Lineage: Enable MCP Server</strong>). The MCP server does not need the chat panel.</p>
+        <p className="text-xs mt-3 ln-text-muted">The lineage tools read only the loaded graph and are inactive when none is loaded.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -358,7 +358,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
       </div>
 
       <p className="text-xs ln-text-muted">
-        Turn the chat panel off with <code>dataLineageViz.ai.enabled</code> in VS Code Settings, then reload the window. The MCP server has its own setting, <code>dataLineageViz.mcp.enabled</code>.
+        Turn the chat panel off with <code>dataLineageViz.ai.enabled</code> in VS Code Settings, then reload the window.
       </p>
     </div>
   );

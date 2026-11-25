@@ -86,7 +86,7 @@ describe('scope bundle DDL token estimate', () => {
 
 describe('search_ddl result admission', () => {
   it('refuses a reply whose real token count exceeds the budget although chars/4 fits it', async () => {
-    const whole = await searchDdl(model, new Set(), 'Production', null);
+    const whole = await searchDdl(model, new Set(), 'Production', createTurnTokenBudget({ discoveryNodeCap: 1_000_000, discoveryTokenBudget: 1_000_000_000 }));
     const reply = JSON.stringify(whole);
     const budget = countTokens(reply) - 1;
     expect(budget, 'above the budget floor').toBeGreaterThan(1000);

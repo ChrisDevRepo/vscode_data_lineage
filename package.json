@@ -191,18 +191,6 @@
         "command": "dataLineageViz.manageAiModels",
         "title": "Manage AI Models",
         "category": "Data Lineage"
-      },
-      {
-        "command": "dataLineageViz.mcp.enable",
-        "title": "Data Lineage: Enable MCP Server"
-      },
-      {
-        "command": "dataLineageViz.mcp.copyConfig",
-        "title": "Data Lineage: Copy MCP Config"
-      },
-      {
-        "command": "dataLineageViz.mcp.rotateToken",
-        "title": "Data Lineage: Rotate MCP Token"
       }
     ],
     "keybindings": [],
@@ -212,20 +200,6 @@
           "command": "dataLineageViz.open",
           "when": "view == dataLineageViz.quickActions",
           "group": "navigation@1"
-        }
-      ],
-      "commandPalette": [
-        {
-          "command": "dataLineageViz.mcp.enable",
-          "when": "!config.dataLineageViz.mcp.enabled"
-        },
-        {
-          "command": "dataLineageViz.mcp.copyConfig",
-          "when": "config.dataLineageViz.mcp.enabled"
-        },
-        {
-          "command": "dataLineageViz.mcp.rotateToken",
-          "when": "config.dataLineageViz.mcp.enabled"
         }
       ]
     },
@@ -584,7 +558,7 @@
           "dataLineageViz.ai.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Turn the AI chat panel and its tools on or off (the MCP server follows dataLineageViz.mcp.enabled). Reload the window after changing."
+            "description": "Turn the AI chat panel and its tools on or off. Reload the window after changing."
           },
           "dataLineageViz.ai.maxRounds": {
             "type": "integer",
@@ -674,28 +648,8 @@
             "default": "",
             "scope": "application",
             "markdownDescription": "The `id` of the `ai.models` entry the chat starts on. The chat also lists the language models VS Code provides; when empty, it starts on the last model you picked, else on a Copilot model if there is one."
-          },
-          "dataLineageViz.mcp.enabled": {
-            "type": "boolean",
-            "default": false,
-            "scope": "application",
-            "markdownDescription": "Serve the read-only lineage tools to local MCP clients (verified: Claude Code CLI and GitHub Copilot agent mode) over a local MCP server on 127.0.0.1. Independent of `dataLineageViz.ai.enabled`. Run **Data Lineage: Enable MCP Server** to turn it on, or **Data Lineage: Copy MCP Config** for clients outside VS Code."
-          },
-          "dataLineageViz.mcp.port": {
-            "type": "integer",
-            "default": 47633,
-            "minimum": 1024,
-            "maximum": 65535,
-            "scope": "application",
-            "markdownDescription": "Port of the local MCP server. The first VS Code window takes it; other windows report that it is in use."
           }
         }
-      }
-    ],
-    "mcpServerDefinitionProviders": [
-      {
-        "id": "dataLineageViz.mcp",
-        "label": "Data Lineage"
       }
     ]
   },
@@ -739,8 +693,6 @@
     "@langchain/langgraph": "1.7.5",
     "@langchain/openai": "1.8.5",
     "@microsoft/vscode-azext-azureauth": "5.1.1",
-    "@modelcontextprotocol/node": "2.1.2",
-    "@modelcontextprotocol/server": "2.4.0",
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "13.0.2",
     "class-variance-authority": "0.7.1",
@@ -771,7 +723,6 @@
     "zustand": "5.1.0"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.4.0",
     "@tailwindcss/vite": "^4.3.5",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.20.5",

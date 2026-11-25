@@ -1,7 +1,6 @@
 /**
  * Canonical AI tool registry and handlers; the Zod boundary between untrusted LM tool input and the
- * engine. The AI runtime and the local MCP server both dispatch through
- * {@link buildAiToolRegistry}. Read-only tools wrap provider-neutral functions in
+ * engine. The AI runtime dispatches through {@link buildAiToolRegistry}. Read-only tools wrap provider-neutral functions in
  * [`tools.ts`](./tools.ts); mutating tools live in `handlers/`; this module owns their shared host
  * services, registry binding, turn-lease checks and effect serialization.
  */
@@ -124,8 +123,7 @@ class ToolHandler implements ToolServices {
     public readonly getStoredRun: StoredRunReader | undefined,
     public readonly textModel: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'> | undefined,
     public readonly signal: AbortSignal | undefined,
-    public readonly budget: TurnTokenBudget | null,
-    private readonly served: ReadonlySet<string> | undefined,
+    public readonly budget: TurnTokenBudget,
     private readonly authorName: string,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
@@ -172,7 +170,7 @@ class ToolHandler implements ToolServices {
       this.logger.debug(`Invoking ${toolName} — input: ${inputJson}`);
     }
 
-    // The hop log is the chat turn's record; a call outside a turn (MCP) leaves the session as is.
+    // The hop log is the chat turn's record; a call without a turn lease leaves the session as is.
     if (this.turnLease) sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     const rejection = readToolError(data);
     if (rejection) {
@@ -228,8 +226,7 @@ class ToolHandler implements ToolServices {
 
   /**
    * Mechanical phase guard: enforces the per-phase tool policy at the shared registry boundary, not
-   * just at the LM `tools[]` parameter. A caller outside the chat turn (the MCP server) names the
-   * tools it serves, so the chat's phase never gates its calls.
+   * just at the LM `tools[]` parameter.
    *
    * @returns Provider-neutral JSON text carrying an `off_policy` error when the tool is not allowed
    *   in the current phase, else `null`.
@@ -240,9 +237,9 @@ class ToolHandler implements ToolServices {
     return violation ? this.logAndReturn(toolName, violation, input) : null;
   }
 
-  /** The tools a result's hints may name: the caller's served set, else the chat stage's. */
+  /** The tools a result's hints may name: the chat stage's. */
   private offeredTools(): ReadonlySet<string> {
-    return this.served ?? getAllowedLmToolNames(this.deriveLmStage(this.getSession()));
+    return getAllowedLmToolNames(this.deriveLmStage(this.getSession()));
   }
 
   /** Derives the {@link LmStage} from the session's current phase + engine state. */
@@ -504,7 +501,7 @@ type ToolExecutor = (input: unknown, context?: ToolCallContext) => LineageToolOu
 /**
  * Builds the shared lineage {@link ToolRegistry}, the single authoritative dispatch surface
  * (`invoke`) for names, handlers, ordering, authorization and labels. The runtime calls this
- * directly; the MCP server serves the titled entries ({@link MCP_TOOL_DEFS}).
+ * directly.
  *
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
@@ -512,19 +509,17 @@ type ToolExecutor = (input: unknown, context?: ToolCallContext) => LineageToolOu
  *   `getStoredRun` resolves the AI run behind an applied bookmark,
  *   `model`/`signal` supply the text completion `start_exploration` uses for the discovery-handoff
  *   memo on the approval card, and `budget` carries the owning turn's caps so a superseded turn's
- *   dispatch keeps measuring against its own model (`null`: no limit, the MCP server's); `served`
- *   names the tools of a caller outside the chat turn (the MCP server), which replaces the chat
- *   stage's policy and hints;
- *   `authorName` is the display name the graph preview credits (the chat's model, the MCP client).
+ *   dispatch keeps measuring against its own model; `authorName` is the display name the graph
+ *   preview credits (the chat's model).
  */
 export function buildAiToolRegistry(
   getSession: () => AiSession,
   outputChannel: LogChannel,
   getPanel: () => ResultPanel | undefined,
   turnLease: TurnLease | undefined,
-  host: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget: TurnTokenBudget | null; served?: ReadonlySet<string>; analysisSettings: () => AnalysisSettings; authorName: string },
+  host: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget: TurnTokenBudget; analysisSettings: () => AnalysisSettings; authorName: string },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, turnLease, host.getStoredRun, host.model, host.signal ?? turnLease?.signal, host.budget, host.served, host.authorName);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, turnLease, host.getStoredRun, host.model, host.signal ?? turnLease?.signal, host.budget, host.authorName);
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),

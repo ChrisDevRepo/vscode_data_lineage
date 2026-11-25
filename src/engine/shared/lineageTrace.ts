@@ -1,6 +1,6 @@
 /**
  * The graph view's trace by level and Find Path, as pure graph algorithms over a graphology graph:
- * the one implementation the webview and the MCP tools both call (no VS Code imports).
+ * the one implementation the webview and the AI tools both call (no VS Code imports).
  */
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path';

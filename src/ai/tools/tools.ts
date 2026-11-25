@@ -224,7 +224,7 @@ function validateQuery(query: string): ToolRejection | null {
  * list-all and substring-only hits. `filter_context` is served only when the user filter hides
  * an object.
  *
- * @param offeredTools - The tools the caller serves (the chat stage's set or the MCP served set); a
+ * @param offeredTools - The tools the caller serves (the chat stage's set); a
  *   hint names only these.
  * @param activeFilter - Current UI filter state to tag results.
  * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `normalizeSearchQueryInput`
@@ -512,8 +512,7 @@ export function getObjectDetail(
  * the bodies only when they fit; otherwise the reply carries `ddl_withheld: 'over_budget'`, the
  * only signal that bodies exist but were held back, so the deeper analysis can be offered.
  *
- * @param budget - The calling turn's budget the discovery guard is measured against; null (the MCP
- *   server) means no guard.
+ * @param budget - The calling turn's budget the discovery guard is measured against.
  * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `origin` resolves to a
  *   different canonical spelling.
  */
@@ -521,7 +520,7 @@ export function getScopeBundle(
   model: DatabaseModel,
   graph: Graph,
   input: GetScopeBundleInput,
-  budget: TurnTokenBudget | null,
+  budget: TurnTokenBudget,
   store?: import('../../engine/columnStore').ColumnStore,
   onDebug?: (msg: string) => void,
 ): object {
@@ -854,8 +853,7 @@ export function getNeighborColumns(
  * so the AI can reason about topology and change-risk hotspots without retrieving every node.
  *
  * @param type - Analysis to perform ('hubs', 'islands', 'longest_path', 'cycles').
- * @param budget - The calling turn's budget the discovery guard is measured against; null (the MCP
- *   server) means no guard.
+ * @param budget - The calling turn's budget the discovery guard is measured against.
  * @param minDegree - Minimum degree for a hub.
  * @param maxSize - Maximum component size for an island.
  * @param longestPathMinNodes - Minimum node count for a path to count as "long".
@@ -863,7 +861,7 @@ export function getNeighborColumns(
 export function runAnalysis(
   graph: Graph,
   type: AnalysisType,
-  budget: TurnTokenBudget | null,
+  budget: TurnTokenBudget,
   minDegree?: number,
   maxSize?: number,
   longestPathMinNodes?: number,
@@ -960,10 +958,9 @@ const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_
  * included; omitted when none is that long. Where the list would push the reply past the discovery
  * budget it is stated as counts (`object_count`, `line_count`, `objects_omitted`) with a hint.
  *
- * @param offeredTools - The tools the caller serves (the chat stage's set or the MCP served set); a
+ * @param offeredTools - The tools the caller serves (the chat stage's set); a
  *   hint names only these.
- * @param budget - The calling turn's budget the discovery guard is measured against; null (the MCP
- *   server) means no guard.
+ * @param budget - The calling turn's budget the discovery guard is measured against.
  * @param onDebug - Optional sink for a debug line when `query` is rewritten or the result is over
  *   budget.
  * @returns Every matching line grouped under its object in `by_object`, or the
@@ -973,7 +970,7 @@ export async function searchDdl(
   model: DatabaseModel,
   offeredTools: ReadonlySet<string>,
   query: string,
-  budget: TurnTokenBudget | null,
+  budget: TurnTokenBudget,
   types?: ('view' | 'procedure' | 'function')[],
   store?: import('../../engine/columnStore').ColumnStore,
   onDebug?: (msg: string) => void,
@@ -1114,7 +1111,7 @@ export async function searchDdl(
     searched,
   }));
   const resultJson = JSON.stringify(payload);
-  const resultTokens = budget ? countTokens(resultJson) : 0;
+  const resultTokens = countTokens(resultJson);
   const admission = checkScopeTokens(budget, 0, resultTokens, resultJson.length);
   if (admission) {
     onDebug?.(`searchDdl: ${matches.length} matches in ${objects} objects exceed the discovery token budget (${resultTokens} > ${admission.detail.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);

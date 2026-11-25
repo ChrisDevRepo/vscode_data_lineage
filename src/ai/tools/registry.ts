@@ -1,7 +1,7 @@
 /**
  * Shared provider-neutral tool registry and dispatch seam. `IToolRegistry` is the single dispatch
  * surface and authoritative list of the AI tool catalog: the host builds one, binds each entry's
- * `execute` to its handler and serves its tools to the agent loop and the MCP server, so no
+ * `execute` to its handler and serves its tools to the agent loop, so no
  * parallel array can drift. VS Code-free and Map-backed, so it is unit-testable and usable from a
  * model transport or a LangGraph node; generic over the result `O`.
  */
@@ -17,8 +17,6 @@ export interface ToolDefinition {
   readonly name: string;
   /** The single Zod source for this tool's model-facing JSON Schema AND runtime validation. */
   readonly inputSchema: z.ZodType;
-  /** Human-readable name an MCP client shows. */
-  readonly title?: string;
   /** Detailed model-facing selection guidance. */
   readonly modelDescription?: string;
   /**

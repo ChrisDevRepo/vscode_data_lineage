@@ -36,17 +36,16 @@ export interface ToolServices {
   readonly getStoredRun?: StoredRunReader;
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */
   readonly logger: Logger;
-  /** Turn-neutral text-completion capability; absent on the read-only MCP registry. */
+  /** Turn-neutral text-completion capability; absent on a registry built without a model. */
   readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>;
   /** Cooperative host cancellation, mirrored from the owning turn's lease. */
   readonly signal?: AbortSignal;
   /**
    * Token budget of the turn that owns this registry, fixed when the lease-bound registry was built
    * so a superseded turn's still-running dispatch keeps measuring against the caps its own model
-   * was admitted under. The MCP server, serving callers outside any turn, passes `null`: no
-   * discovery or admission limit applies to its calls.
+   * was admitted under.
    */
-  readonly budget: TurnTokenBudget | null;
+  readonly budget: TurnTokenBudget;
   /** Current turn epoch; the turn lease beats the session field, so stale writes are rejectable. */
   turnEpoch(sess: AiSession): number;
   /** Returns the loaded database model, or throws the standard no-model error. */

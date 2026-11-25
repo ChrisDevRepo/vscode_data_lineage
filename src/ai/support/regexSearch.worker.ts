@@ -9,7 +9,7 @@ export type RegexSearchJob = {
   readonly types?: SearchableNode['type'][];
 } & (
   | { readonly kind: 'catalog'; readonly schemas?: string[]; readonly limit: number }
-  | { readonly kind: 'ddl'; readonly budget: TurnTokenBudget | null; readonly rowChars: number; readonly rowTokens: number }
+  | { readonly kind: 'ddl'; readonly budget: TurnTokenBudget; readonly rowChars: number; readonly rowTokens: number }
 );
 
 /** Complete isolated result, returned only after the entire requested search finishes. */

@@ -50,10 +50,6 @@ The graph view has its own chat pane (click **Chat** on its right edge) that ans
 - **Data Lineage: Add AI Model** (or **Add model** in the chat) guides you through a provider preset (or the source **VS Code language model**), endpoint, model, key and display name, tests the connection (not for a VS Code language model) and saves the entry with default limits you can tune in `dataLineageViz.ai.models`; **Edit AI Model**, **Remove AI Model** and **Update AI Model Key** manage it later. The key is stored in VS Code's secret storage; it is never written to settings, logs or the webview.
 - **Guided exploration** — `/search` answers from lookup tools; `/trace` or a large question proposes a hop-by-hop exploration that runs only after you approve, refine or cancel the plan.
 
-## MCP server
-
-Run **Data Lineage: Enable MCP Server** (or set `dataLineageViz.mcp.enabled`) to let local MCP clients such as Claude Code or Copilot agent mode call the read-only lineage tools. It does not need the chat panel or `dataLineageViz.ai.enabled`. Tools, access token and revocation: [`docs/FEATURES.md`](docs/FEATURES.md#mcp-server).
-
 The visual graph, search, trace, SQL preview, demo data, profiling, and export features work without any of this.
 
 ## Features

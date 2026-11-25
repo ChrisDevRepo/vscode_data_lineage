@@ -795,7 +795,7 @@ export function orderAndAssemble(
 
 /**
  * The `aiMetadata` of an `ai-view-preview`, built once for the panel's final presentation and the
- * MCP graph preview from the validated view fields and {@link orderAndAssemble}'s badges and
+ * graph preview from the validated view fields and {@link orderAndAssemble}'s badges and
  * description. Column-trace data is the caller's to add.
  */
 export function buildPreviewMetadata<S extends string | undefined, D extends string | undefined>(
