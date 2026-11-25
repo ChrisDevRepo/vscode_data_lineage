@@ -367,19 +367,12 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   if (input.requiredTerminalTool && !registry.has(input.requiredTerminalTool)) {
     throw new Error(`InstructionPlan: required terminal tool ${input.requiredTerminalTool} is not available in ${phase}.`);
   }
-  let toolChoice = input.toolChoice;
-  if (toolChoice === 'required' && toolNames.length > 1) {
-    if (!input.requiredTerminalTool) {
-      throw new Error(`InstructionPlan: multi-tool required choice in ${phase} needs a graph-enforced terminal tool.`);
-    }
-    toolChoice = 'auto';
-  }
   const context = buildContext('converse', phase, frozenFacts, toolNames);
   return Object.freeze({
     kind: 'converse',
     context,
     frame,
-    input: Object.freeze({ ...input, messages: Object.freeze([...input.messages]) as unknown as ModelMessage[], phase, registry, toolChoice, instructionContext: context }),
+    input: Object.freeze({ ...input, messages: Object.freeze([...input.messages]) as unknown as ModelMessage[], phase, registry, instructionContext: context }),
   });
 }
 

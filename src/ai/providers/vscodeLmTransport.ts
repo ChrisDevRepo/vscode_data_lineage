@@ -220,9 +220,9 @@ export class VscodeLmChatModel extends BaseChatModel<VscodeLmCallOptions> {
 }
 
 /**
- * `entry` over `model` as a provider chat. `modelOptions` is the entry's `requestBody` plus
- * `max_tokens` from `maxOutputTokens`, sent unchanged and left out when empty (a live selection has
- * neither).
+ * `entry` over `model` as a provider chat. `modelOptions` is `max_tokens` from `maxOutputTokens`
+ * then the entry's `requestBody` (which names no cap), sent unchanged and left out when empty (a
+ * live selection has neither).
  */
 export function createVscodeLmChat(entry: VscodeLmModelEntry, model: vscode.LanguageModelChat): ProviderChat {
   const chat = new VscodeLmChatModel(model, { ...(entry.maxOutputTokens === undefined ? {} : { max_tokens: entry.maxOutputTokens }), ...entry.requestBody });
