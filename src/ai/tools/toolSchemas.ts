@@ -1,6 +1,6 @@
 /** Zod input schemas and lightweight runtime validation for the AI tools; no VS Code imports. */
 import { z } from 'zod';
-import { quotedWindow, resolveModelNodeId, WINDOW_AFTER } from '../support/inputNormalization';
+import { quotedWindow, WINDOW_AFTER } from '../support/inputNormalization';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
@@ -790,14 +790,15 @@ export interface SubmitFindingsHopColumns {
 }
 
 /**
- * Advertises the `offered` ids as the served `node` enum while admitting the equivalent spellings
- * ({@link resolveModelNodeId}) of every metadata-eligible contributor the engine itself resolves,
- * so normalized object references keep passing the boundary a columnless function cannot.
+ * Advertises the `offered` ids as the served `node` enum while the parse admits every
+ * metadata-eligible contributor (`sources`), so a source outside the approved scope reaches its own
+ * scope refusal and a columnless function is refused here. Another spelling of an id is
+ * canonicalized before the parse ({@link canonicalizeSubmitFindingsIds}), never admitted by it.
  */
 function columnSourceNodeSchema(sources: readonly string[], offered: readonly string[]) {
-  const resolvable = new Map(sources.map(id => [id, id] as const));
+  const admitted = new Set(sources);
   const node = ColumnNodeIdSchema.refine(
-    value => resolveModelNodeId(value, resolvable) !== null,
+    value => admitted.has(value),
     { message: 'This node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
   );
   return offered.length ? node.meta({ enum: [...offered] }) : node;

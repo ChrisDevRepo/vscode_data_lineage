@@ -3,7 +3,8 @@
  * reusable across tool handlers, state-machine init and prompt rendering.
  */
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
-import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
+import { normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
+import type { SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 /**
  * Re-exported so AI callers keep importing node-id resolution from here; the implementation lives
@@ -37,6 +38,75 @@ export function resolveModelNodeIds(
     resolved.push(id);
   }
   return { resolved, unresolved };
+}
+
+/** One served id or column name a spelling was rewritten to, for the debug log. */
+export interface SubmitFindingsIdRewrite {
+  /** Dot-path of the rewritten field in the payload. */
+  readonly field: string;
+  /** The model-supplied spelling. */
+  readonly from: string;
+  /** The served value it denotes. */
+  readonly to: string;
+}
+
+/**
+ * The boundary canonicalization of `submit_findings`, before its single strict parse: a node id or
+ * column name the model sent in another spelling than the one the hop serves as enum is rewritten
+ * to that served value when the source's identifier policy makes the two the same identifier (a
+ * delimiter or quote encoding; letter case only under a case-insensitive source) and exactly one
+ * served value is meant. Anything else, an ambiguous match included, stays as sent so the enum
+ * fault of the parse names it. The input is never mutated; `upstream_columns[].node` is matched
+ * against every id the parse admits, so an out-of-scope source reaches its scope refusal.
+ *
+ * @param identifierCaseSensitive - Checked source catalog policy; true never rewrites letter case.
+ */
+export function canonicalizeSubmitFindingsIds(
+  rawInput: unknown,
+  hop: SubmitFindingsHopColumns,
+  identifierCaseSensitive: boolean,
+): { input: unknown; rewrites: SubmitFindingsIdRewrite[] } {
+  const rewrites: SubmitFindingsIdRewrite[] = [];
+  if (!isPlainObject(rawInput)) return { input: rawInput, rewrites };
+  const cs = identifierCaseSensitive;
+  const nodeDenotes = (raw: string, id: string): boolean => resolveModelNodeId(raw, new Map([[id, null]]), cs) === id;
+  const columnDenotes = (raw: string, col: string): boolean => normalizeColName(raw, cs) === normalizeColName(col, cs);
+  const served = (...lists: Array<readonly string[] | undefined>): string[] => [...new Set(lists.flatMap(list => list ?? []))];
+
+  const fix = (value: unknown, set: readonly string[], denotes: (raw: string, value: string) => boolean, field: string): unknown => {
+    if (typeof value !== 'string' || set.length === 0 || set.includes(value)) return value;
+    const meant = set.filter(candidate => denotes(value, candidate));
+    if (meant.length !== 1) return value;
+    rewrites.push({ field, from: value, to: meant[0] });
+    return meant[0];
+  };
+  const withKey = (object: Record<string, unknown>, key: string, set: readonly string[], denotes: (raw: string, value: string) => boolean, path: string): Record<string, unknown> => {
+    if (!(key in object)) return object;
+    const fixed = fix(object[key], set, denotes, `${path}.${key}`);
+    return fixed === object[key] ? object : { ...object, [key]: fixed };
+  };
+  const eachEntry = (value: unknown, path: string, edit: (entry: Record<string, unknown>, at: string) => Record<string, unknown>): unknown =>
+    Array.isArray(value) ? value.map((entry, index) => (isPlainObject(entry) ? edit(entry, `${path}.${index}`) : entry)) : value;
+
+  const targets = hop.returnTargets ?? [];
+  const outCols = targets.length ? served(targets.map(target => target.col)) : served(hop.outCols ?? undefined);
+  const input: Record<string, unknown> = { ...rawInput };
+  const set = (key: string, value: unknown): void => { if (key in input) input[key] = value; };
+  set('focus_node_id', fix(input.focus_node_id, served(hop.focusNodeId === undefined ? undefined : [hop.focusNodeId]), nodeDenotes, 'focus_node_id'));
+  set('prune_neighbors', eachEntry(input.prune_neighbors, 'prune_neighbors', (entry, at) => withKey(entry, 'id', served(hop.pruneNodeIds), nodeDenotes, at)));
+  set('questions', eachEntry(input.questions, 'questions', (entry, at) => withKey(entry, 'nodeId', served(hop.questionNodeIds, hop.callerContextNodeIds), nodeDenotes, at)));
+  set('column_flow', eachEntry(input.column_flow, 'column_flow', (flow, at) => {
+    const entry = withKey(flow, 'out_col', outCols, columnDenotes, at);
+    const nested = (key: string, edit: (object: Record<string, unknown>, path: string) => Record<string, unknown>) =>
+      isPlainObject(entry[key]) ? { [key]: edit(entry[key], `${at}.${key}`) } : {};
+    return {
+      ...entry,
+      ...nested('writes_to', (object, path) => withKey(object, 'node', served(hop.writesToNodeIds), nodeDenotes, path)),
+      ...nested('returns_to', (object, path) => withKey(withKey(object, 'node', served(targets.map(target => target.node)), nodeDenotes, path), 'col', outCols, columnDenotes, path)),
+      ...(Array.isArray(entry.upstream_columns) ? { upstream_columns: eachEntry(entry.upstream_columns, `${at}.upstream_columns`, (ref, refAt) => withKey(ref, 'node', served(hop.columnSourceNodeIds), nodeDenotes, refAt)) } : {}),
+    };
+  }));
+  return { input, rewrites };
 }
 
 /** Catalog facts {@link normalizeSearchQueryInput} uses to confirm a reading of a dotted name. */
