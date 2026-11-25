@@ -190,10 +190,12 @@ export class ProviderModelPort implements ModelPort {
       const text = messageContentToText(message.content);
       const content: ToolGenerationContent[] = text ? [{ type: 'text', text }] : [];
       const toolCalls: GeneratedToolCall[] = [];
+      const allEmittedIds = new Set(emittedCalls.map((emitted) => emitted.id));
       const callIds = new Set<string>();
 
-      for (const { id: callId, name: toolName, args } of emittedCalls) {
-        const duplicate = callIds.has(callId);
+      for (const { id: rawCallId, name: toolName, args } of emittedCalls) {
+        const duplicate = callIds.has(rawCallId);
+        const callId = duplicate ? mintDuplicateCallId(rawCallId, allEmittedIds, callIds) : rawCallId;
         callIds.add(callId);
         const definition = definitionsByName.get(toolName);
         let call: GeneratedToolCall;
@@ -553,6 +555,21 @@ interface IdentifiedToolCall {
 
 function hasCallId(call: { readonly id?: string }): call is IdentifiedToolCall {
   return typeof call.id === 'string' && call.id.length > 0;
+}
+
+/** Mints a deterministic unique call ID for a provider-repeated tool call without colliding with emitted or prior IDs. */
+function mintDuplicateCallId(
+  rawCallId: string,
+  allEmittedIds: ReadonlySet<string>,
+  usedCallIds: ReadonlySet<string>,
+): string {
+  let dupIndex = 1;
+  let candidate = `${rawCallId}_dup_${dupIndex}`;
+  while (allEmittedIds.has(candidate) || usedCallIds.has(candidate)) {
+    dupIndex += 1;
+    candidate = `${rawCallId}_dup_${dupIndex}`;
+  }
+  return candidate;
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {

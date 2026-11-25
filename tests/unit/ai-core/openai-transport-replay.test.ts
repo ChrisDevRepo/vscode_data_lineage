@@ -2,6 +2,7 @@ import { AIMessage, AIMessageChunk, HumanMessage, ToolMessage } from '@langchain
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { transcriptTurn } from '../../../src/ai/model/modelPort';
+import { assertToolPairingWellFormed } from '../../../src/ai/model/messageWellFormed';
 import { ProviderModelPort } from '../../../src/ai/model/providerModelPort';
 import type { WireRecord } from '../../../src/ai/observability/wireLog';
 import { parseModelEntries, type OpenAiModelEntry } from '../../../src/ai/providers/modelEntries';
@@ -253,5 +254,117 @@ describe('OpenAI transport replay of a malformed tool call', () => {
     expect(seenHeaders[0]?.get('openai-project')).toBeNull();
     expect(seenHeaders[1]?.get('openai-organization')).toBe('org-explicit');
     expect(seenHeaders[1]?.get('openai-project')).toBeNull();
+  });
+
+  it('chat completions replays duplicate provider tool_call ids with distinct ids and empty arguments on the duplicate', async () => {
+    const [entry] = parseModelEntries([{
+      id: 'e',
+      name: 'e',
+      url: 'http://localhost/v1',
+      model: 'gpt-x',
+      apiType: 'chat-completions',
+      maxInputTokens: 1000,
+      maxOutputTokens: 100,
+    }]).entries as OpenAiModelEntry[];
+    const delta = (index: number, id: string, args: string) => ({
+      choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index, id, type: 'function', function: { name: 'lineage_present_result', arguments: args } }] }, finish_reason: null }],
+    });
+    const sseBody = `${[
+      delta(0, 'call_dup', '{"sections":{"technical":"x"}}'),
+      delta(1, 'call_dup', '{"sections":{"technical":"y"}}'),
+      { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+    ].map((frame) => `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', model: 'gpt-x', ...frame })}\n\n`).join('')}data: [DONE]\n\n`;
+    const bodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      callCount += 1;
+      return callCount === 1
+        ? new Response(sseBody, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+        : new Response('{"error":{"message":"stop"}}', { status: 400, headers: { 'content-type': 'application/json' } });
+    }));
+    const port = createProviderModelPort(entry, 'key');
+    const first = await port.generateToolTurn({ messages: [new HumanMessage('go')], tools, phase: 'test' });
+    if (first.status !== 'completed') throw new Error('first turn failed');
+    const dupId = first.toolCalls[1].callId;
+    expect(first.toolCalls[0]).toMatchObject({ valid: true, callId: 'call_dup' });
+    expect(first.toolCalls[1]).toMatchObject({ valid: false, code: 'duplicate_call_id' });
+    expect(dupId).not.toBe('call_dup');
+    const historyMessages = [
+      new HumanMessage('go'),
+      transcriptTurn(first.message, first.toolCalls),
+      new ToolMessage({ tool_call_id: 'call_dup', content: 'ok' }),
+      new ToolMessage({ tool_call_id: dupId, content: 'duplicate', status: 'error' }),
+    ];
+    assertToolPairingWellFormed(historyMessages);
+    await port.generateToolTurn({ messages: historyMessages, tools, phase: 'test' });
+    const replayedMessages = bodies[1]?.messages as Array<{ role: string; tool_calls?: unknown; tool_call_id?: string }>;
+    const assistant = replayedMessages.find((message) => message.role === 'assistant');
+    expect(assistant?.tool_calls).toEqual([
+      { id: 'call_dup', type: 'function', function: { name: 'lineage_present_result', arguments: '{"sections":{"technical":"x"}}' } },
+      { id: dupId, type: 'function', function: { name: 'lineage_present_result', arguments: '{}' } },
+    ]);
+    expect(replayedMessages.filter((message) => message.role === 'tool').map((message) => message.tool_call_id)).toEqual([
+      'call_dup',
+      dupId,
+    ]);
+  });
+
+  it('responses with store:false replays duplicate provider call_ids with distinct call_ids and empty arguments on the duplicate', async () => {
+    const [entry] = parseModelEntries([{
+      id: 'e',
+      name: 'e',
+      url: 'http://localhost/v1',
+      model: 'gpt-x',
+      apiType: 'responses',
+      maxInputTokens: 1000,
+      maxOutputTokens: 100,
+      requestBody: { store: false },
+    }]).entries as OpenAiModelEntry[];
+    const firstItem = { id: 'fc_1', type: 'function_call', call_id: 'call_dup', name: 'lineage_present_result', status: 'completed', arguments: '{"sections":{"technical":"x"}}' };
+    const dupItem = { id: 'fc_2', type: 'function_call', call_id: 'call_dup', name: 'lineage_present_result', status: 'completed', arguments: '{"sections":{"technical":"y"}}' };
+    const reply = (status: string, output: unknown[] = []) => ({ id: 'resp_1', object: 'response', created_at: 1, model: 'gpt-x', status, output });
+    const streamEvents = [
+      { type: 'response.created', sequence_number: 0, response: reply('in_progress') },
+      { type: 'response.output_item.added', sequence_number: 1, output_index: 0, item: { ...firstItem, status: 'in_progress', arguments: '' } },
+      { type: 'response.function_call_arguments.delta', sequence_number: 2, item_id: 'fc_1', output_index: 0, delta: firstItem.arguments },
+      { type: 'response.output_item.done', sequence_number: 3, output_index: 0, item: firstItem },
+      { type: 'response.output_item.added', sequence_number: 4, output_index: 1, item: { ...dupItem, status: 'in_progress', arguments: '' } },
+      { type: 'response.function_call_arguments.delta', sequence_number: 5, item_id: 'fc_2', output_index: 1, delta: dupItem.arguments },
+      { type: 'response.output_item.done', sequence_number: 6, output_index: 1, item: dupItem },
+      { type: 'response.completed', sequence_number: 7, response: reply('completed', [firstItem, dupItem]) },
+    ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+    const bodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      callCount += 1;
+      return callCount === 1
+        ? new Response(streamEvents, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+        : new Response('{"error":{"message":"stop"}}', { status: 400, headers: { 'content-type': 'application/json' } });
+    }));
+    const port = createProviderModelPort(entry, 'key');
+    const first = await port.generateToolTurn({ messages: [new HumanMessage('go')], tools, phase: 'test' });
+    if (first.status !== 'completed') throw new Error('first turn failed');
+    const dupId = first.toolCalls[1].callId;
+    expect(first.toolCalls[0]).toMatchObject({ valid: true, callId: 'call_dup' });
+    expect(first.toolCalls[1]).toMatchObject({ valid: false, code: 'duplicate_call_id' });
+    expect(dupId).not.toBe('call_dup');
+    const historyMessages = [
+      new HumanMessage('go'),
+      transcriptTurn(first.message, first.toolCalls),
+      new ToolMessage({ tool_call_id: 'call_dup', content: 'ok' }),
+      new ToolMessage({ tool_call_id: dupId, content: 'duplicate', status: 'error' }),
+    ];
+    assertToolPairingWellFormed(historyMessages);
+    await port.generateToolTurn({ messages: historyMessages, tools, phase: 'test' });
+    const inputItems = bodies[1]?.input as Array<{ type: string; call_id?: string; arguments?: string }>;
+    const replayedCalls = inputItems.filter((item) => item.type === 'function_call');
+    expect(replayedCalls.map((call) => [call.call_id, call.arguments])).toEqual([
+      ['call_dup', '{"sections":{"technical":"x"}}'],
+      [dupId, '{}'],
+    ]);
+    const replayedOutputs = inputItems.filter((item) => item.type === 'function_call_output');
+    expect(replayedOutputs.map((item) => item.call_id)).toEqual(['call_dup', dupId]);
   });
 });

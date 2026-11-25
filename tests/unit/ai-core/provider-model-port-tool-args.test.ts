@@ -1,6 +1,7 @@
-import { AIMessageChunk } from '@langchain/core/messages';
+import { AIMessage, AIMessageChunk, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { assertToolPairingWellFormed } from '../../../src/ai/model/messageWellFormed';
 import { transcriptTurn } from '../../../src/ai/model/modelPort';
 import { STRUCTURED_OUTPUT_TOOL, StructuredOutputError } from '../../../src/ai/providers/structuredOutput';
 import { ProviderModelPort } from '../../../src/ai/model/providerModelPort';
@@ -73,5 +74,101 @@ describe('ProviderModelPort streamed tool-call arguments', () => {
     expect(error).toBeInstanceOf(StructuredOutputError);
     expect((error as StructuredOutputError).code).toBe('invalid_structured_output');
     expect((error as StructuredOutputError).reason).toContain('not valid JSON: the text ends before the object closes');
+  });
+
+  it('disambiguates a repeated tool_call id so transcriptTurn and paired ToolMessages satisfy 1:1 pairing', async () => {
+    const port = new ProviderModelPort(scriptedChat([
+      new AIMessageChunk({
+        content: '',
+        tool_call_chunks: [
+          { type: 'tool_call_chunk', index: 0, id: 'call_dup', name: 'lineage_present_result', args: '{"sections":{"technical":"first"}}' },
+          { type: 'tool_call_chunk', index: 1, id: 'call_dup', name: 'lineage_present_result', args: '{"sections":{"technical":"second"}}' },
+        ],
+      }),
+      new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } }),
+    ]));
+    const result = await turn(port);
+    if (result.status !== 'completed') throw new Error('turn failed');
+    expect(result.toolCalls).toHaveLength(2);
+    expect(result.toolCalls[0]).toMatchObject({
+      valid: true,
+      callId: 'call_dup',
+      toolName: 'lineage_present_result',
+      input: { sections: { technical: 'first' } },
+    });
+    expect(result.toolCalls[1]).toMatchObject({
+      valid: false,
+      code: 'duplicate_call_id',
+      toolName: 'lineage_present_result',
+    });
+    const dupCallId = result.toolCalls[1].callId;
+    expect(dupCallId).not.toBe('call_dup');
+
+    const replayed = transcriptTurn(result.message, result.toolCalls);
+    expect(replayed.tool_calls).toEqual([
+      { id: 'call_dup', name: 'lineage_present_result', args: { sections: { technical: 'first' } }, type: 'tool_call' },
+      { id: dupCallId, name: 'lineage_present_result', args: {}, type: 'tool_call' },
+    ]);
+    expect(() => assertToolPairingWellFormed([
+      new HumanMessage('go'),
+      replayed,
+      new ToolMessage({ tool_call_id: 'call_dup', content: 'ok' }),
+      new ToolMessage({ tool_call_id: dupCallId, content: 'duplicate', status: 'error' }),
+    ])).not.toThrow();
+  });
+
+  it('avoids colliding with another emitted tool_call id when minting a duplicate id', async () => {
+    const port = new ProviderModelPort(scriptedChat([
+      new AIMessageChunk({
+        content: '',
+        tool_call_chunks: [
+          { type: 'tool_call_chunk', index: 0, id: 'call_dup', name: 'lineage_present_result', args: '{"sections":{"technical":"a"}}' },
+          { type: 'tool_call_chunk', index: 1, id: 'call_dup', name: 'lineage_present_result', args: '{"sections":{"technical":"b"}}' },
+          { type: 'tool_call_chunk', index: 2, id: 'call_dup_dup_1', name: 'lineage_present_result', args: '{"sections":{"technical":"c"}}' },
+        ],
+      }),
+      new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } }),
+    ]));
+    const result = await turn(port);
+    if (result.status !== 'completed') throw new Error('turn failed');
+    const ids = result.toolCalls.map((call) => call.callId);
+    expect(new Set(ids).size).toBe(3);
+    expect(result.toolCalls[0]).toMatchObject({ valid: true, callId: 'call_dup' });
+    expect(result.toolCalls[1]).toMatchObject({ valid: false, code: 'duplicate_call_id' });
+    expect(result.toolCalls[2]).toMatchObject({ valid: true, callId: 'call_dup_dup_1' });
+  });
+
+  it('assertToolPairingWellFormed rejects an AIMessage with duplicate tool_calls[].id or duplicate ToolMessages', () => {
+    const duplicateAssistant = new AIMessage({
+      content: '',
+      tool_calls: [
+        { id: 'call_dup', name: 'lineage_present_result', args: { sections: { technical: 'a' } }, type: 'tool_call' },
+        { id: 'call_dup', name: 'lineage_present_result', args: { sections: { technical: 'b' } }, type: 'tool_call' },
+      ],
+    });
+    expect(() => assertToolPairingWellFormed([
+      new HumanMessage('go'),
+      duplicateAssistant,
+      new ToolMessage({ tool_call_id: 'call_dup', content: 'ok' }),
+    ])).toThrow(/duplicate/i);
+    expect(() => assertToolPairingWellFormed([
+      new HumanMessage('go'),
+      duplicateAssistant,
+      new ToolMessage({ tool_call_id: 'call_dup', content: 'ok' }),
+      new ToolMessage({ tool_call_id: 'call_dup', content: 'dup', status: 'error' }),
+    ])).toThrow(/duplicate/i);
+
+    const singleAssistant = new AIMessage({
+      content: '',
+      tool_calls: [
+        { id: 'call_1', name: 'lineage_present_result', args: { sections: { technical: 'a' } }, type: 'tool_call' },
+      ],
+    });
+    expect(() => assertToolPairingWellFormed([
+      new HumanMessage('go'),
+      singleAssistant,
+      new ToolMessage({ tool_call_id: 'call_1', content: 'ok' }),
+      new ToolMessage({ tool_call_id: 'call_1', content: 'extra' }),
+    ])).toThrow(/duplicate/i);
   });
 });

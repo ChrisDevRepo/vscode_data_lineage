@@ -35,26 +35,34 @@ export function modelAssistantMessage(text: string): AIMessage {
  * unchained Responses request replays `response_metadata.output`.
  */
 export function transcriptTurn(message: AIMessage, calls: readonly GeneratedToolCall[]): AIMessage {
-  const kept = message.tool_calls ?? [];
-  const keptIds = new Set(kept.map((call) => call.id));
+  const rawCalls = message.tool_calls ?? [];
+  const callIdsInTurn = new Set(calls.map((call) => call.callId));
+  const keptIds = new Set<string>();
+  const kept: typeof rawCalls = [];
+  for (const call of rawCalls) {
+    const id = call.id ?? '';
+    if (id && callIdsInTurn.has(id) && !keptIds.has(id)) {
+      keptIds.add(id);
+      kept.push(call);
+    }
+  }
   const missing = calls.filter((call) => !keptIds.has(call.callId));
   const notObjects = new Set(calls.filter((call) => call.input !== undefined && !isRecord(call.input)).map((call) => call.callId));
   const rawOutput = message.response_metadata?.output;
-  const outputHasCutCall = notObjects.size > 0
-    && Array.isArray(rawOutput)
-    && rawOutput.some((item) => isRecord(item) && item.type === 'function_call' && typeof item.call_id === 'string' && notObjects.has(item.call_id));
-  if (missing.length === 0 && !kept.some((call) => notObjects.has(call.id ?? '')) && !outputHasCutCall) return message;
+  const sanitizedOutput = sanitizeResponseOutput(rawOutput, calls, notObjects);
+  if (
+    kept.length === rawCalls.length
+    && missing.length === 0
+    && !kept.some((call) => notObjects.has(call.id ?? ''))
+    && sanitizedOutput === rawOutput
+  ) {
+    return message;
+  }
   const { tool_calls: _rawToolCalls, ...additionalKwargs } = message.additional_kwargs;
-  const responseMetadata = outputHasCutCall && Array.isArray(rawOutput)
-    ? {
-        ...message.response_metadata,
-        output: rawOutput.map((item) => (
-          isRecord(item) && item.type === 'function_call' && typeof item.call_id === 'string' && notObjects.has(item.call_id)
-            ? { ...item, arguments: '{}' }
-            : item
-        )),
-      }
+  const responseMetadata = sanitizedOutput !== rawOutput
+    ? { ...message.response_metadata, output: sanitizedOutput }
     : message.response_metadata;
+  const callOrder = new Map(calls.map((call, index) => [call.callId, index]));
   return new AIMessage({
     content: message.content,
     additional_kwargs: additionalKwargs,
@@ -62,8 +70,38 @@ export function transcriptTurn(message: AIMessage, calls: readonly GeneratedTool
     tool_calls: [
       ...kept.map((call) => (notObjects.has(call.id ?? '') ? { ...call, args: {} } : call)),
       ...missing.map((call) => ({ id: call.callId, name: call.toolName, args: {}, type: 'tool_call' as const })),
-    ].sort((a, b) => calls.findIndex((call) => call.callId === a.id) - calls.findIndex((call) => call.callId === b.id)),
+    ].sort((a, b) => (callOrder.get(a.id ?? '') ?? 0) - (callOrder.get(b.id ?? '') ?? 0)),
   });
+}
+
+function sanitizeResponseOutput(
+  rawOutput: unknown,
+  calls: readonly GeneratedToolCall[],
+  notObjects: ReadonlySet<string>,
+): unknown {
+  if (!Array.isArray(rawOutput)) return rawOutput;
+  const seenCallIds = new Set<string>();
+  let fcIndex = 0;
+  let changed = false;
+  const updated = rawOutput.map((item) => {
+    if (!isRecord(item) || item.type !== 'function_call' || typeof item.call_id !== 'string') {
+      return item;
+    }
+    const currentIndex = fcIndex;
+    fcIndex += 1;
+    const duplicate = seenCallIds.has(item.call_id);
+    const nextCallId = duplicate ? (calls[currentIndex]?.callId ?? item.call_id) : item.call_id;
+    seenCallIds.add(nextCallId);
+    const clearArgs = duplicate || notObjects.has(nextCallId);
+    if (!duplicate && !clearArgs) return item;
+    changed = true;
+    return {
+      ...item,
+      ...(nextCallId !== item.call_id ? { call_id: nextCallId } : {}),
+      ...(clearArgs ? { arguments: '{}' } : {}),
+    };
+  });
+  return changed ? updated : rawOutput;
 }
 
 /**

@@ -36,20 +36,37 @@ function snapshotMessages(messages: readonly BaseMessage[]): string {
 }
 
 /**
- * Verifies every tool message answers a tool call on the nearest preceding assistant message and
- * every tool call is answered by a tool message directly after it.
+ * Verifies every tool message answers a unique tool call on the nearest preceding assistant message
+ * and every tool call is answered by a unique tool message directly after it (strict 1:1 pairing).
  *
- * @throws An internal invariant error naming the first unpaired tool message or call, with a
- *   structural snapshot of roles and tail-truncated call ids.
+ * @throws An internal invariant error naming the first unpaired or duplicate tool message or call,
+ *   with a structural snapshot of roles and tail-truncated call ids.
  */
 export function assertToolPairingWellFormed(messages: readonly BaseMessage[]): void {
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (AIMessage.isInstance(message) && message.tool_calls?.length) {
+      const seenCallIds = new Set<string>();
+      for (const call of message.tool_calls) {
+        const id = call.id ?? '';
+        if (seenCallIds.has(id)) {
+          throw new MessageEnvelopeInvariantError(
+            `duplicate tool_call id="${tailId(call.id)}" at messages[${i}]`,
+            snapshotMessages(messages),
+          );
+        }
+        seenCallIds.add(id);
+      }
       const answered = new Set<string>();
       for (let next = i + 1; next < messages.length; next++) {
         const result = messages[next];
         if (!ToolMessage.isInstance(result)) break;
+        if (answered.has(result.tool_call_id)) {
+          throw new MessageEnvelopeInvariantError(
+            `duplicate tool_call_id="${tailId(result.tool_call_id)}" at messages[${next}]`,
+            snapshotMessages(messages),
+          );
+        }
         answered.add(result.tool_call_id);
       }
       const unanswered = message.tool_calls.find((call) => !answered.has(call.id ?? ''));
