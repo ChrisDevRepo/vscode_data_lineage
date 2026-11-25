@@ -43,6 +43,8 @@ import { toEngineLog } from '../support/engineLog';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolProvider';
 import { detectSlashRoute } from './slashCommands';
+import { getModelNodeMap } from '../tools/handlers/toolServices';
+import { resolveModelNodeId } from '../support/inputNormalization';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
@@ -235,6 +237,18 @@ export interface AgentGraphDeps {
   readonly clearPreview?: () => void;
 }
 
+
+/**
+ * Resolves the `/trace` object ids against the loaded model: the canonical node id when every id
+ * resolves and all name the same node; `null` when none were named, any is unresolved, or they name
+ * several nodes, so the host never picks an origin the user did not name unambiguously.
+ */
+function resolveSlashOrigin(objectIds: readonly string[] | null, model: AiSession['model']): string | null {
+  if (!objectIds || !model) return null;
+  const nodeMap = getModelNodeMap(model);
+  const resolved = new Set(objectIds.map(id => resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive)));
+  return resolved.size === 1 ? [...resolved][0] : null;
+}
 
 /**
  * Builds the production LangGraph runtime for one native-chat turn. Runtime handles are captured in
@@ -614,13 +628,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       : state.prompt.startsWith(PREVIEW_REQUEST_MARKER) ? 'preview' : null;
     if (held && (slash || marker)) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
     if (slash) {
-      return { ctx, messages, entry: slash.entry, executionTrigger: slash.trigger, targetColumns: slash.targetColumns, phase: 'detect_entry' };
+      const resolvedOrigin = resolveSlashOrigin(slash.objectIds, sess.model);
+      return { ctx, messages, entry: slash.entry, executionTrigger: slash.trigger, targetColumns: slash.targetColumns, resolvedOrigin, phase: 'detect_entry' };
     }
     if (marker === 'trace') {
-      return { ctx, messages, entry: 'discovery', executionTrigger: 'run_trace', targetColumns: null, phase: 'detect_entry' };
+      return { ctx, messages, entry: 'discovery', executionTrigger: 'run_trace', targetColumns: null, resolvedOrigin: null, phase: 'detect_entry' };
     }
     if (marker === 'preview') {
-      return { ctx, messages, entry: 'visual_render', executionTrigger: 'preview_button', targetColumns: null, phase: 'detect_entry' };
+      return { ctx, messages, entry: 'visual_render', executionTrigger: 'preview_button', targetColumns: null, resolvedOrigin: null, phase: 'detect_entry' };
     }
 
     const trigger = parseGateTrigger(state.prompt);
@@ -685,7 +700,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
 
     if (sess.phase.kind === 'completed' && sess.resultGraph) {
-      return { ctx, messages, entry: 'discovery', targetColumns: null, phase: 'follow_up' };
+      return { ctx, messages, entry: 'discovery', targetColumns: null, resolvedOrigin: null, phase: 'follow_up' };
     }
 
     const priorAttempt = attemptStateFor(state, 'detect_entry');
@@ -766,6 +781,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       entry: entry.entry,
       executionTrigger: 'free_text',
       targetColumns: entry.targetColumns ?? null,
+      resolvedOrigin: null,
       toolAttempt: null,
       phase: 'detect_entry',
     };
@@ -893,7 +909,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]),
         facts: explorationFacts(targetColumns?.length ? 'ct' : 'bb', targetColumns, { memorySections: ['conversation_history'] }),
         messages,
-        system: buildSmEntrySystemPrompt(getCtx(state), targetColumns, discoveryBudget),
+        system: buildSmEntrySystemPrompt(getCtx(state), targetColumns, discoveryBudget, state.resolvedOrigin),
         sink: deps.sink,
         signal: deps.signal,
         detectGate: detectGateFromToolResult,
