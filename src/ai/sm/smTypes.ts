@@ -162,7 +162,7 @@ export interface HopNeighbor {
   n: string;
   /** Object type (e.g., 'table', 'view', 'procedure'). */
   t: string;
-  /** Direction relative to the focus node. */
+  /** Direction relative to the focus node, from the kept edge (the one `edge_type` names): a node the focus writes is downstream even when the focus also reads it. */
   edge_direction: 'upstream' | 'downstream';
   /** The type of dependency (e.g., 'SELECT', 'INSERT', 'FK'). */
   edge_type: string;
