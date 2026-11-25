@@ -506,7 +506,7 @@ const NeighborQuestionSchema = z.object({
 }).strict();
 
 const CtNeighborQuestionSchema = NeighborQuestionSchema.extend({
-  caller_context: z.object({ node: z.string().min(1), col: z.string().min(1) }).strict().optional().describe('For a column-trace function investigation, declare the real current caller output whose contribution its supplied SQL must establish. The caller SQL is supplied at the function hop to bind actual arguments; this declaration creates no column edge or function column.'),
+  caller_context: z.object({ node: z.string().min(1).describe('Node ID of the caller.'), col: z.string().min(1).describe('Caller output column.') }).strict().optional().describe('For a column-trace function investigation, declare the real current caller output whose contribution its supplied SQL must establish. The caller SQL is supplied at the function hop to bind actual arguments; this declaration creates no column edge or function column.'),
 }).strict();
 
 /** Single source for the `reason` describe text. The served verdicts do not use it. */
@@ -818,8 +818,11 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   };
   if (hop.returnTargets?.length) {
     const destinations = hop.returnTargets.map(target => z.object({
-      out_col: z.literal(target.col),
-      returns_to: z.object({ node: z.literal(target.node), col: z.literal(target.col) }).strict(),
+      out_col: z.literal(target.col).describe('Caller output column of this target.'),
+      returns_to: z.object({
+        node: z.literal(target.node).describe('Node ID of the caller.'),
+        col: z.literal(target.col).describe('Caller output column.'),
+      }).strict().describe(ColumnFlowEntrySchema.shape.returns_to.description ?? ''),
       upstream_columns: shape.upstream_columns,
     }).strict());
     const entry = destinations.length === 1 ? destinations[0]! : z.union(destinations as [typeof destinations[number], typeof destinations[number], ...Array<typeof destinations[number]>]);
@@ -1014,8 +1017,8 @@ export const GetObjectDetailInputSchema = z.object({
 /** `lineage_detect_graph_patterns` input. */
 export const DetectGraphPatternsInputSchema = z.object({
   type: z.enum(['hubs', 'islands', 'orphans', 'longest-path', 'cycles', 'external-refs']).describe('Structural graph pattern to detect.'),
-  min_degree: z.number().optional().describe('Minimum node degree for hub detection.'),
-  max_size: z.number().optional().describe('Maximum number of pattern results to return.'),
+  min_degree: z.number().int().positive().optional().describe('Minimum node degree for hub detection.'),
+  max_size: z.number().int().positive().optional().describe('Maximum node count of an island; islands only.'),
 }).strict();
 
 /** `lineage_search_ddl` input. */
@@ -1147,15 +1150,15 @@ const NotesModelSchema = z.array(NoteSchema)
 /** Schema for a visual highlight group, grouping nodes by a shared role or status. */
 const HighlightGroupSchema = z.object({
   label: z.string().trim().min(1, 'Group label is required').max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX, overLength(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX)).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
-  color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
+  color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
 }).strict();
 
 /** One report section: a label (heading and graph badge), the nodes it explains, its detail. */
 const PresentResultSectionSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX, overLength(PRESENT_RESULT_SECTION_LABEL_MAX)).trim().min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names.'),
+  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX, overLength(PRESENT_RESULT_SECTION_LABEL_MAX)).trim().min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge. No object names.'),
   node_ids: z.array(NodeIdSchema).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
-  text: SectionBodySchema.trim().min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
+  text: SectionBodySchema.trim().min(1, 'Section is missing text — every final section label requires one detail body').describe('Detail body for this section label.'),
 }, {
   error: (issue) => issue.code === 'unrecognized_keys'
     ? 'A section holds only label, node_ids and text. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
@@ -1243,7 +1246,7 @@ export const PresentResultModelSchema = z.object({
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
   highlight_groups: z.array(HighlightGroupSchema).min(1).describe(
-    'REQUIRED, at least 1 group. For zero-trace or single-node results, use color "target" on the origin/result node.'
+    'One scheme per result. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
   sections: sectionList(PresentResultSectionSchema).describe(
     'Required final report sections, at least one. Every node analysed and captured this turn '

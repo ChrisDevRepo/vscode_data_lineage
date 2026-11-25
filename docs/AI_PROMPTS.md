@@ -44,15 +44,13 @@ Keys by step:
 | Step | Keys |
 | --- | --- |
 | First reply, no exploration | `discovery_chat` |
-| Analysis of each object | `business_capture`, `technical_capture`, `shared_capture`, `structural_callouts`, `structural_summary`, `column_trace_capture` |
+| Analysis of each object | `business_capture`, `technical_capture`, `shared_capture`, `structural_callouts`, `column_trace_capture` |
 | Final document | `summary`, `title`, `intro`, `closing`, `highlights`, `notes`, `general`, `loading_pattern` |
 
 Each key is used only at its own step:
 
 - `business_capture` and `technical_capture` apply to an object that has a SQL
   body, according to whether the question is business, technical or both.
-  `structural_summary` is used instead for an object without a SQL body, such
-  as a table.
 - `column_trace_capture` applies only to a column trace.
 - `loading_pattern` applies only to technical or combined answers.
 - `closing` is omitted for small results.

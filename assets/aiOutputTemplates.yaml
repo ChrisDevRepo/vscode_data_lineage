@@ -18,7 +18,7 @@
 #   active      per-hop analysis. Each fired *_capture writes ONE section:
 #               business → 1, technical → 1, both → 2. Blocks are independent.
 #               → business_capture, technical_capture, structural_callouts,
-#                 structural_summary, column_trace_capture (column-trace mode only)
+#                 column_trace_capture (column-trace mode only)
 #
 #   synthesis   final document. The AI writes these parts; the engine assembles,
 #               numbers, and decorates them — do not template what the engine builds.
@@ -162,9 +162,9 @@ business_capture:
     <scope_relevance>
     A sink that records the run itself — which procedure ran, when, with
     what outcome — is a sidecar in this business section: one line inside
-    the section it hangs off, never a section or highlight of its own. A
-    sink holding the traced column's own values, before/after or as-of, is
-    a business audit trail: a consumer with a one-line caption.
+    the section it hangs off, never its own section. A sink holding the
+    traced column's own values, before/after or as-of, is a business audit
+    trail: a consumer, described in one line.
     </scope_relevance>
   example: ""
 
@@ -197,13 +197,6 @@ structural_callouts:
   example: >
     ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
     `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.
-
-# ── Reduced capture for non-bodied starting points ───────────────────────────
-
-structural_summary:
-  stages: [active]
-  instruction: >
-    This focus has no SQL body, so each section field follows this instead of the recipe: **Purpose**, the node's role from its id and type; **Upstream sources**, one line per `in[]` writer and its role; **Downstream consumers**, one line per `out[]` reader and its role. An empty list reads "none in the graph".
 
 # ── Column Trace capture (active phase, CT mode only) ────────────────────────
 # Fires additively alongside business_capture / technical_capture when the

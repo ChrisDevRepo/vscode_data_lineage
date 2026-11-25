@@ -47,6 +47,7 @@ import {
   buildToolExecutionError,
   combineToolRejections,
   DUPLICATE_CALL_ID_REPAIR_HINT,
+  ISSUES,
   makeRejection,
   readToolError,
   rejectionFromZodError,
@@ -79,18 +80,10 @@ import { isCancellationOutcome } from '../support/cancellation';
 import { safeIdentifier } from '../support/logIdentifier';
 
 /**
- * Hint paired with a `duplicate_read` rejection: the answer material is already in the
- * observations. The held body stays stored for the whole attempt, so the hint is a true statement
- * in every state it reaches the model in, except when the held body is itself an error envelope
- * (e.g. a `result_too_large` reply), where {@link heldErrorEnvelopeDuplicateHint} restates that
- * error instead — "answer from it" is false when the stored observation carries no answer material.
- */
-const DUPLICATE_READ_HINT = 'Answer from it, or call a different tool.';
-
-/**
  * Correction hint for a `duplicate_read` whose held observation is itself an error envelope:
- * restates that held error (its code, then its hint or reason line) instead of
- * {@link DUPLICATE_READ_HINT}.
+ * restates that held error (its code, then its hint or reason line) instead of the `duplicate_read`
+ * row's "answer from it", which is false when the stored observation carries no answer material
+ * (e.g. a `result_too_large` reply).
  * @param held - The observation the duplicate read would reuse.
  * @returns The restatement hint, or `undefined` when the held body is not an error envelope.
  */
@@ -1085,6 +1078,7 @@ export async function executeToolAttempt(
 
 /** The varying half of one synthesized rejection; everything else follows the shared contract. */
 interface SynthesizedRejectionSpec {
+  /** The tool the correction names; empty when the reply called none and no tool is required. */
   readonly toolName: string;
   /** Whether the generation carried neither a tool call nor any text. */
   readonly emptyGeneration: boolean;
@@ -1140,7 +1134,7 @@ function emitSynthesizedRejection(
   input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code });
   const hasAttemptedTurn = messageContentToText(spec.attempted.content).trim().length > 0
     || messageProviderParts(spec.attempted).length > 0;
-  const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
+  const note = `Correction${rejection.toolName ? ` for ${rejection.toolName}` : ''}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
   return hasAttemptedTurn
     ? [spec.attempted, modelUserMessage(note)]
     : [modelUserMessage(note)];
@@ -1234,7 +1228,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         ...(closedBy.accepted ? { traceStatus: 'closed' as const } : {}),
         rejection: makeRejection({
           code: REJECTION_CODES.phaseClosed,
-          reason: 'This sibling was not executed because an earlier call in the same provider batch closed the phase.',
+          reason: 'This call was not executed because an earlier call in this reply closed the step.',
           hint: 'Do not retry it.',
           detail: { closedByCallId: closedBy.callId, closedByTool: closedBy.toolName },
         }),
@@ -1318,8 +1312,8 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         const outcome = recordToolOutcome({ ...call, terminal: stepTerminalTool(input) }, {
           status: 'rejected',
           code: REJECTION_CODES.duplicateRead,
-          message: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
-          correction: { hint: heldErrorEnvelopeDuplicateHint(reused) ?? DUPLICATE_READ_HINT },
+          message: `This call repeats an accepted ${call.toolName} call; its result is above (callId ${reused.callId}).`,
+          correction: { hint: heldErrorEnvelopeDuplicateHint(reused) ?? ISSUES[REJECTION_CODES.duplicateRead].correction },
           detail: { acceptedCallId: reused.callId },
         }, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
         toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
@@ -1511,7 +1505,7 @@ async function executeToolGenerationAttempt(
     && generated.text.trim().length === 0;
   if (emptyOptionalGeneration) {
     const synthesized = emitSynthesizedRejection(input, rejections, {
-      toolName: 'lineage_answer',
+      toolName: '',
       emptyGeneration: true,
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: REJECTION_CODES.emptyGeneration,

@@ -178,8 +178,8 @@ function buildDirectionLines(
 function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: ReadonlySet<string> | null): string[] {
   const linkable = (ids: readonly string[]): string[] => presented ? ids.filter(id => presented.has(id)) : [...ids];
   return [
-    `- highlight_groups.target (the queried origin): ${linkable(groups.target).join(', ')}`,
-    `- highlight_groups.source candidates (the only nodes to color source): ${linkable(groups.source).join(', ') || '(none)'}`,
+    `- highlight group with color target (the queried origin): ${linkable(groups.target).join(', ')}`,
+    `- highlight group with color source (candidates; the only nodes to color source): ${linkable(groups.source).join(', ') || '(none)'}`,
   ];
 }
 

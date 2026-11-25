@@ -737,7 +737,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           hint: entryDetectionHint,
         }],
         messages: [
-          modelUserMessage(`Correction for entry_detection: ${error.reason} ${entryDetectionHint}`),
+          modelUserMessage(`Correction: ${error.reason} ${entryDetectionHint}`),
         ],
       });
       deps.logger?.debug(

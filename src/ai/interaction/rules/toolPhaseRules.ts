@@ -15,11 +15,11 @@ function offPolicyHint(toolName: string, stage: LmStage): string {
     case 'lineage_detect_graph_patterns':
       return 'Submit findings for the current focus: every open neighbor you do not prune is visited next, so the agenda is delivered explicitly - searching mid-hop is unnecessary.';
     case 'lineage_start_exploration':
-      return 'Exploration is already in progress. Continue the agenda via submit_findings.';
+      return 'Exploration is already in progress. Continue the agenda via lineage_submit_findings.';
     case 'lineage_present_result':
-      return 'present_result is the synthesis-phase tool. Drain the agenda first; the engine emits the synthesis trigger when ready.';
+      return 'lineage_present_result is the synthesis-phase tool. Drain the agenda first; the engine emits the synthesis trigger when ready.';
     default:
-      return 'Continue with submit_findings on the current focus node.';
+      return 'Continue with lineage_submit_findings on the current focus node.';
   }
 }
 
@@ -34,9 +34,8 @@ export function evaluateToolPhaseRule(
   allowed: ReadonlySet<string>,
 ): InteractionRuleResult {
   if (allowed.has(toolName)) return null;
-  const stageLabel = stage.kind === 'active' ? `active(${stage.mode})` : stage.kind;
   return makeRejection({
     code: REJECTION_CODES.offPolicy,
-    hint: `Tool ${toolName.replace('lineage_', '')} is not available in stage ${stageLabel}. Allowed tools this stage: ${[...allowed].map(n => n.replace('lineage_', '')).join(', ')}. ${offPolicyHint(toolName, stage)}`,
+    hint: `Tool ${toolName} is not offered in this step. Offered tools: ${[...allowed].join(', ')}. ${offPolicyHint(toolName, stage)}`,
   });
 }

@@ -48,8 +48,6 @@ export function evaluateAlreadyStartedRule(
   return makeRejection({
     code: REJECTION_CODES.alreadyStarted,
     reason: 'An exploration is already running in this turn.',
-    hint: 'Send lineage_submit_findings for the current object; each accepted finding serves the next queued object.',
-    detail: { next_action: 'submit_findings' },
   });
 }
 

@@ -35,7 +35,6 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
   business_capture:     ['active'],
   technical_capture:    ['active'],
   structural_callouts:  ['active'],
-  structural_summary:   ['active'],
   general:              ['synthesis'],
   loading_pattern:      ['synthesis'],
   column_trace_capture: ['active'],
@@ -65,15 +64,13 @@ const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
  * Per-FOCUS capture keys: they depend on the hop's focus, so they are volatile per hop. They render
  * into the per-hop worker message (`render: 'per_focus'`), NEVER the active system prompt
  * (`render: 'stable'`): swapping templates per hop would break the byte-stable prefix the
- * provider-side prompt cache keys on. `structural_summary` is in the set only to keep it out of the
- * stable prompt: kept for overlay schema v3; not served at a hop focus.
+ * provider-side prompt cache keys on.
  */
 const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'business_capture',
   'technical_capture',
   'structural_callouts',
   'shared_capture',
-  'structural_summary',
 ]);
 
 /**
@@ -201,10 +198,6 @@ export function resolveStagePrompt(
     }
     if (key === 'closing' && phase === 'synthesis' && slotCount !== undefined && slotCount < CLOSING_MIN_SLOTS) {
       gatedOut.push({ key, reason: 'slot_count' });
-      continue;
-    }
-    if (render.scope === 'per_focus' && key === 'structural_summary') {
-      gatedOut.push({ key, reason: 'focus_scope' });
       continue;
     }
     if (!(templates[key] ?? '').trim()) {

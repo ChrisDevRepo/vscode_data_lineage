@@ -118,7 +118,7 @@ export const ISSUES = {
   [REJECTION_CODES.duplicateRead]: {
     category: 'protocol',
     label: 'read already answered in this step',
-    correction: 'Answer from the result already in the conversation, or call a different read.',
+    correction: 'Answer from it, or call a different tool.',
   },
   [REJECTION_CODES.noRunMemory]: {
     category: 'stage',

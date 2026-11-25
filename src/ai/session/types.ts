@@ -129,8 +129,6 @@ export interface AiOutputTemplates {
    * recipes so classification `both` does not repeat it per angle.
    */
   shared_capture: string;
-  /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/...). */
-  structural_summary: string;
   /**
    * Cross-section depth floor at SYNTHESIS: conditional rendering directives (column-rename tables,
    * LaTeX formulas, code-fenced source guards, numbered state transitions) lifted across every
@@ -193,7 +191,6 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   technical_capture: '',
   structural_callouts: '',
   shared_capture: '',
-  structural_summary: '',
   general: '',
   loading_pattern: '',
   column_trace_capture: '',
