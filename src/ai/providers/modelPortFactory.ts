@@ -7,7 +7,7 @@ import { ModelPortError } from '../model/modelPort';
 import { ProviderModelPort, type ProviderModelPortOptions } from '../model/providerModelPort';
 import { apiKeySecretName, LIVE_MODEL_ID_PREFIX, parseModelEntries, type VscodeLmModelEntry } from './modelEntries';
 import { createProviderModelPort } from './openAiTransport';
-import { createVscodeLmTransport, type LmModelInfo } from './vscodeLmTransport';
+import { createVscodeLmChat, type LmModelInfo } from './vscodeLmTransport';
 import { NO_MODEL_MESSAGE } from '../../engine/shared/chatContract';
 
 /** Where the entry list, the default entry and the keys live; the VS Code API fits it. */
@@ -62,5 +62,5 @@ export async function createConfiguredModelPort(
 
 function lmPort(info: LmModelInfo | undefined, entry: VscodeLmModelEntry, options: ProviderModelPortOptions): ProviderModelPort {
   if (!info) throw new ModelPortError('model_not_found', `No VS Code language model matches model entry "${entry.id}".`);
-  return new ProviderModelPort(createVscodeLmTransport(entry, info.model), options);
+  return new ProviderModelPort(createVscodeLmChat(entry, info.model), options);
 }

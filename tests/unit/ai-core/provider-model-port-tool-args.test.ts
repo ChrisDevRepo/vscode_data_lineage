@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { transcriptTurn } from '../../../src/ai/model/modelPort';
 import { STRUCTURED_OUTPUT_TOOL, StructuredOutputError } from '../../../src/ai/providers/structuredOutput';
-import { ProviderModelPort, type ModelTransport } from '../../../src/ai/model/providerModelPort';
+import { ProviderModelPort } from '../../../src/ai/model/providerModelPort';
+import { scriptedChat } from './helpers/scriptedChat';
 import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 
 /**
@@ -14,21 +15,13 @@ import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope
 const schema = z.object({ sections: z.object({ technical: z.string() }) });
 
 function portStreaming(argChunks: string[], toolName = 'lineage_present_result'): ProviderModelPort {
-  const transport: ModelTransport = {
-    id: 'test',
-    identity: { id: 'm', name: 'm', vendor: 'v', family: 'f', version: '1' },
-    countTokens: async () => 1,
-    async *stream() {
-      for (const [index, args] of argChunks.entries()) {
-        yield new AIMessageChunk({
-          content: '',
-          tool_call_chunks: [{ type: 'tool_call_chunk', index: 0, id: index === 0 ? 'call_1' : undefined, name: index === 0 ? toolName : undefined, args }],
-        });
-      }
-      yield new AIMessageChunk({ content: '', response_metadata: { streamEnd: true } });
-    },
-  };
-  return new ProviderModelPort(transport);
+  return new ProviderModelPort(scriptedChat([
+    ...argChunks.map((args, index) => new AIMessageChunk({
+      content: '',
+      tool_call_chunks: [{ type: 'tool_call_chunk', index: 0, id: index === 0 ? 'call_1' : undefined, name: index === 0 ? toolName : undefined, args }],
+    })),
+    new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } }),
+  ]));
 }
 
 const turn = (port: ProviderModelPort) => port.generateToolTurn({

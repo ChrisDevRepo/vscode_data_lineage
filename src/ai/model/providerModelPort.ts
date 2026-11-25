@@ -1,4 +1,5 @@
-import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent } from '@langchain/core/messages';
+import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
+import { AIMessage, AIMessageChunk, SystemMessage, ToolMessage, type BaseMessage, type MessageContent } from '@langchain/core/messages';
 import {
   type CompleteTextInput,
   type GeneratedToolCall,
@@ -16,13 +17,23 @@ import {
   isPortCancellation,
   messageContentToText,
   messageProviderParts,
+  type ModelPortErrorCode,
 } from './modelPort';
-import { systemPromptHash, type TokenUsage, type WireEvent, type WireRecord } from '../observability/wireLog';
+import {
+  systemPromptHash,
+  type TokenUsage,
+  type WireEvent,
+  type WireMessage,
+  type WirePart,
+  type WireRecord,
+} from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
 import {
   formatProviderErrorDiagnostic,
+  sanitizeProviderError,
   sanitizeProviderErrorDiagnostic,
 } from '../support/text';
+import { countTokens } from '../support/tokenCount';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { coerceStringifiedArguments, parseJson } from '../support/inputNormalization';
@@ -36,46 +47,50 @@ import {
   structuredRejectReason,
 } from '../providers/structuredOutput';
 
-/** One tool offered on a generation, as the transport sends it. */
-export interface TransportTool {
-  readonly name: string;
-  readonly description: string;
-  /** JSON Schema object of the tool input ({@link toModelJsonSchema}). */
-  readonly inputSchema: Record<string, unknown>;
+/** One tool offered on a generation, in the OpenAI function form every chat model takes. */
+export interface ChatTool {
+  readonly type: 'function';
+  readonly function: {
+    readonly name: string;
+    readonly description: string;
+    /** JSON Schema object of the tool input ({@link toModelJsonSchema}). */
+    readonly parameters: Record<string, unknown>;
+  };
 }
 
-/** One generation as a transport receives it. */
-export interface TransportRequest {
-  /** The conversation, system instruction first. */
-  readonly messages: readonly BaseMessage[];
-  readonly tools: readonly TransportTool[];
-  /**
-   * `'auto'`, `'any'` (a tool call is required), `'none'` or the one tool the model must call;
-   * absent when the request binds no tools.
-   */
-  readonly toolChoice?: string;
-  readonly signal?: AbortSignal;
-  /** Wire capture, present only while session trace logging is on. */
-  readonly wire?: (event: WireEvent) => void;
+/** One generation as its provider takes it. */
+interface ProviderRequest {
+  /** The chat model, tools bound. */
+  readonly model: {
+    stream(messages: BaseMessage[], options?: Record<string, unknown>): Promise<AsyncIterable<AIMessageChunk>>;
+  };
+  /** The conversation as the provider sends it, system instruction first. */
+  readonly messages: BaseMessage[];
+  /** Call options of this generation beyond the port's own (`signal`, `callbacks`). */
+  readonly options?: Record<string, unknown>;
 }
 
 /**
- * The provider connection behind a port: the only code that knows one wire. It owns cancellation,
- * error classification (every failure is a {@link ModelPortError}) and the wire events of its own
- * request.
+ * The model behind a port: a LangChain chat model and the one place that maps a generation to its
+ * provider's request. The model owns the wire and its stream; the port owns error mapping, wire
+ * capture and the usage budget.
  */
-export interface ModelTransport {
+export interface ProviderChat {
   /** Port identifier derived from the model. */
   readonly id: string;
   readonly identity: ModelIdentity;
-  /** Token count of one text; the counter does not reject. */
-  countTokens(text: string): Promise<number>;
   /**
-   * Streams one generation as LangChain chunks. A stream seen to its end finishes with one chunk
-   * whose `response_metadata.streamEnd` is true; a failure throws a {@link ModelPortError}.
+   * Maps a generation to the provider's request: the messages it takes and the model with `tools`
+   * bound. `toolChoice` is `'auto'`, `'any'` (a tool call is required), `'none'` or the one tool the
+   * model must call; absent when the request binds no tools.
    */
-  stream(request: TransportRequest): AsyncIterable<AIMessageChunk>;
+  request(messages: readonly BaseMessage[], tools: readonly ChatTool[], toolChoice: string | undefined): ProviderRequest;
+  /** Throws the {@link ModelPortError} of a chunk that ends the generation as the provider's failure. */
+  check?(chunk: AIMessageChunk): void;
 }
+
+/** Marks a message with the entry that produced it; a later request replays only provider state it owns. */
+export const ENTRY_KEY = 'entryId';
 
 /** What a port reports to: logs, wire capture and the turn's token budget. */
 export interface ProviderModelPortOptions {
@@ -91,7 +106,7 @@ export interface ProviderModelPortOptions {
   /**
    * Whether the active trace captures the verbatim system instruction as its own field. Off by
    * default, so the `wire-request` `system` field carries the prompt's hash only. This does
-   * **not** make the trace prompt-free: a transport may carry the system instruction inside
+   * **not** make the trace prompt-free: a provider may carry the system instruction inside
    * the message array, which is recorded with `messages[]` either way, deliberately, since the
    * message array makes a bad turn reconstructable from the trace alone. The privacy control
    * is the opt-in plus the owner-only file mode, not partial redaction.
@@ -106,7 +121,7 @@ export interface ProviderModelPortOptions {
 }
 
 /**
- * Request-scoped model port over one {@link ModelTransport}. LangChain `BaseMessage` instances are
+ * Request-scoped model port over one {@link ProviderChat}. LangChain `BaseMessage` instances are
  * the only history representation; the port performs no model selection, fallback, tool execution
  * or lifecycle routing.
  */
@@ -123,22 +138,22 @@ export class ProviderModelPort implements ModelPort {
   public readonly budget: TurnTokenBudget;
 
   public constructor(
-    private readonly transport: ModelTransport,
+    private readonly chat: ProviderChat,
     private readonly options: ProviderModelPortOptions = {},
   ) {
     this.budget = options.budget ?? DEFAULT_TURN_TOKEN_BUDGET;
-    this.id = transport.id;
-    this.identity = transport.identity;
+    this.id = chat.id;
+    this.identity = chat.identity;
     const { id, vendor, family, version } = this.identity;
     this.options.debugLog?.(`[AI] model id=${id} vendor=${vendor} family=${family} version=${version}`);
   }
 
   /**
-   * {@link SingleGenerationModelPort.getNumTokens}; delegates to the transport's counter. Carries
-   * no cancellation: the caller is `trimMessages`' counter, run outside any generation.
+   * {@link SingleGenerationModelPort.getNumTokens}; the one shared counter. Carries no
+   * cancellation: the caller is `trimMessages`' counter, run outside any generation.
    */
   public getNumTokens(content: MessageContent): Promise<number> {
-    return this.transport.countTokens(messageContentToText(content));
+    return Promise.resolve(countTokens(messageContentToText(content)));
   }
 
   /** Runs one tool-capable generation and validates emitted calls against the supplied tools. */
@@ -163,11 +178,7 @@ export class ProviderModelPort implements ModelPort {
       const { message, toolCalls: emittedCalls, finishReason, usage } = await this.collectGeneration(
         input.messages,
         input.system,
-        definitions.map((definition) => ({
-          name: definition.name,
-          description: definition.description,
-          inputSchema: toModelJsonSchema(definition.inputSchema),
-        })),
+        definitions.map((definition) => toChatTool(definition.name, definition.description, toModelJsonSchema(definition.inputSchema))),
         input.toolChoice,
         input.signal,
         input.onTextDelta,
@@ -255,7 +266,7 @@ export class ProviderModelPort implements ModelPort {
     const { toolCalls } = await this.collectGeneration(
       input.messages,
       input.system,
-      [{ name: STRUCTURED_OUTPUT_TOOL, description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION, inputSchema: outputSchema }],
+      [toChatTool(STRUCTURED_OUTPUT_TOOL, STRUCTURED_OUTPUT_TOOL_DESCRIPTION, outputSchema)],
       { type: 'tool', toolName: STRUCTURED_OUTPUT_TOOL },
       input.signal,
       undefined,
@@ -320,7 +331,7 @@ export class ProviderModelPort implements ModelPort {
   private async collectGeneration(
     history: readonly BaseMessage[],
     system: string | undefined,
-    tools: readonly TransportTool[],
+    tools: readonly ChatTool[],
     choice: ModelToolChoice | undefined,
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
@@ -330,7 +341,7 @@ export class ProviderModelPort implements ModelPort {
     /** The message's tool calls, each verified to carry a call ID. */
     toolCalls: readonly IdentifiedToolCall[];
     finishReason: 'tool-calls' | 'stop' | 'unknown';
-    /** Provider-reported usage of the last readable 'usage' stream part; absent when none. */
+    /** Provider-reported usage of the generation; absent when none. */
     usage?: TokenUsage;
   }> {
     const wireLog = this.options.wireLog;
@@ -354,35 +365,35 @@ export class ProviderModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       const requiresTool = choice === 'required' || typeof choice === 'object';
-      if (typeof choice === 'object' && !tools.some((tool) => tool.name === choice.toolName)) {
+      if (typeof choice === 'object' && !tools.some((tool) => tool.function.name === choice.toolName)) {
         throw new ModelPortError('invalid_request', `Required tool is not available: ${choice.toolName}.`);
       }
       if (requiresTool && tools.length === 0) {
         throw new ModelPortError('invalid_request', 'Required tool mode requires at least one tool.');
       }
-      const messages = system
-        ? [new SystemMessage(system), ...history]
-        : [...history];
-      let message = new AIMessageChunk({ content: '' });
-      let streamEnded = false;
-      let usage: TokenUsage | undefined;
-      const stream = this.transport.stream({
-        messages,
+      const request = this.chat.request(
+        system ? [new SystemMessage(system), ...history] : history,
         tools,
-        toolChoice: tools.length > 0 || requiresTool ? toTransportToolChoice(choice, tools) : undefined,
+        tools.length > 0 || requiresTool ? toToolChoice(choice, tools) : undefined,
+      );
+      const stream = await request.model.stream(request.messages, {
+        ...request.options,
         signal,
-        wire: emitWire,
+        ...(emitWire ? { callbacks: [wireRequestCapture(emitWire, tools)] } : {}),
       });
+      let message = new AIMessageChunk({ content: '' });
+      let received = false;
       for await (const chunk of stream) {
         if (signal?.aborted) throw cancelledError();
+        received = true;
+        this.chat.check?.(chunk);
         message = message.concat(chunk);
         const delta = messageContentToText(chunk.content);
         if (delta) onTextDelta?.(delta);
-        if (chunk.response_metadata?.streamEnd) streamEnded = true;
-        const streamedUsage = chunk.response_metadata?.providerUsage;
-        if (streamedUsage) usage = streamedUsage as TokenUsage;
       }
       if (signal?.aborted) throw cancelledError();
+      if (!received) throw new ModelPortError('unsupported_response', 'Provider reply carried no event stream.');
+      message.response_metadata = { ...message.response_metadata, [ENTRY_KEY]: this.identity.id };
       // The chunks keep the provider's call order and every call. LangChain files a call apart from
       // `tool_calls` when its text cannot be completed to JSON, and completes a cut text into
       // `tool_calls`; the chunks carry the text as streamed. A text that is no JSON stays that text,
@@ -392,13 +403,22 @@ export class ProviderModelPort implements ModelPort {
         name: chunk.name ?? '',
         args: parseStreamedArguments(chunk.args),
       }));
+      const providerFinish = message.response_metadata.finish_reason;
+      const finishReason = observedFinishReason(typeof providerFinish === 'string' && providerFinish !== '', toolCalls.length);
+      const usage = toUsage(message.usage_metadata);
+      emitWire?.({
+        type: 'wire-response',
+        text: messageContentToText(message.content),
+        toolCalls: toolCalls.map((call) => ({ callId: call.id ?? '', name: call.name, input: call.args })),
+        finishReason: typeof providerFinish === 'string' ? providerFinish : undefined,
+        usage,
+      });
       if (!toolCalls.every(hasCallId)) {
         throw new ModelPortError(
           'unsupported_response',
           'Language model returned an incomplete tool call.',
         );
       }
-      const finishReason = observedFinishReason(streamEnded, toolCalls.length);
       emitWire?.({
         type: 'generation',
         modelId: this.identity.id,
@@ -408,28 +428,106 @@ export class ProviderModelPort implements ModelPort {
       });
       return { message, toolCalls, finishReason, usage };
     } catch (error) {
-      if (emitWire && requestEmitted && !signal?.aborted && !isCancellation(error)) {
+      const failure = toPortError(error, signal);
+      if (emitWire && requestEmitted && !signal?.aborted && !isCancellation(failure)) {
         emitWire({
           type: 'wire-error',
-          diagnostic: sanitizeProviderErrorDiagnostic(error, phase ?? 'unknown'),
+          diagnostic: sanitizeProviderErrorDiagnostic(failure, phase ?? 'unknown'),
         });
       }
-      throw error;
+      throw failure;
     }
   }
 }
 
 /**
- * The finish the trace states. The transport ends a stream it saw to its end with one `streamEnd`
- * chunk. Without it the stream may have been cut, so the call count alone must not name a finish.
+ * Captures the request as the model sends it: `handleChatModelStart` runs before the HTTP request
+ * (`awaitHandlers`), with the messages the provider takes, the call options and the model's own
+ * `invocation_params`, so the trace states the wire, not a re-derivation of it.
  */
-function observedFinishReason(streamEnded: boolean, toolCallCount: number): 'tool-calls' | 'stop' | 'unknown' {
-  if (!streamEnded) return 'unknown';
+function wireRequestCapture(emitWire: (event: WireEvent) => void, tools: readonly ChatTool[]): BaseCallbackHandler {
+  const handler = BaseCallbackHandler.fromMethods({
+    handleChatModelStart: (_llm, [sent], _runId, _parentRunId, extra) => {
+      const params = isRecord(extra?.invocation_params) ? extra.invocation_params : {};
+      const body = Object.fromEntries(WIRE_BODY_FIELDS.filter((field) => params[field] !== undefined).map((field) => [field, params[field]]));
+      emitWire({
+        type: 'wire-request',
+        messages: sent.map(toWireMessage),
+        tools: tools.map(({ function: tool }) => ({
+          name: tool.name,
+          descriptionHash: systemPromptHash(tool.description),
+          inputSchema: tool.parameters,
+        })),
+        toolMode: tools.length > 0 ? (isRecord(extra?.options) && extra.options.tool_choice === 'auto' ? 1 : 2) : undefined,
+        ...(Object.keys(body).length > 0 ? { body } : {}),
+      });
+    },
+  });
+  handler.awaitHandlers = true;
+  return handler;
+}
+
+/** The body fields a trace states: the ones that steer sampling, output length, reasoning and tool use, never a header. */
+const WIRE_BODY_FIELDS = [
+  'tool_choice', 'reasoning_effort', 'reasoning', 'output_config', 'thinking',
+  'temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'max_output_tokens',
+] as const;
+
+const WIRE_ROLES: Readonly<Record<string, string>> = { human: 'user', ai: 'assistant' };
+
+function toWirePart(value: unknown): WirePart {
+  return { type: 'text', value: typeof value === 'string' ? value : JSON.stringify(value) };
+}
+
+/** The request as the trace states it: role and parts per message, never a header. */
+function toWireMessage(message: BaseMessage): WireMessage {
+  const content = typeof message.content === 'string' ? [message.content] : message.content.map((part) => (
+    typeof part === 'object' && 'text' in part && typeof part.text === 'string' ? part.text : part
+  ));
+  if (ToolMessage.isInstance(message)) {
+    return { role: 'tool', parts: [{ type: 'tool-result', callId: message.tool_call_id, content: content.map(toWirePart) }] };
+  }
+  return {
+    role: WIRE_ROLES[message.getType()] ?? message.getType(),
+    parts: [
+      ...content.filter((part) => part !== '').map(toWirePart),
+      ...(AIMessage.isInstance(message) ? message.tool_calls ?? [] : []).map((call) => (
+        { type: 'tool-call' as const, callId: call.id ?? '', name: call.name, input: call.args }
+      )),
+    ],
+  };
+}
+
+/** The usage a generation reports; absent when it reports none. */
+function toUsage(usage: AIMessageChunk['usage_metadata']): TokenUsage | undefined {
+  if (!usage) return undefined;
+  const count = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
+  const present = Object.entries({
+    inputTokens: count(usage.input_tokens),
+    outputTokens: count(usage.output_tokens),
+    totalTokens: count(usage.total_tokens),
+    reasoningTokens: count(usage.output_token_details?.reasoning),
+    cachedTokens: count(usage.input_token_details?.cache_read),
+  }).filter(([, value]) => value !== undefined);
+  return present.length > 0 ? Object.fromEntries(present) as TokenUsage : undefined;
+}
+
+/** One tool in the form a chat model takes. */
+function toChatTool(name: string, description: string, parameters: Record<string, unknown>): ChatTool {
+  return { type: 'function', function: { name, description, parameters } };
+}
+
+/**
+ * The finish the trace states. A provider that saw a stream to its end reports a `finish_reason`.
+ * Without one the stream may have been cut, so the call count alone must not name a finish.
+ */
+function observedFinishReason(finished: boolean, toolCallCount: number): 'tool-calls' | 'stop' | 'unknown' {
+  if (!finished) return 'unknown';
   return toolCallCount > 0 ? 'tool-calls' : 'stop';
 }
 
 /** The streamed arguments as JSON, the text itself when it is not valid JSON, `{}` when none streamed. */
-export function parseStreamedArguments(text: string | undefined): unknown {
+function parseStreamedArguments(text: string | undefined): unknown {
   if (!text) return {};
   const parsed = parseJson(text);
   return parsed === undefined ? text : parsed;
@@ -451,18 +549,36 @@ function isEmptyRecord(value: unknown): value is Record<string, never> {
 }
 
 /**
- * The transport's choice. A required call with exactly one tool names that tool: the one form
- * every wire carries (MAIN does the same). With several tools it stays `'any'` and the transport
+ * The provider's choice. A required call with exactly one tool names that tool: the one form
+ * every wire carries (MAIN does the same). With several tools it stays `'any'` and the provider
  * writes the form its API takes.
  */
-function toTransportToolChoice(
+function toToolChoice(
   choice: ModelToolChoice | undefined,
-  tools: readonly TransportTool[],
+  tools: readonly ChatTool[],
 ): 'auto' | 'any' | 'none' | string {
-  if (choice === 'required') return tools.length === 1 ? tools[0].name : 'any';
+  if (choice === 'required') return tools.length === 1 ? tools[0].function.name : 'any';
   if (choice === 'none') return 'none';
   if (typeof choice === 'object') return choice.toolName;
   return 'auto';
+}
+
+function failureCode(error: unknown): ModelPortErrorCode {
+  const status = isRecord(error) ? error.status : undefined;
+  if (status === 401 || status === 403) return 'no_permission';
+  return status === 404 ? 'model_not_found' : 'provider_error';
+}
+
+/**
+ * One failure as a port error: cancellation by the signal, else a redacted message and the cause.
+ * `code` is the provider's own classification when it has one; else the HTTP status names it.
+ */
+export function toPortError(error: unknown, signal: AbortSignal | undefined, code?: ModelPortErrorCode): ModelPortError {
+  if (error instanceof ModelPortError) return error;
+  if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) return cancelledError();
+  const named = code ?? failureCode(error);
+  const text = error instanceof Error ? error.message : '';
+  return new ModelPortError(named, sanitizeProviderError(text) || `Language model request failed (${named}).`, error);
 }
 
 function isCancellation(error: unknown): boolean {

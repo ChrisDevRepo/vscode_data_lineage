@@ -9,7 +9,7 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 ## Architectural boundaries
 
-- The AI uses two provider kinds behind one transport seam: a VS Code language
+- The AI uses two provider kinds, each a LangChain chat model behind one model port: a VS Code language
   model (Language Model API; `apiType` `vscode-lm`, or a live model the chat lists with
   no entry), which needs no key; and, as the alternative, an OpenAI-compatible
   endpoint (Chat Completions or Responses) listed in `dataLineageViz.ai.models`, whose

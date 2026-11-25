@@ -189,7 +189,7 @@ What the AI may and may not do:
 
 | File or folder | Role |
 |----------------|------|
-| [`src/ai/model/providerModelPort.ts`](../src/ai/model/providerModelPort.ts) | The model port over the OpenAI-compatible transport in `src/ai/providers/`. |
+| [`src/ai/model/providerModelPort.ts`](../src/ai/model/providerModelPort.ts) | The model port over the LangChain chat models in `src/ai/providers/` (`ChatOpenAI`, `VscodeLmChatModel`). |
 | [`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts) | Phases, retries and the final answer. |
 | [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) | Hop-by-hop exploration: which object is read next, validation, stop conditions. |
 | [`src/ai/tools/`](../src/ai/tools/) | The tool registry and handlers. |

@@ -6,21 +6,17 @@
  * timeout is injected; the retry is the SDK's (see `createChatModel`). The key reaches only the
  * client's `Authorization` header.
  */
-import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from '@langchain/core/messages';
-import { ChatOpenAI, messageToOpenAIRole } from '@langchain/openai';
+import { AIMessage, type BaseMessage } from '@langchain/core/messages';
+import { ChatOpenAI } from '@langchain/openai';
 import type { OpenAiModelEntry } from './modelEntries';
 import {
-  parseStreamedArguments,
+  ENTRY_KEY,
   ProviderModelPort,
-  type ModelTransport,
+  type ChatTool,
+  type ProviderChat,
   type ProviderModelPortOptions,
-  type TransportRequest,
-  type TransportTool,
 } from '../model/providerModelPort';
-import { cancelledError, messageContentToText, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
-import { systemPromptHash, type TokenUsage, type WireMessage, type WirePart } from '../observability/wireLog';
-import { sanitizeProviderError } from '../support/text';
-import { countTokens } from '../support/tokenCount';
+import { ModelPortError } from '../model/modelPort';
 
 /** Request fields the entry's own settings produce, below `requestBody`. */
 function entryBody(entry: OpenAiModelEntry, effort: string | undefined): Record<string, unknown> {
@@ -68,34 +64,6 @@ function createChatModel(entry: OpenAiModelEntry, apiKey: string, effort: string
   return written === named ? build(cap) : build();
 }
 
-/** The body fields a trace states: the ones that steer sampling, output length, reasoning and tool use, never a header. */
-const WIRE_BODY_FIELDS = [
-  'tool_choice', 'reasoning_effort', 'reasoning', 'output_config', 'thinking',
-  'temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'max_output_tokens',
-] as const;
-
-/** Those fields as the client sends them for `toolChoice`; absent ones are left out. */
-function wireBody(chat: ChatOpenAI, toolChoice: WireToolChoice): Record<string, unknown> {
-  const params: Record<string, unknown> = chat.invocationParams({ tool_choice: toolChoice });
-  return Object.fromEntries(WIRE_BODY_FIELDS.filter((field) => params[field] !== undefined).map((field) => [field, params[field]]));
-}
-
-function toUsage(usage: AIMessageChunk['usage_metadata']): TokenUsage | undefined {
-  if (!usage) return undefined;
-  const count = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
-  const present = Object.entries({
-    inputTokens: count(usage.input_tokens),
-    outputTokens: count(usage.output_tokens),
-    totalTokens: count(usage.total_tokens),
-    reasoningTokens: count(usage.output_token_details?.reasoning),
-    cachedTokens: count(usage.input_token_details?.cache_read),
-  }).filter(([, value]) => value !== undefined);
-  return present.length > 0 ? Object.fromEntries(present) as TokenUsage : undefined;
-}
-
-/** Marks the messages this entry produced; a later request replays only provider state it owns. */
-const ENTRY_KEY = 'entryId';
-
 function responseMetadata(message: BaseMessage): Record<string, unknown> {
   return message.response_metadata as Record<string, unknown>;
 }
@@ -128,51 +96,11 @@ function projectMessages(
     : { messages: projected };
 }
 
-function toWirePart(value: unknown): WirePart {
-  return { type: 'text', value: typeof value === 'string' ? value : JSON.stringify(value) };
-}
-
-/** The request as the trace states it: role and parts per message, never a header. */
-function toWireMessage(message: BaseMessage): WireMessage {
-  const content = typeof message.content === 'string' ? [message.content] : message.content.map((part) => (
-    typeof part === 'object' && 'text' in part && typeof part.text === 'string' ? part.text : part
-  ));
-  if (ToolMessage.isInstance(message)) {
-    return { role: 'tool', parts: [{ type: 'tool-result', callId: message.tool_call_id, content: content.map(toWirePart) }] };
-  }
-  return {
-    role: messageToOpenAIRole(message),
-    parts: [
-      ...content.filter((part) => part !== '').map(toWirePart),
-      ...(AIMessage.isInstance(message) ? message.tool_calls ?? [] : []).map((call) => (
-        { type: 'tool-call' as const, callId: call.id ?? '', name: call.name, input: call.args }
-      )),
-    ],
-  };
-}
-
 /** Whether a chunk's metadata ends the generation on the provider's content filter (Chat Completions `finish_reason`, Responses `incomplete_details.reason`). */
 function isContentFilter(metadata: Record<string, unknown> | undefined): boolean {
   const incomplete = metadata?.incomplete_details;
   return metadata?.finish_reason === 'content_filter'
     || (typeof incomplete === 'object' && incomplete !== null && (incomplete as { reason?: unknown }).reason === 'content_filter');
-}
-
-function failureCode(error: unknown): ModelPortErrorCode {
-  const status = typeof error === 'object' && error !== null ? (error as { status?: unknown }).status : undefined;
-  if (status === 401 || status === 403) return 'no_permission';
-  return status === 404 ? 'model_not_found' : 'provider_error';
-}
-
-/**
- * One failure as a port error: cancellation by the signal, else a redacted message and the cause.
- */
-function normalizeError(error: unknown, signal: AbortSignal | undefined): ModelPortError {
-  if (error instanceof ModelPortError) return error;
-  if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) return cancelledError();
-  const code = failureCode(error);
-  const text = error instanceof Error ? error.message : '';
-  return new ModelPortError(code, sanitizeProviderError(text) || `Language model request failed (${code}).`, error);
 }
 
 type WireToolChoice = NonNullable<Parameters<ChatOpenAI['bindTools']>[1]>['tool_choice'];
@@ -181,87 +109,40 @@ type WireToolChoice = NonNullable<Parameters<ChatOpenAI['bindTools']>[1]>['tool_
  * The choice as the entry's API takes it. The Responses client drops a string choice, so a required
  * call over several tools goes as the API's `allowed_tools` object; Chat Completions takes `'any'`.
  */
-function wireToolChoice(entry: OpenAiModelEntry, choice: string | undefined, tools: readonly TransportTool[]): WireToolChoice {
+function wireToolChoice(entry: OpenAiModelEntry, choice: string | undefined, tools: readonly ChatTool[]): WireToolChoice {
   if (choice !== 'any' || entry.apiType !== 'responses') return choice;
   return {
     type: 'allowed_tools',
-    allowed_tools: { mode: 'required', tools: tools.map((tool) => ({ type: 'function', name: tool.name })) },
+    allowed_tools: { mode: 'required', tools: tools.map((tool) => ({ type: 'function', name: tool.function.name })) },
   } as unknown as WireToolChoice;
 }
 
 /**
- * `entry` as a transport; `effort` overrides the entry's own `reasoningEffort` for its requests.
+ * `entry` as a provider chat: `ChatOpenAI` as is, with the entry's request mapping. `effort`
+ * overrides the entry's own `reasoningEffort` for its requests.
  */
-function createOpenAiTransport(entry: OpenAiModelEntry, apiKey: string, effort = entry.reasoningEffort): ModelTransport {
+function createOpenAiChat(entry: OpenAiModelEntry, apiKey: string, effort = entry.reasoningEffort): ProviderChat {
   const chat = createChatModel(entry, apiKey, effort);
   return {
     id: `provider:${entry.id}`,
     identity: { id: entry.id, name: entry.name, vendor: 'openai-compatible', family: entry.model, version: entry.apiType },
-    countTokens: text => Promise.resolve(countTokens(text)),
-    async *stream({ messages, tools, toolChoice, signal, wire }: TransportRequest) {
-      let replyReceived = false;
-      try {
-        if (signal?.aborted) throw cancelledError();
-        const forced = toolChoice !== undefined && toolChoice !== 'auto' && toolChoice !== 'none';
-        const sentChoice = forced && !entry.forcedToolChoice ? 'auto' : wireToolChoice(entry, toolChoice, tools);
-        const request = projectMessages(messages, entry);
-        wire?.({
-          type: 'wire-request',
-          messages: request.messages.map(toWireMessage),
-          tools: tools.map((tool) => ({
-            name: tool.name,
-            descriptionHash: systemPromptHash(tool.description),
-            inputSchema: tool.inputSchema,
-          })),
-          toolMode: tools.length > 0 ? (forced && entry.forcedToolChoice ? 2 : 1) : undefined,
-          body: wireBody(chat, tools.length > 0 ? sentChoice : undefined),
-        });
-        const model = tools.length > 0
-          ? chat.bindTools(
-              tools.map((tool) => ({
-                type: 'function' as const,
-                function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
-              })),
-              { tool_choice: sentChoice },
-            )
-          : chat;
-        let total: AIMessageChunk | undefined;
-        let usage: TokenUsage | undefined;
-        for await (const chunk of await model.stream(request.messages, {
-          signal,
-          ...(request.previousResponseId ? { previous_response_id: request.previousResponseId } : {}),
-        })) {
-          replyReceived = true;
-          // A choice that finished with `error` is the provider's failure, whatever it streamed before.
-          if (chunk.response_metadata?.finish_reason === 'error') {
-            throw new ModelPortError('provider_error', 'Provider ended the generation with finish_reason error.');
-          }
-          // A vendor safety refusal ends the turn: resending the flagged text only repeats it.
-          if (isContentFilter(chunk.response_metadata)) throw new ModelPortError('blocked', 'Model declined to respond.');
-          usage = toUsage(chunk.usage_metadata) ?? usage;
-          total = total ? total.concat(chunk) : chunk;
-          yield chunk;
-        }
-        if (!replyReceived) throw new ModelPortError('unsupported_response', 'Provider reply carried no event stream.');
-        wire?.({
-          type: 'wire-response',
-          text: total ? messageContentToText(total.content) : '',
-          // The streamed text, not LangChain's completed `tool_calls`: a cut call shows what the model sent.
-          toolCalls: (total?.tool_call_chunks ?? []).map((call) => ({
-            callId: call.id ?? '',
-            name: call.name ?? '',
-            input: parseStreamedArguments(call.args),
-          })),
-          finishReason: typeof total?.response_metadata?.finish_reason === 'string' ? total.response_metadata.finish_reason : undefined,
-          usage,
-        });
-        yield new AIMessageChunk({
-          content: '',
-          response_metadata: { streamEnd: true, [ENTRY_KEY]: entry.id, ...(usage ? { providerUsage: usage } : {}) },
-        });
-      } catch (error) {
-        throw normalizeError(error, signal);
+    request(messages, tools, toolChoice) {
+      const forced = toolChoice !== undefined && toolChoice !== 'auto' && toolChoice !== 'none';
+      const sentChoice = forced && !entry.forcedToolChoice ? 'auto' : wireToolChoice(entry, toolChoice, tools);
+      const request = projectMessages(messages, entry);
+      return {
+        model: tools.length > 0 ? chat.bindTools([...tools], { tool_choice: sentChoice }) : chat,
+        messages: request.messages,
+        options: request.previousResponseId ? { previous_response_id: request.previousResponseId } : undefined,
+      };
+    },
+    check(chunk) {
+      // A choice that finished with `error` is the provider's failure, whatever it streamed before.
+      if (chunk.response_metadata?.finish_reason === 'error') {
+        throw new ModelPortError('provider_error', 'Provider ended the generation with finish_reason error.');
       }
+      // A vendor safety refusal ends the turn: resending the flagged text only repeats it.
+      if (isContentFilter(chunk.response_metadata)) throw new ModelPortError('blocked', 'Model declined to respond.');
     },
   };
 }
@@ -273,5 +154,5 @@ export function createProviderModelPort(
   options: ProviderModelPortOptions & { readonly effort?: string } = {},
 ): ProviderModelPort {
   const { effort, ...portOptions } = options;
-  return new ProviderModelPort(createOpenAiTransport(entry, apiKey, effort), portOptions);
+  return new ProviderModelPort(createOpenAiChat(entry, apiKey, effort), portOptions);
 }

@@ -45,7 +45,7 @@ export function messageProviderParts(message: BaseMessage): readonly unknown[] {
  * would complete a cut text into `tool_calls`, and a provider rejects a history call whose
  * arguments are no JSON object; the rejection result carries the fault to the model), and a call
  * the message lacks gets empty arguments too, so every call keeps the tool result that answers it.
- * The turn keeps `response_metadata`: it names the endpoint and response the transport chains the
+ * The turn keeps `response_metadata`: it names the endpoint and response the provider chains the
  * next request on, and it is the only mark of a turn the endpoint owns.
  */
 export function transcriptTurn(message: AIMessage, calls: readonly GeneratedToolCall[]): AIMessage {

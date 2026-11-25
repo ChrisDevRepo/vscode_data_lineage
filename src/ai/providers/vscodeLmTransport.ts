@@ -1,19 +1,18 @@
 /**
  * The VS Code language-model kind: a model another extension (Copilot Chat, a provider extension)
- * publishes through `vscode.lm`, spoken to as a {@link ModelTransport} beside the OpenAI one. The one
+ * publishes through `vscode.lm`, spoken to as a LangChain chat model beside the OpenAI one. The one
  * file that touches `vscode.lm` and its `LanguageModel*` types. Structured output stays the port's
  * forced synthetic tool (`toolMode: Required`); the platform has no system role, so the system
- * prompt goes as the first User message, and no JSON-schema or strict mode exists. The message and
- * part mapping is the former `vscodeLangChainBridge`'s.
+ * prompt goes as the first User message, and no JSON-schema or strict mode exists.
  */
 import * as vscode from 'vscode';
-import { AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage, type BaseMessage, type MessageContent } from '@langchain/core/messages';
+import type { CallbackManagerForLLMRun } from '@langchain/core/callbacks/manager';
+import { BaseChatModel, type BaseChatModelCallOptions } from '@langchain/core/language_models/chat_models';
+import { AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage, type BaseMessage, type MessageContent, type UsageMetadata } from '@langchain/core/messages';
+import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import { cancelledError, ModelPortError, type ModelPortErrorCode } from '../model/modelPort';
 import { isRecord } from '../../utils/isRecord';
-import type { ModelTransport, TransportRequest } from '../model/providerModelPort';
-import { safeTraceStringify, systemPromptHash, type TokenUsage, type WireMessage, type WirePart } from '../observability/wireLog';
-import { sanitizeProviderError } from '../support/text';
-import { countTokens } from '../support/tokenCount';
+import { toPortError, type ChatTool, type ProviderChat } from '../model/providerModelPort';
 import { LIVE_MODEL_ID_PREFIX, type VscodeLmModelEntry } from './modelEntries';
 
 /** One language model as the host lists it, free of `vscode` types except the handle. */
@@ -27,7 +26,7 @@ export interface LmModelInfo {
   readonly version: string;
   /** The input window the model reports. */
   readonly maxInputTokens: number;
-  /** Opaque to every caller but {@link createVscodeLmTransport}. */
+  /** Opaque to every caller but {@link createVscodeLmChat}. */
   readonly model: vscode.LanguageModelChat;
 }
 
@@ -100,21 +99,8 @@ function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage 
   throw new ModelPortError('invalid_request', `Unsupported LangChain message type: ${message.getType()}.`);
 }
 
-/** One native part as the trace states it; a part not modeled is kept as `other` JSON. */
-function toWirePart(part: unknown): WirePart {
-  if (part instanceof vscode.LanguageModelTextPart) return { type: 'text', value: part.value };
-  if (part instanceof vscode.LanguageModelToolCallPart) return { type: 'tool-call', callId: part.callId, name: part.name, input: part.input };
-  if (part instanceof vscode.LanguageModelToolResultPart) return { type: 'tool-result', callId: part.callId, content: part.content.map(toWirePart) };
-  return { type: 'other', json: safeTraceStringify(part) };
-}
-
-function toWireMessage(message: vscode.LanguageModelChatMessage): WireMessage {
-  const role = message.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant';
-  return { role, parts: message.content.map(toWirePart) };
-}
-
 /** Token usage from the UTF-8 JSON data part VS Code's built-in providers stream (OpenAI names); undefined if bad. */
-function parseUsageData(data: unknown): TokenUsage | undefined {
+function parseUsageData(data: unknown): UsageMetadata | undefined {
   if (!(data instanceof Uint8Array)) return undefined;
   let raw: unknown;
   try {
@@ -125,14 +111,18 @@ function parseUsageData(data: unknown): TokenUsage | undefined {
   if (!isRecord(raw)) return undefined;
   const count = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined);
   const nested = (key: string, field: string): number | undefined => (isRecord(raw[key]) ? count(raw[key][field]) : undefined);
-  const present = Object.entries({
-    inputTokens: count(raw.prompt_tokens),
-    outputTokens: count(raw.completion_tokens),
-    totalTokens: count(raw.total_tokens),
-    reasoningTokens: nested('completion_tokens_details', 'reasoning_tokens'),
-    cachedTokens: nested('prompt_tokens_details', 'cached_tokens'),
-  }).filter(([, value]) => value !== undefined);
-  return present.length > 0 ? Object.fromEntries(present) as TokenUsage : undefined;
+  const input = count(raw.prompt_tokens);
+  const output = count(raw.completion_tokens);
+  if (input === undefined || output === undefined) return undefined;
+  const reasoning = nested('completion_tokens_details', 'reasoning_tokens');
+  const cached = nested('prompt_tokens_details', 'cached_tokens');
+  return {
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: count(raw.total_tokens) ?? input + output,
+    ...(reasoning === undefined ? {} : { output_token_details: { reasoning } }),
+    ...(cached === undefined ? {} : { input_token_details: { cache_read: cached } }),
+  };
 }
 
 const FAILURE_CODES: Readonly<Record<string, ModelPortErrorCode>> = {
@@ -141,76 +131,107 @@ const FAILURE_CODES: Readonly<Record<string, ModelPortErrorCode>> = {
   NotFound: 'model_not_found',
 };
 
-/** One failure as a port error: cancellation by the token or signal, else a redacted message and the cause. */
-function normalizeError(error: unknown, token: vscode.CancellationToken, signal: AbortSignal | undefined): ModelPortError {
-  if (error instanceof ModelPortError) return error;
-  if (token.isCancellationRequested || signal?.aborted) return cancelledError();
-  const code = (isRecord(error) && typeof error.code === 'string' ? FAILURE_CODES[error.code] : undefined) ?? 'provider_error';
-  const text = error instanceof Error ? error.message : '';
-  return new ModelPortError(code, sanitizeProviderError(text) || `Language model request failed (${code}).`, error);
+/** The call options: the OpenAI-form tools and the choice the port binds with {@link VscodeLmChatModel.bindTools}. */
+interface VscodeLmCallOptions extends BaseChatModelCallOptions {
+  tools?: ChatTool[];
 }
 
 /**
- * `entry` over `model` as a transport. `modelOptions` is the entry's `requestBody` plus `max_tokens`
- * from `maxOutputTokens`, sent unchanged and left out when empty (a live selection has neither).
+ * One `vscode.lm` model as a LangChain chat model. `modelOptions` go to the host unchanged and
+ * are what the trace states as the request body. The reply is streamed as chunks: text, whole tool
+ * calls, and a last chunk whose `finish_reason` says the stream was seen to its end and whose
+ * `usage_metadata` is the last readable usage data part. A failure is a {@link ModelPortError}.
  */
-export function createVscodeLmTransport(entry: VscodeLmModelEntry, model: vscode.LanguageModelChat): ModelTransport {
-  const modelOptions = { ...(entry.maxOutputTokens === undefined ? {} : { max_tokens: entry.maxOutputTokens }), ...entry.requestBody };
-  const hasOptions = Object.keys(modelOptions).length > 0;
+export class VscodeLmChatModel extends BaseChatModel<VscodeLmCallOptions> {
+  public constructor(
+    private readonly model: vscode.LanguageModelChat,
+    private readonly modelOptions: Record<string, unknown> = {},
+  ) {
+    super({});
+  }
+
+  public _llmType(): string {
+    return 'vscode-lm';
+  }
+
+  public override invocationParams(): Record<string, unknown> {
+    return this.modelOptions;
+  }
+
+  public override bindTools(tools: ChatTool[], kwargs?: Partial<VscodeLmCallOptions>) {
+    return this.withConfig({ tools, ...kwargs });
+  }
+
+  public async _generate(messages: BaseMessage[], options: this['ParsedCallOptions'], runManager?: CallbackManagerForLLMRun): Promise<ChatResult> {
+    let reply: ChatGenerationChunk | undefined;
+    for await (const chunk of this._streamResponseChunks(messages, options, runManager)) reply = reply ? reply.concat(chunk) : chunk;
+    return { generations: reply ? [reply] : [] };
+  }
+
+  public override async *_streamResponseChunks(
+    messages: BaseMessage[],
+    options: this['ParsedCallOptions'],
+    _runManager?: CallbackManagerForLLMRun,
+  ): AsyncGenerator<ChatGenerationChunk> {
+    const { signal, tools = [], tool_choice: toolChoice } = options;
+    const cancellation = new vscode.CancellationTokenSource();
+    // LangChain drops a stream on abort without closing it; the host's stream is closed here, with its token.
+    let host: AsyncIterator<unknown> | undefined;
+    const cancel = () => {
+      cancellation.cancel();
+      host?.return?.().catch(() => undefined);
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+    const chunk = (message: AIMessageChunk) => new ChatGenerationChunk({ message, text: typeof message.content === 'string' ? message.content : '' });
+    try {
+      if (signal?.aborted) throw cancelledError();
+      const toolMode = toolChoice !== undefined && toolChoice !== 'auto' ? vscode.LanguageModelChatToolMode.Required : vscode.LanguageModelChatToolMode.Auto;
+      const response = await this.model.sendRequest(messages.map(toVscodeMessage), {
+        ...(tools.length > 0 ? { tools: tools.map(({ function: { name, description, parameters } }) => ({ name, description, inputSchema: parameters })), toolMode } : {}),
+        ...(Object.keys(this.modelOptions).length > 0 ? { modelOptions: this.modelOptions } : {}),
+      }, cancellation.token);
+      let calls = 0;
+      let usage: UsageMetadata | undefined;
+      host = response.stream[Symbol.asyncIterator]();
+      for (let next = await host.next(); !next.done; next = await host.next()) {
+        const part = next.value;
+        if (signal?.aborted) throw cancelledError();
+        if (part instanceof vscode.LanguageModelTextPart) {
+          yield chunk(new AIMessageChunk({ content: part.value }));
+        } else if (part instanceof vscode.LanguageModelToolCallPart) {
+          yield chunk(new AIMessageChunk({
+            content: '',
+            tool_call_chunks: [{ id: part.callId, name: part.name, args: JSON.stringify(part.input), index: calls, type: 'tool_call_chunk' }],
+          }));
+          calls += 1;
+        } else if (isRecord(part) && part.mimeType === 'usage') {
+          usage = parseUsageData(part.data) ?? usage;
+        }
+      }
+      if (signal?.aborted) throw cancelledError();
+      yield chunk(new AIMessageChunk({ content: '', response_metadata: { finish_reason: calls > 0 ? 'tool_calls' : 'stop' }, ...(usage ? { usage_metadata: usage } : {}) }));
+    } catch (error) {
+      throw toPortError(error, signal, isRecord(error) && typeof error.code === 'string' ? FAILURE_CODES[error.code] : undefined);
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      cancellation.dispose();
+    }
+  }
+}
+
+/**
+ * `entry` over `model` as a provider chat. `modelOptions` is the entry's `requestBody` plus
+ * `max_tokens` from `maxOutputTokens`, sent unchanged and left out when empty (a live selection has
+ * neither).
+ */
+export function createVscodeLmChat(entry: VscodeLmModelEntry, model: vscode.LanguageModelChat): ProviderChat {
+  const chat = new VscodeLmChatModel(model, { ...(entry.maxOutputTokens === undefined ? {} : { max_tokens: entry.maxOutputTokens }), ...entry.requestBody });
   return {
     id: `provider:${entry.id}`,
     identity: { id: entry.id, name: entry.name, vendor: model.vendor, family: model.family, version: model.version },
-    countTokens: (text) => Promise.resolve(countTokens(text)),
-    async *stream({ messages, tools, toolChoice, signal, wire }: TransportRequest) {
-      const cancellation = new vscode.CancellationTokenSource();
-      const cancel = () => cancellation.cancel();
-      signal?.addEventListener('abort', cancel, { once: true });
-      const cancelled = () => cancellation.token.isCancellationRequested || signal?.aborted === true;
-      try {
-        if (cancelled()) throw cancelledError();
-        const native = messages.map(toVscodeMessage);
-        const toolMode = toolChoice !== undefined && toolChoice !== 'auto' ? vscode.LanguageModelChatToolMode.Required : vscode.LanguageModelChatToolMode.Auto;
-        wire?.({
-          type: 'wire-request',
-          messages: native.map(toWireMessage),
-          tools: tools.map((tool) => ({ name: tool.name, descriptionHash: systemPromptHash(tool.description), inputSchema: tool.inputSchema })),
-          toolMode: tools.length > 0 ? toolMode : undefined,
-          ...(hasOptions ? { body: modelOptions } : {}),
-        });
-        const response = await model.sendRequest(native, {
-          ...(tools.length > 0 ? { tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })), toolMode } : {}),
-          ...(hasOptions ? { modelOptions } : {}),
-        }, cancellation.token);
-        let text = '';
-        let usage: TokenUsage | undefined;
-        const calls: Array<{ callId: string; name: string; input: unknown }> = [];
-        const otherParts: WirePart[] = [];
-        for await (const part of response.stream) {
-          if (cancelled()) throw cancelledError();
-          if (part instanceof vscode.LanguageModelTextPart) {
-            text += part.value;
-            yield new AIMessageChunk({ content: part.value });
-          } else if (part instanceof vscode.LanguageModelToolCallPart) {
-            calls.push({ callId: part.callId, name: part.name, input: part.input });
-            yield new AIMessageChunk({
-              content: '',
-              tool_call_chunks: [{ id: part.callId, name: part.name, args: JSON.stringify(part.input), index: calls.length - 1, type: 'tool_call_chunk' }],
-            });
-          } else if (isRecord(part) && part.mimeType === 'usage') {
-            usage = parseUsageData(part.data) ?? usage;
-          } else {
-            otherParts.push(toWirePart(part));
-          }
-        }
-        if (cancelled()) throw cancelledError();
-        wire?.({ type: 'wire-response', text, toolCalls: calls, ...(otherParts.length > 0 ? { otherParts } : {}), ...(usage ? { usage } : {}) });
-        yield new AIMessageChunk({ content: '', response_metadata: { streamEnd: true, ...(usage ? { providerUsage: usage } : {}) } });
-      } catch (error) {
-        throw normalizeError(error, cancellation.token, signal);
-      } finally {
-        signal?.removeEventListener('abort', cancel);
-        cancellation.dispose();
-      }
-    },
+    request: (messages, tools, toolChoice) => ({
+      model: tools.length > 0 ? chat.bindTools([...tools], { tool_choice: toolChoice }) : chat,
+      messages: [...messages],
+    }),
   };
 }

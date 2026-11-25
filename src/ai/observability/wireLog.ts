@@ -21,9 +21,7 @@ export type WirePart =
       readonly type: 'tool-result';
       readonly callId: string;
       readonly content: readonly WirePart[];
-    }
-  /** Unknown result-part variants, kept so capture stays total across VS Code API changes. */
-  | { readonly type: 'other'; readonly json: string };
+    };
 
 /** One converted message as handed to the provider. */
 export interface WireMessage {
@@ -57,8 +55,8 @@ export type WireEvent =
       /** 1 when the request offers tools, 2 when it forces a call; absent when it carries no tools. */
       readonly toolMode?: number;
       /**
-       * The request fields that steer the model, as the HTTP body sent them: the transport's
-       * `WIRE_BODY_FIELDS` (tool choice, reasoning, sampling and output cap).
+       * The request fields that steer the model, as the chat model's own `invocation_params` state
+       * them: the port's `WIRE_BODY_FIELDS` (tool choice, reasoning, sampling and output cap).
        * Never a header or key.
        */
       readonly body?: Readonly<Record<string, unknown>>;
@@ -75,11 +73,9 @@ export type WireEvent =
         readonly name: string;
         readonly input: unknown;
       }>;
-      /** Raw provider stop reason, on lanes whose protocol reports one. */
+      /** The provider's stop reason; on vscode-lm the chat model's own stream end (`stop` or `tool_calls`). */
       readonly finishReason?: string;
       readonly usage?: TokenUsage;
-      /** Stream parts that are neither text nor a tool call (reasoning, signatures, usage). */
-      readonly otherParts?: readonly WirePart[];
     }
   | {
       /** Sanitized provider failure paired with the request that did not produce a response. */
@@ -89,7 +85,7 @@ export type WireEvent =
   | {
       /**
        * One completed generation, summarized; `finishReason` is `unknown` when the provider gave
-       * none and sent no usage part (the stream may have been cut).
+       * no `finish_reason` (the stream may have been cut).
        */
       readonly type: 'generation';
       readonly modelId: string;

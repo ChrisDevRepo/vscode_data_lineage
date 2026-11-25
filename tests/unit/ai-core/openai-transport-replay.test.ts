@@ -2,11 +2,12 @@ import { AIMessage, AIMessageChunk, HumanMessage, ToolMessage } from '@langchain
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { transcriptTurn } from '../../../src/ai/model/modelPort';
-import { ProviderModelPort, type ModelTransport } from '../../../src/ai/model/providerModelPort';
+import { ProviderModelPort } from '../../../src/ai/model/providerModelPort';
 import type { WireRecord } from '../../../src/ai/observability/wireLog';
 import { parseModelEntries, type OpenAiModelEntry } from '../../../src/ai/providers/modelEntries';
 import { createProviderModelPort } from '../../../src/ai/providers/openAiTransport';
 import { describeTurnStop } from '../../../src/ai/support/text';
+import { scriptedChat } from './helpers/scriptedChat';
 
 /**
  * Pins the wire shape of a replayed assistant turn: a call whose streamed arguments are no JSON
@@ -22,21 +23,16 @@ const schema = z.object({ sections: z.object({ technical: z.string() }) });
 const tools = [{ name: 'lineage_present_result', description: 'd', inputSchema: schema }];
 
 async function history(own = false) {
-  const source: ModelTransport = {
-    id: 'src',
-    identity: { id: 'm', name: 'm', vendor: 'v', family: 'f', version: '1' },
-    countTokens: async () => 1,
-    async *stream() {
-      yield new AIMessageChunk({
-        content: '',
-        tool_call_chunks: [
-          { type: 'tool_call_chunk', index: 0, id: 'call_ok', name: 'lineage_present_result', args: '{"sections":{"technical":"x"}}' },
-          { type: 'tool_call_chunk', index: 1, id: 'call_cut', name: 'lineage_present_result', args: CUT },
-        ],
-      });
-      yield new AIMessageChunk({ content: '', response_metadata: { streamEnd: true } });
-    },
-  };
+  const source = scriptedChat([
+    new AIMessageChunk({
+      content: '',
+      tool_call_chunks: [
+        { type: 'tool_call_chunk', index: 0, id: 'call_ok', name: 'lineage_present_result', args: '{"sections":{"technical":"x"}}' },
+        { type: 'tool_call_chunk', index: 1, id: 'call_cut', name: 'lineage_present_result', args: CUT },
+      ],
+    }),
+    new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } }),
+  ]);
   const result = await new ProviderModelPort(source).generateToolTurn({ messages: [], tools, phase: 'test' });
   if (result.status !== 'completed') throw new Error('turn failed');
   if (own) result.message.response_metadata = { ...result.message.response_metadata, entryId: 'e' };
