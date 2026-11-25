@@ -28,9 +28,9 @@ export function countTokens(text: string): number {
  * with.
  */
 export function checkScopeText(
-  budget: TurnTokenBudget | null,
+  budget: TurnTokenBudget,
   requestedNodes: number,
   text: string,
 ): DiscoveryBudgetRejection | null {
-  return budget ? checkScopeTokens(budget, requestedNodes, countTokens(text), text.length) : null;
+  return checkScopeTokens(budget, requestedNodes, countTokens(text), text.length);
 }

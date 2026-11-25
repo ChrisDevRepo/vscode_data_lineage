@@ -23,7 +23,6 @@
     "tests/harness/vscodeHostShim.ts",
     // Imported by external consumers (@ext alias / createRequire), which knip cannot trace.
     "tests/harness/scriptedModelPort.ts",
-    "tests/unit/helpers/toolHost.ts",
     // Comment-batch proof tool invoked by CI, not the public gate.
     "tests/tools/assert-comment-only.mjs",
   ],
