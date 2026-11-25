@@ -772,10 +772,16 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
       : [];
-    sess.appendDiscoveryTurn(deps.model.budget, [
-      modelUserMessage(state.prompt),
-      ...assistantMessage,
-    ], nextAttempt.observations, message => deps.logger?.debug(message));
+    await sess.appendDiscoveryTurn(
+      deps.model.budget,
+      [
+        modelUserMessage(state.prompt),
+        ...assistantMessage,
+      ],
+      nextAttempt.observations,
+      message => deps.logger?.debug(message),
+      text => deps.model.getNumTokens(text),
+    );
     const closingNotices = sess.takeClosingNotices();
     if (closingNotices) deps.sink.stream(closingNotices);
     return { outcome: 'ok', messages: assistantMessage, toolAttempt: null, phase: 'done' };

@@ -126,6 +126,36 @@ function renderDiscoveryTranscript(turns: readonly DiscoveryTranscriptTurn[]): s
 }
 
 /**
+ * Evicts oldest items until both the count cap and the token cap fit, executing synchronously
+ * whenever `countTextTokens` returns a number and returning a Promise only when it is async.
+ */
+function trimWhileOverTokenBudget(
+  maxCount: number,
+  length: () => number,
+  render: () => string,
+  evictOldest: () => void,
+  tokenBudget: number,
+  countTextTokens: (text: string) => number | Promise<number>,
+): void | Promise<void> {
+  while (length() > maxCount) evictOldest();
+  const step = (): void | Promise<void> => {
+    while (length() > 0) {
+      const count = countTextTokens(render());
+      if (typeof count !== 'number') {
+        return count.then((tokens) => {
+          if (tokens <= tokenBudget) return;
+          evictOldest();
+          return step();
+        });
+      }
+      if (count <= tokenBudget) return;
+      evictOldest();
+    }
+  };
+  return step();
+}
+
+/**
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
  *
  * @remarks
@@ -598,15 +628,47 @@ export class AiSession {
    *
    * @param budget - Budget of the turn that produced the messages (the session is shared by every
    *   turn).
+   * @param turnMessages - Canonical user/assistant messages from the completed discovery turn.
+   * @param observations - Graph-owned tool observations eligible for cross-turn grounding.
    * @param debugLog - Debug sink for a normalized eviction/drop; the session holds no logger of its
    *   own.
+   * @param countTextTokens - Token counter for the turn's model (defaults to {@link countTokens}
+   *   when omitted by direct callers).
    */
+  public appendDiscoveryTurn(
+    budget: TurnTokenBudget,
+    turnMessages: readonly ModelMessage[],
+    observations?: readonly DiscoveryEvidenceObservation[],
+    debugLog?: (message: string) => void,
+  ): void;
+  public appendDiscoveryTurn(
+    budget: TurnTokenBudget,
+    turnMessages: readonly ModelMessage[],
+    observations: readonly DiscoveryEvidenceObservation[],
+    debugLog: ((message: string) => void) | undefined,
+    countTextTokens: (text: string) => number,
+  ): void;
+  public appendDiscoveryTurn(
+    budget: TurnTokenBudget,
+    turnMessages: readonly ModelMessage[],
+    observations: readonly DiscoveryEvidenceObservation[],
+    debugLog: ((message: string) => void) | undefined,
+    countTextTokens: (text: string) => Promise<number>,
+  ): Promise<void>;
+  public appendDiscoveryTurn(
+    budget: TurnTokenBudget,
+    turnMessages: readonly ModelMessage[],
+    observations: readonly DiscoveryEvidenceObservation[],
+    debugLog: ((message: string) => void) | undefined,
+    countTextTokens: (text: string) => number | Promise<number>,
+  ): void | Promise<void>;
   public appendDiscoveryTurn(
     budget: TurnTokenBudget,
     turnMessages: readonly ModelMessage[],
     observations: readonly DiscoveryEvidenceObservation[] = [],
     debugLog?: (message: string) => void,
-  ): void {
+    countTextTokens: (text: string) => number | Promise<number> = countTokens,
+  ): void | Promise<void> {
     let user: string | null = null;
     let assistant: string | null = null;
     for (const message of turnMessages) {
@@ -621,50 +683,80 @@ export class AiSession {
         && user !== null
       ) assistant = message.content;
     }
-    if (user !== null && assistant !== null) {
+    const trimTranscript = (): void | Promise<void> => {
+      if (user === null || assistant === null) return;
       this.discoveryTranscript.push([
         { role: 'user', content: user },
         { role: 'assistant', content: assistant },
       ]);
-      while (this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS
-        || countTokens(renderDiscoveryTranscript(this.discoveryTranscript)) > contextBlockTokens(budget)) {
-        this.discoveryTranscript.shift();
-        debugLog?.(`[AI] [Discovery] oldest transcript turn evicted — turnsRemaining=${this.discoveryTranscript.length} cap=${MAX_DISCOVERY_TRANSCRIPT_TURNS}`);
-      }
-    }
-    for (const observation of observations) {
+      return trimWhileOverTokenBudget(
+        MAX_DISCOVERY_TRANSCRIPT_TURNS,
+        () => this.discoveryTranscript.length,
+        () => renderDiscoveryTranscript(this.discoveryTranscript),
+        () => {
+          this.discoveryTranscript.shift();
+          debugLog?.(`[AI] [Discovery] oldest transcript turn evicted — turnsRemaining=${this.discoveryTranscript.length} cap=${MAX_DISCOVERY_TRANSCRIPT_TURNS}`);
+        },
+        contextBlockTokens(budget),
+        countTextTokens,
+      );
+    };
+    const processObservation = (observation: DiscoveryEvidenceObservation): void | Promise<void> => {
       const toolName = observation.toolName ? trunc(sanitizeForLog(observation.toolName), 64) : '(missing)';
       if (!observation.toolName) {
         debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=missing_tool_name`);
-        continue;
+        return;
       }
-      const resultTokens = countTokens(observation.result);
-      if (resultTokens > storedEvidenceKindTokens(budget)) {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized tokens=${resultTokens} cap=${storedEvidenceKindTokens(budget)}`);
-        continue;
+      const afterCount = (resultTokens: number): void | Promise<void> => {
+        if (resultTokens > storedEvidenceKindTokens(budget)) {
+          debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized tokens=${resultTokens} cap=${storedEvidenceKindTokens(budget)}`);
+          return;
+        }
+        let result: unknown;
+        try {
+          result = JSON.parse(observation.result);
+        } catch {
+          debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=unparseable`);
+          return;
+        }
+        if (result === null || typeof result !== 'object') {
+          debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=not_an_object`);
+          return;
+        }
+        if (readToolError(result)) {
+          debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=error_envelope`);
+          return;
+        }
+        this.discoveryEvidence.push({ toolName: observation.toolName, result });
+        return trimWhileOverTokenBudget(
+          MAX_DISCOVERY_EVIDENCE_OBSERVATIONS,
+          () => this.discoveryEvidence.length,
+          () => this.renderDiscoveryEvidence(),
+          () => {
+            const evicted = this.discoveryEvidence.shift();
+            debugLog?.(`[AI] [Discovery] oldest evidence observation evicted — tool=${evicted ? trunc(sanitizeForLog(evicted.toolName), 64) : '(unknown)'} remaining=${this.discoveryEvidence.length}`);
+          },
+          contextBlockTokens(budget),
+          countTextTokens,
+        );
+      };
+      const rawCount = countTextTokens(observation.result);
+      return typeof rawCount === 'number'
+        ? afterCount(rawCount)
+        : rawCount.then(afterCount);
+    };
+    const processObservations = (index: number): void | Promise<void> => {
+      while (index < observations.length) {
+        const result = processObservation(observations[index++]);
+        if (result !== undefined) {
+          return result.then(() => processObservations(index));
+        }
       }
-      let result: unknown;
-      try {
-        result = JSON.parse(observation.result);
-      } catch {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=unparseable`);
-        continue;
-      }
-      if (result === null || typeof result !== 'object') {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=not_an_object`);
-        continue;
-      }
-      if (readToolError(result)) {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=error_envelope`);
-        continue;
-      }
-      this.discoveryEvidence.push({ toolName: observation.toolName, result });
-      while (this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS
-        || countTokens(this.renderDiscoveryEvidence()) > contextBlockTokens(budget)) {
-        const evicted = this.discoveryEvidence.shift();
-        debugLog?.(`[AI] [Discovery] oldest evidence observation evicted — tool=${evicted ? trunc(sanitizeForLog(evicted.toolName), 64) : '(unknown)'} remaining=${this.discoveryEvidence.length}`);
-      }
-    }
+    };
+    const transcriptResult = trimTranscript();
+    return transcriptResult !== undefined
+      ? transcriptResult.then(() => processObservations(0))
+      : processObservations(0);
   }
 
   /**
