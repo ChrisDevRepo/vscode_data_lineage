@@ -17,11 +17,8 @@ import type {
   ValidGeneratedToolCall,
 } from '../../src/ai/model/modelPort';
 import { StructuredOutputError } from '../../src/ai/providers/structuredOutput';
-import {
-  DEFAULT_TURN_TOKEN_BUDGET,
-  estimateTokens,
-  type TurnTokenBudget,
-} from '../../src/ai/support/tokenBudget';
+import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../../src/ai/support/tokenBudget';
+import { countTokens } from '../../src/ai/support/tokenCount';
 import { errorToolTurnResult, messageContentToText, ModelPortError, modelToolCallMessage } from '../../src/ai/model/modelPort';
 import type { MessageContent } from '@langchain/core/messages';
 
@@ -90,9 +87,9 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
     return this.calls;
   }
 
-  /** Deterministic stand-in for a provider counter — LangChain's own chars/4 approximation, so a test can predict trim boundaries. */
+  /** The shipped counter, so a test predicts trim boundaries as the transports count them. */
   public async getNumTokens(content: MessageContent): Promise<number> {
-    return estimateTokens(messageContentToText(content).length);
+    return countTokens(messageContentToText(content));
   }
 
   /** Replays the next queued text-only reply, standing in for `ModelPort.completeText`. */

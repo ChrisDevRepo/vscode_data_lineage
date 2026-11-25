@@ -66,9 +66,8 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { toolCallNotationFault } from '../support/toolCallNotation';
 import { heldSubmissionFields } from '../tools/toolSchemas';
 import {
-  contextBlockBytes,
-  estimateTokens,
-  storedEvidenceKindBytes,
+  contextBlockTokens,
+  storedEvidenceKindTokens,
 } from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { IToolRegistry } from '../tools/registry';
@@ -108,15 +107,16 @@ const RESULT_TOO_LARGE_HINT = 'Narrow the request — fewer levels, one directio
  * The stored stand-in for an accepted result that does not fit the evidence share: a "too big"
  * reply in the tool-error shape the model already repairs from, never a prefix of the body.
  *
- * @param heldBytes - Bytes of observation bodies already held for this phase/hop.
- * @param budget - The evidence share both sizes were measured against.
+ * @param tokens - Tokens of the refused body.
+ * @param heldTokens - Tokens of observation bodies already held for this phase/hop.
+ * @param budget - The evidence share both sizes were measured against, in tokens.
  */
-function resultTooLargeReply(toolName: string, bytes: number, heldBytes: number, budget: number): string {
+function resultTooLargeReply(toolName: string, tokens: number, heldTokens: number, budget: number): string {
   return JSON.stringify(makeRejection({
     code: REJECTION_CODES.resultTooLarge,
     reason: RESULT_TOO_LARGE_REASON,
     hint: RESULT_TOO_LARGE_HINT,
-    detail: { tool: toolName, bytes, held_bytes: heldBytes, budget },
+    detail: { tool: toolName, tokens, held_tokens: heldTokens, budget },
   }));
 }
 
@@ -132,9 +132,10 @@ export const MAX_TOOL_PROVIDER_CALLS = 3;
 const MAX_REJECTION_DETAIL_BYTES = 2_048;
 
 /*
- * The retry-context byte budget (`contextBlockBytes()`) and the per-kind stored-evidence share
- * (`storedEvidenceKindBytes()`) are governed by `support/tokenBudget.ts`: a ceiling sized for a
- * 128k window, scaled down with the selected model's input window.
+ * The retry-context token budget (`contextBlockTokens()`) and the per-kind stored-evidence share
+ * (`storedEvidenceKindTokens()`) are governed by `support/tokenBudget.ts`: a ceiling sized for a
+ * 128k window, scaled down with the selected model's input window, and counted with the model
+ * port's own token counter.
  *
  * The re-projection IS the delivery: every attempt is a fresh request, so a body the store shrinks
  * is a body the model never receives. An accepted body is therefore stored whole or not at all —
@@ -592,7 +593,7 @@ export async function renderToolAttemptContext(
       const counts = await Promise.all(msgs.map(countMessageTokens));
       return counts.reduce((sum, count) => sum + count, 0);
     },
-    maxTokens: estimateTokens(contextBlockBytes(model.budget)),
+    maxTokens: contextBlockTokens(model.budget),
     startOn: ['human', 'ai'],
     includeSystem: true,
   });
@@ -1178,11 +1179,11 @@ interface ToolCallDispatchLoopInput {
    */
   readonly priorObservationKeys: ReadonlySet<string>;
   /**
-   * Observation bytes already held for this phase/hop, before this batch's own accepted reads. An
+   * Observation tokens already held for this phase/hop, before this batch's own accepted reads. An
    * accepted body is stored whole or not at all, so this running total is what each candidate is
    * measured against as the batch proceeds.
    */
-  readonly heldObservationBytes: number;
+  readonly heldObservationTokens: number;
 }
 
 /** Accumulated outcome of dispatching one provider batch of tool calls, in order, to completion. */
@@ -1228,7 +1229,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
   let cancelled = false;
   // The closer's kind: an accepted commit or control signal, versus a backend-fault rejection.
   let closedBy: { readonly callId: string; readonly toolName: string; readonly accepted: boolean } | null = null;
-  let heldObservationBytes = loop.heldObservationBytes;
+  let heldObservationTokens = loop.heldObservationTokens;
   const evaluatedOncePerReply = new Map<string, string>();
 
   for (const emitted of toolCalls) {
@@ -1376,20 +1377,20 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       let storedResult = resultText;
       let refused = false;
       if (observe) {
-        const candidateBytes = Buffer.byteLength(resultText);
-        if (heldObservationBytes + candidateBytes > storedEvidenceKindBytes(model.budget)) {
+        const candidateTokens = await model.getNumTokens(resultText);
+        if (heldObservationTokens + candidateTokens > storedEvidenceKindTokens(model.budget)) {
           refused = true;
-          storedResult = resultTooLargeReply(call.toolName, candidateBytes, heldObservationBytes, storedEvidenceKindBytes(model.budget));
+          storedResult = resultTooLargeReply(call.toolName, candidateTokens, heldObservationTokens, storedEvidenceKindTokens(model.budget));
           input.debugLog?.(
             `[Observation] result too big phase=${safeLogIdentifier(input.phase, 'unknown')}`
             + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
             + ` callId=${safeCallId(call.callId)}`
-            + ` bytes=${candidateBytes}`
-            + ` held=${heldObservationBytes}`
-            + ` budget=${storedEvidenceKindBytes(model.budget)}`,
+            + ` tokens=${candidateTokens}`
+            + ` held=${heldObservationTokens}`
+            + ` budget=${storedEvidenceKindTokens(model.budget)}`,
           );
         }
-        heldObservationBytes += Buffer.byteLength(storedResult);
+        heldObservationTokens += await model.getNumTokens(storedResult);
       }
       const outcome = recordToolOutcome(call, {
         status: 'executed',
@@ -1478,9 +1479,9 @@ async function executeToolGenerationAttempt(
 
   const reusableObservations = new Map<string, ToolAttemptObservation>();
   const priorObservationKeys = new Set<string>();
-  let heldObservationBytes = 0;
+  let heldObservationTokens = 0;
   for (const observation of input.priorObservations ?? []) {
-    heldObservationBytes += Buffer.byteLength(observation.result);
+    heldObservationTokens += await model.getNumTokens(observation.result);
     const key = observation.acceptedCallKey;
     if (key === undefined || reusableObservations.has(key)) continue;
     reusableObservations.set(key, observation);
@@ -1493,7 +1494,7 @@ async function executeToolGenerationAttempt(
     toolCalls: generated.toolCalls,
     reusableObservations,
     priorObservationKeys,
-    heldObservationBytes,
+    heldObservationTokens,
   });
   const { calls, observations, gate, reroute, refusal, phaseComplete, cancelled, toolMessages } = batch;
   const rejections = batch.rejections;
