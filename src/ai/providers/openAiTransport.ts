@@ -35,15 +35,23 @@ function entryBody(entry: OpenAiModelEntry, effort: string | undefined): Record<
  * The client for one entry. Its retry is the OpenAI SDK's own (`configuration.maxRetries`, the SDK
  * default of 2): connection errors, timeouts and 408/409/429/5xx, with backoff, `retry-after`, and
  * the turn's signal ending a pending wait. `maxRetries: 0` turns off LangChain's second layer,
- * which would also retry other 4xx. The output cap is the entry's `maxOutputTokens` alone: the
- * client writes the cap key (`max_tokens`, or `max_completion_tokens` for a reasoning model name,
- * `max_output_tokens` on Responses) after `requestBody`, which therefore names no cap.
+ * which would also retry other 4xx. `organization` and `project` are `null` so ambient OpenAI env
+ * vars never attach headers to another endpoint unless named in `requestHeaders`. The output cap is
+ * the entry's `maxOutputTokens` alone: the client writes the cap key (`max_tokens`, or
+ * `max_completion_tokens` for a reasoning model name, `max_output_tokens` on Responses) after
+ * `requestBody`, which therefore names no cap.
  */
 function createChatModel(entry: OpenAiModelEntry, apiKey: string, effort: string | undefined, requestBody: Record<string, unknown>): ChatOpenAI {
   return new ChatOpenAI({
     model: entry.model,
     apiKey,
-    configuration: { baseURL: entry.url, maxRetries: 2, ...(entry.requestHeaders ? { defaultHeaders: entry.requestHeaders } : {}) },
+    configuration: {
+      baseURL: entry.url,
+      maxRetries: 2,
+      organization: null,
+      project: null,
+      ...(entry.requestHeaders ? { defaultHeaders: entry.requestHeaders } : {}),
+    },
     useResponsesApi: entry.apiType === 'responses',
     streaming: true,
     maxRetries: 0,

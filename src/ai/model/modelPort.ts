@@ -25,39 +25,40 @@ export function modelAssistantMessage(text: string): AIMessage {
 }
 
 /**
- * `AIMessage.additional_kwargs` key carrying a generation's provider stream parts: every part the
- * port does not interpret as text or a tool call (reasoning, thought signatures, provider data),
- * as the original objects in stream order. The array rides exactly one stream chunk:
- * `AIMessageChunk.concat` keeps it untouched, whereas two chunks carrying the key would have their
- * items merged by `id` into plain objects.
- */
-const PROVIDER_PARTS_KEY = 'providerParts';
-
-/** Reads a message's provider stream parts ({@link PROVIDER_PARTS_KEY}); empty if none. */
-export function messageProviderParts(message: BaseMessage): readonly unknown[] {
-  const parts = message.additional_kwargs?.[PROVIDER_PARTS_KEY];
-  return Array.isArray(parts) ? parts : [];
-}
-
-/**
  * The assistant turn to append for one generation: its message with no call replayed as LangChain
  * repaired it. A call whose streamed input is no JSON object keeps empty arguments here (LangChain
  * would complete a cut text into `tool_calls`, and a provider rejects a history call whose
  * arguments are no JSON object; the rejection result carries the fault to the model), and a call
  * the message lacks gets empty arguments too, so every call keeps the tool result that answers it.
  * The turn keeps `response_metadata`: it names the endpoint and response the provider chains the
- * next request on, and it is the only mark of a turn the endpoint owns.
+ * next request on, with any raw `output` `function_call` arguments sanitized the same way when an
+ * unchained Responses request replays `response_metadata.output`.
  */
 export function transcriptTurn(message: AIMessage, calls: readonly GeneratedToolCall[]): AIMessage {
   const kept = message.tool_calls ?? [];
   const keptIds = new Set(kept.map((call) => call.id));
   const missing = calls.filter((call) => !keptIds.has(call.callId));
   const notObjects = new Set(calls.filter((call) => call.input !== undefined && !isRecord(call.input)).map((call) => call.callId));
-  if (missing.length === 0 && !kept.some((call) => notObjects.has(call.id ?? ''))) return message;
+  const rawOutput = message.response_metadata?.output;
+  const outputHasCutCall = notObjects.size > 0
+    && Array.isArray(rawOutput)
+    && rawOutput.some((item) => isRecord(item) && item.type === 'function_call' && typeof item.call_id === 'string' && notObjects.has(item.call_id));
+  if (missing.length === 0 && !kept.some((call) => notObjects.has(call.id ?? '')) && !outputHasCutCall) return message;
+  const { tool_calls: _rawToolCalls, ...additionalKwargs } = message.additional_kwargs;
+  const responseMetadata = outputHasCutCall && Array.isArray(rawOutput)
+    ? {
+        ...message.response_metadata,
+        output: rawOutput.map((item) => (
+          isRecord(item) && item.type === 'function_call' && typeof item.call_id === 'string' && notObjects.has(item.call_id)
+            ? { ...item, arguments: '{}' }
+            : item
+        )),
+      }
+    : message.response_metadata;
   return new AIMessage({
     content: message.content,
-    additional_kwargs: message.additional_kwargs,
-    response_metadata: message.response_metadata,
+    additional_kwargs: additionalKwargs,
+    response_metadata: responseMetadata,
     tool_calls: [
       ...kept.map((call) => (notObjects.has(call.id ?? '') ? { ...call, args: {} } : call)),
       ...missing.map((call) => ({ id: call.callId, name: call.toolName, args: {}, type: 'tool_call' as const })),
@@ -68,8 +69,6 @@ export function transcriptTurn(message: AIMessage, calls: readonly GeneratedTool
 /**
  * Creates an assistant message containing validated JSON-object tool calls.
  *
- * @param providerParts - Provider stream parts of the generation that emitted these calls, replayed
- *   verbatim before them so a provider that signs its own turn receives it unchanged.
  * @throws {@link ModelPortError} when a call input is not a JSON object.
  */
 export function modelToolCallMessage(
@@ -79,7 +78,6 @@ export function modelToolCallMessage(
     readonly input: unknown;
   }[],
   text = '',
-  providerParts: readonly unknown[] = [],
 ): AIMessage {
   return new AIMessage({
     content: text,
@@ -89,7 +87,6 @@ export function modelToolCallMessage(
       args: modelToolArgs(call.input),
       type: 'tool_call' as const,
     })),
-    ...(providerParts.length > 0 ? { additional_kwargs: { [PROVIDER_PARTS_KEY]: [...providerParts] } } : {}),
   });
 }
 
@@ -292,11 +289,11 @@ export type ToolGenerationResult =
   | {
       readonly status: 'completed';
       /**
-       * The model's own turn exactly as the provider returned it (text, every tool call with its
-       * own arguments, and the provider stream parts {@link PROVIDER_PARTS_KEY}), appended to the
-       * transcript unchanged, except that a call whose input is no JSON object is recorded with
-       * `{}` (tool-call arguments must be an object; its paired rejection names the input kind).
-       * {@link text} and {@link toolCalls} are views of it (`toolCalls` adds each call's outcome).
+       * The model's own turn as the provider returned it (text, every tool call with its own
+       * arguments, and provider metadata), appended to the transcript unchanged, except that a call
+       * whose input is no JSON object is recorded with `{}` (tool-call arguments must be an object;
+       * its paired rejection names the input kind). {@link text} and {@link toolCalls} are views of
+       * it (`toolCalls` adds each call's outcome).
        */
       readonly message: AIMessage;
       readonly content: readonly ToolGenerationContent[];

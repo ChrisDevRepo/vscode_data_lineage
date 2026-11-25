@@ -3,10 +3,7 @@ import type { Logger } from '../../utils/log';
 import type { AgentFailureDetail } from '../host/agentRuntime';
 import { modelUserMessage } from '../model/modelPort';
 import { AgentRuntime } from '../host/agentRuntime';
-import type {
-  ModelMessage,
-  ModelPort,
-} from '../model/modelPort';
+import type { ModelPort } from '../model/modelPort';
 import type { AiTraceWriter } from '../observability/aiTraceWriter';
 import type { AiSession } from '../session/session';
 import type { TurnLease } from '../session/turnLease';
@@ -19,14 +16,12 @@ import { readToolErrorText, isConsentGateRejection } from '../support/toolErrorE
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { describeTurnStop } from '../support/text';
 
-/** Immutable request identity, prompt, and optional history for one lineage turn. */
+/** Immutable request identity and prompt for one lineage turn. */
 interface LineageRuntimeRequest {
   /** Request identifier; must be unique among this session's currently active turns. */
   readonly id: string;
   /** Verbatim user prompt for this turn. */
   readonly prompt: string;
-  /** Optional prior-turn conversation, oldest first; if given, the transcript is cleared after. */
-  readonly priorMessages?: readonly ModelMessage[];
 }
 
 /** Request-scoped dependencies required to execute one lineage turn. */
@@ -188,7 +183,7 @@ export class LineageRuntime {
       signal: input.signal,
       maxRounds: this.deps.maxRounds,
       turnEpoch,
-      priorMessages: input.request.priorMessages ?? session.getDiscoveryHistory(),
+      priorMessages: session.getDiscoveryHistory(),
       logger: this.deps.logger,
       traceSyntheticRejection,
       clearPreview: this.deps.clearPreview,
@@ -224,7 +219,6 @@ export class LineageRuntime {
       return failure ? { outcome: 'error', modelCalls: input.model.modelCalls, failure }
         : { outcome: outcome === 'cancelled' ? 'cancelled' : 'ok', modelCalls: input.model.modelCalls };
     } finally {
-      if (input.request.priorMessages !== undefined) session.clearDiscoveryTranscript();
       eventObserver.dispose();
       completeRun();
       if (this.active.get(requestKey) === activeRun) this.active.delete(requestKey);

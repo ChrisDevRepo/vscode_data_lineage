@@ -27,8 +27,7 @@ const OPEN_SETTINGS = 'Open settings.json';
 const SAVE_AND_OPEN = 'Save and open settings.json';
 
 const WIZARD_TITLE = 'Add AI Model';
-const WIZARD_STEPS = 5;
-const { askInput, askPick } = wizardPrompts(WIZARD_TITLE, WIZARD_STEPS);
+const { askInput, askPick } = wizardPrompts(WIZARD_TITLE);
 
 type ApiType = OpenAiModelEntry['apiType'];
 
@@ -140,11 +139,11 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
   const steps: WizardStep[] = [
     {
       applies: () => existing === undefined,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const presetItems: SourceItem[] = PRESETS.map((preset) => ({ label: preset.label, description: preset.description, preset }));
         const lmItem: SourceItem = { label: LM_SOURCE_LABEL, description: 'Models other extensions provide, e.g. a chat subscription' };
         const answer = await askPick<SourceItem>({
-          step: n, canGoBack: false, placeholder: 'Provider', items: [...presetItems, lmItem],
+          step, totalSteps, canGoBack: false, placeholder: 'Provider', items: [...presetItems, lmItem],
           active: state.lm ? lmItem : presetItems.find((item) => item.preset === state.preset),
         });
         if (typeof answer === 'object') {
@@ -159,9 +158,9 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
     },
     {
       applies: () => !state.lm,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const answer = await askInput({
-          step: n, canGoBack: existing === undefined, value: state.url,
+          step, totalSteps, canGoBack: existing === undefined, value: state.url,
           prompt: 'Base URL of the OpenAI-compatible API, e.g. https://host/v1/',
           validate: (v) => {
             const fault = v.trim() ? baseUrlFault(v.trim()) : 'is required';
@@ -174,9 +173,9 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
     },
     {
       applies: () => !state.lm,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const answer = await askInput({
-          step: n, canGoBack: true, value: state.model, prompt: 'Model name the endpoint expects, e.g. gpt-5', validate: required('A model name'),
+          step, totalSteps, canGoBack: true, value: state.model, prompt: 'Model name the endpoint expects, e.g. gpt-5', validate: required('A model name'),
         });
         if (typeof answer === 'string') state.model = answer.trim();
         return outcome(answer);
@@ -184,10 +183,10 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
     },
     {
       applies: () => !state.lm,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const keepSaved = savedKey !== undefined && existingApi?.url === state.url;
         const answer = await askInput({
-          step: n, canGoBack: true, password: true,
+          step, totalSteps, canGoBack: true, password: true,
           prompt: keepSaved
             ? 'API key — leave empty to keep the saved key'
             : state.preset?.local ? 'API key — a local server ignores it, enter any text; stored in the VS Code secret store' : 'API key — stored in the VS Code secret store',
@@ -199,7 +198,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
     },
     {
       applies: () => state.lm,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const { live } = await loadLmCatalog([]);
         if (live.length === 0) {
           void vscode.window.showInformationMessage(NO_LM_MODEL_MESSAGE);
@@ -208,7 +207,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
         const selector = existing?.apiType === 'vscode-lm' ? existing.selector : undefined;
         const items = live.map((info) => ({ label: info.name, description: `${info.vendor} · ${info.family}`, detail: `${info.maxInputTokens} input tokens`, info }));
         const answer = await askPick({
-          step: n, canGoBack: existing === undefined, placeholder: LM_SOURCE_LABEL, items,
+          step, totalSteps, canGoBack: existing === undefined, placeholder: LM_SOURCE_LABEL, items,
           active: items.find((item) => item.info === state.lmModel)
             ?? items.find((item) => selector !== undefined && Object.entries(selector).every(([key, value]) => item.info[key as keyof typeof selector] === value)),
         });
@@ -218,9 +217,9 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
     },
     {
       applies: () => true,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const answer = await askInput({
-          step: n, canGoBack: true, prompt: 'Display name', value: state.name || (state.lm ? state.lmModel?.name : state.model),
+          step, totalSteps, canGoBack: true, prompt: 'Display name', value: state.name || (state.lm ? state.lmModel?.name : state.model),
           validate: (v) => (v.trim().length > MAX_ENTRY_NAME_LENGTH ? `A display name has at most ${MAX_ENTRY_NAME_LENGTH} characters.` : required('A display name')(v)),
         });
         if (typeof answer === 'string') state.name = answer.trim();

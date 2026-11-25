@@ -260,8 +260,7 @@ export class AiSession {
   /**
    * Reason the current turn's synthesis rendered the model's held text without a working
    * preview/panel step, or `null` when the last render was clean. Set by
-   * {@link markSynthesisRenderDegraded}; read and cleared once by the chat host's one-shot
-   * warning toast via {@link consumeSynthesisRenderDegraded}.
+   * {@link markSynthesisRenderDegraded} and read by {@link synthesisRenderDegradedReason}.
    */
   private _synthesisRenderDegradedReason: string | null = null;
 
@@ -291,10 +290,8 @@ export class AiSession {
   private readonly _closingNotices = new Map<string, string>();
 
   /**
-   * Queues a user-visible notice for the turn's closing markdown, once per `key`. VS Code folds
-   * every response part before a completed response's last markdown into a collapsed disclosure, so
-   * a notice streamed ahead of the answer is never seen; notices wait until the answer-writing node
-   * takes them with {@link takeClosingNotices}.
+   * Queues a user-visible notice for the turn's closing markdown, once per `key`, so notices emitted
+   * mid-walk append at the end of the turn's answer via {@link takeClosingNotices}.
    */
   public queueClosingNotice(key: string, notice: string): void {
     if (!this._closingNotices.has(key)) this._closingNotices.set(key, notice);
@@ -305,13 +302,6 @@ export class AiSession {
     const notices = [...this._closingNotices.values()].map(notice => `\n\n${notice}`).join('');
     this._closingNotices.clear();
     return notices;
-  }
-
-  /** Returns and clears the render-degraded reason; call once, from the one-shot toast site. */
-  public consumeSynthesisRenderDegraded(): string | null {
-    const reason = this._synthesisRenderDegradedReason;
-    this._synthesisRenderDegradedReason = null;
-    return reason;
   }
 
   /**
@@ -698,11 +688,7 @@ export class AiSession {
     return this.discoveryTranscript.flatMap((turn) => turn.map(({ role, content }) => ({ role, text: content })));
   }
 
-  /**
-   * Clears cross-turn discovery memory: on model/project (re)load, on a new chat, and after
-   * every turn that supplied native history (which then owns cross-turn conversation). Never on SM
-   * start.
-   */
+  /** Clears cross-turn discovery memory on model/project (re)load and on a new chat; never on SM start. */
   public clearDiscoveryTranscript(): void {
     this.discoveryTranscript = [];
     this.discoveryEvidence = [];

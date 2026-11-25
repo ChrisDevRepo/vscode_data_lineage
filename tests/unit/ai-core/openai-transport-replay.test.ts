@@ -55,7 +55,10 @@ async function sentBody(apiType: 'chat-completions' | 'responses', own = false):
   return body;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 describe('OpenAI transport replay of a malformed tool call', () => {
   it.each([false, true])('chat completions replays a cut call with empty object arguments, beside the valid call (own turn: %s)', async (own) => {
@@ -175,5 +178,80 @@ describe('OpenAI transport replay of a malformed tool call', () => {
     expect(records.some((record) => record.type === 'wire-error')).toBe(true);
     expect(records.some((record) => record.type === 'generation')).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('responses with store:false sanitizes cut function_call arguments inside response_metadata.output on replay', async () => {
+    const [entry] = parseModelEntries([{
+      id: 'e',
+      name: 'e',
+      url: 'http://localhost/v1',
+      model: 'gpt-x',
+      apiType: 'responses',
+      maxInputTokens: 1000,
+      maxOutputTokens: 100,
+      requestBody: { store: false },
+    }]).entries as OpenAiModelEntry[];
+    const okItem = { id: 'fc_ok', type: 'function_call', call_id: 'call_ok', name: 'lineage_present_result', status: 'completed', arguments: '{"sections":{"technical":"x"}}' };
+    const cutItem = { id: 'fc_cut', type: 'function_call', call_id: 'call_cut', name: 'lineage_present_result', status: 'completed', arguments: CUT };
+    const reply = (status: string, output: unknown[] = []) => ({ id: 'resp_1', object: 'response', created_at: 1, model: 'gpt-x', status, output });
+    const streamEvents = [
+      { type: 'response.created', sequence_number: 0, response: reply('in_progress') },
+      { type: 'response.output_item.added', sequence_number: 1, output_index: 0, item: { ...okItem, status: 'in_progress', arguments: '' } },
+      { type: 'response.function_call_arguments.delta', sequence_number: 2, item_id: 'fc_ok', output_index: 0, delta: okItem.arguments },
+      { type: 'response.output_item.done', sequence_number: 3, output_index: 0, item: okItem },
+      { type: 'response.output_item.added', sequence_number: 4, output_index: 1, item: { ...cutItem, status: 'in_progress', arguments: '' } },
+      { type: 'response.function_call_arguments.delta', sequence_number: 5, item_id: 'fc_cut', output_index: 1, delta: CUT },
+      { type: 'response.output_item.done', sequence_number: 6, output_index: 1, item: cutItem },
+      { type: 'response.completed', sequence_number: 7, response: reply('completed', [okItem, cutItem]) },
+    ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+    const bodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      callCount += 1;
+      return callCount === 1
+        ? new Response(streamEvents, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+        : new Response('{"error":{"message":"stop"}}', { status: 400, headers: { 'content-type': 'application/json' } });
+    }));
+    const port = createProviderModelPort(entry, 'key');
+    const first = await port.generateToolTurn({ messages: [new HumanMessage('go')], tools, phase: 'test' });
+    if (first.status !== 'completed') throw new Error('first turn failed');
+    await port.generateToolTurn({
+      messages: [
+        new HumanMessage('go'),
+        transcriptTurn(first.message, first.toolCalls),
+        new ToolMessage({ tool_call_id: 'call_ok', content: 'ok' }),
+        new ToolMessage({ tool_call_id: 'call_cut', content: 'not valid JSON', status: 'error' }),
+      ],
+      tools,
+      phase: 'test',
+    });
+    const replayedCalls = (bodies[1]?.input as Array<{ type: string; call_id?: string; arguments?: string }>)
+      .filter((item) => item.type === 'function_call');
+    expect(replayedCalls.map((call) => [call.call_id, call.arguments])).toEqual([
+      ['call_ok', '{"sections":{"technical":"x"}}'],
+      ['call_cut', '{}'],
+    ]);
+  });
+
+  it('isolates third-party endpoints from ambient OPENAI_ORGANIZATION / OPENAI_ORG_ID / OPENAI_PROJECT_ID env vars unless set in requestHeaders', async () => {
+    vi.stubEnv('OPENAI_ORGANIZATION', 'org-ambient');
+    vi.stubEnv('OPENAI_ORG_ID', 'org-ambient-id');
+    vi.stubEnv('OPENAI_PROJECT_ID', 'proj-ambient');
+    const [plain, explicit] = parseModelEntries([
+      { id: 'p', name: 'p', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'chat-completions', maxInputTokens: 1000, maxOutputTokens: 100 },
+      { id: 'x', name: 'x', url: 'http://localhost/v1', model: 'gpt-x', apiType: 'chat-completions', maxInputTokens: 1000, maxOutputTokens: 100, requestHeaders: { 'OpenAI-Organization': 'org-explicit' } },
+    ]).entries as OpenAiModelEntry[];
+    const seenHeaders: Headers[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: { headers?: HeadersInit }) => {
+      seenHeaders.push(new Headers(init.headers));
+      return new Response('{"error":{"message":"stop"}}', { status: 400, headers: { 'content-type': 'application/json' } });
+    }));
+    await createProviderModelPort(plain, 'key').generateToolTurn({ messages: [new HumanMessage('go')], tools: [], phase: 'test' });
+    await createProviderModelPort(explicit, 'key').generateToolTurn({ messages: [new HumanMessage('go')], tools: [], phase: 'test' });
+    expect(seenHeaders[0]?.get('openai-organization')).toBeNull();
+    expect(seenHeaders[0]?.get('openai-project')).toBeNull();
+    expect(seenHeaders[1]?.get('openai-organization')).toBe('org-explicit');
+    expect(seenHeaders[1]?.get('openai-project')).toBeNull();
   });
 });

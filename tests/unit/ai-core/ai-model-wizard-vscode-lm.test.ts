@@ -12,17 +12,23 @@ const host = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   models: [] as unknown[],
   picks: [] as Array<(items: Array<Record<string, any>>) => unknown>,
+  inputs: [] as Array<(options: { value?: string; password?: boolean }) => string | undefined>,
   keyPrompts: [] as string[],
+  steps: [] as string[],
   quickPicks: [] as Array<Record<string, any>>,
 }));
 
 vi.mock('../../../src/host/wizardSteps', async (importActual) => ({
   ...(await importActual<typeof import('../../../src/host/wizardSteps')>()),
-  wizardPrompts: () => ({
-    askPick: async ({ items }: { items: Array<Record<string, any>> }) => host.picks.shift()!(items),
-    askInput: async (options: { value?: string; password?: boolean }) => {
+  wizardPrompts: (_title: string, fallbackTotal?: number) => ({
+    askPick: async ({ step, totalSteps, items }: { step: number; totalSteps?: number; items: Array<Record<string, any>> }) => {
+      host.steps.push(`${step}/${totalSteps ?? fallbackTotal}`);
+      return host.picks.shift()!(items);
+    },
+    askInput: async (options: { step: number; totalSteps?: number; value?: string; password?: boolean }) => {
+      host.steps.push(`${options.step}/${options.totalSteps ?? fallbackTotal}`);
       if (options.password) host.keyPrompts.push('key');
-      return options.value;
+      return host.inputs.length > 0 ? host.inputs.shift()!(options) : options.value;
     },
   }),
 }));
@@ -33,9 +39,12 @@ vi.mock('vscode', async (importActual) => ({
   window: {
     showInformationMessage: vi.fn(async () => undefined),
     showQuickPick: async (items: Array<Record<string, any>>) => { host.quickPicks = items; return undefined; },
+    withProgress: async (_options: unknown, task: (progress: unknown, token: { isCancellationRequested: boolean; onCancellationRequested: () => { dispose: () => void } }) => unknown) =>
+      task({}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) }),
   },
   workspace: { getConfiguration: () => ({ get: () => host.models, update: async (_key: string, value: unknown[]) => { host.models = value; } }) },
   ConfigurationTarget: { Global: 1 },
+  ProgressLocation: { Notification: 15 },
 }));
 
 const API = { id: 'api', name: 'Api', url: 'https://example.test/v1/', model: 'm', apiType: 'chat-completions', maxInputTokens: 1000, maxOutputTokens: 100 };
@@ -54,9 +63,12 @@ function register() {
 beforeEach(() => {
   host.models = [];
   host.picks = [];
+  host.inputs = [];
   host.keyPrompts = [];
+  host.steps = [];
   host.quickPicks = [];
   (vscode.lm as unknown as { models: unknown[] }).models = lmModels;
+  vi.unstubAllGlobals();
 });
 
 describe('Add AI Model with the VS Code language model source', () => {
@@ -70,6 +82,7 @@ describe('Add AI Model with the VS Code language model source', () => {
       requestBody: { temperature: 0.1, top_p: 1 },
     }]);
     expect(host.keyPrompts).toEqual([]);
+    expect(host.steps).toEqual(['1/5', '2/3', '3/3']);
     expect(secrets.get).not.toHaveBeenCalled();
     expect(secrets.store).not.toHaveBeenCalled();
   });
@@ -90,7 +103,32 @@ describe('Add AI Model with the VS Code language model source', () => {
     await run('dataLineageViz.editAiModel', 'lm-entry');
     expect(host.models).toEqual([{ ...LM, selector: { vendor: 'v', family: 'f1', id: 'a' }, requestBody: { temperature: 0.5 }, maxOutputTokens: 300 }]);
     expect(host.keyPrompts).toEqual([]);
+    expect(host.steps).toEqual(['1/2', '2/2']);
     expect(secrets.store).not.toHaveBeenCalled();
+  });
+
+  it('numbers OpenAI add steps 1/5..5/5 and edit steps 1/4..4/4 without overflowing totalSteps', async () => {
+    const { secrets, run } = register();
+    const okSse = () => new Response(
+      `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', model: 'm', choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`,
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    );
+    vi.stubGlobal('fetch', vi.fn(async () => okSse()));
+    host.picks = [(items) => items.find((item) => item.label === 'Ollama')];
+    host.inputs = [
+      ({ value }) => value,
+      () => 'llama3',
+      () => 'dummy-key',
+      ({ value }) => value,
+    ];
+    expect(await run('dataLineageViz.addAiModel')).toBe('llama3');
+    expect(host.steps).toEqual(['1/5', '2/5', '3/5', '4/5', '5/5']);
+
+    host.steps = [];
+    secrets.get.mockResolvedValue('dummy-key');
+    host.inputs = [({ value }) => value, ({ value }) => value, () => '', ({ value }) => value];
+    expect(await run('dataLineageViz.editAiModel', 'llama3')).toBe('llama3');
+    expect(host.steps).toEqual(['1/4', '2/4', '3/4', '4/4']);
   });
 });
 

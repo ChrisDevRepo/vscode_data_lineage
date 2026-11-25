@@ -36,8 +36,6 @@ export interface ScriptedGeneration {
   readonly textDeltas?: readonly string[];
   /** User-safe error text for a `'error'` generation. */
   readonly error?: string;
-  /** Opaque provider stream parts the generation carried (reasoning, signatures). */
-  readonly providerParts?: readonly unknown[];
 }
 
 const SCRIPTED_IDENTITY: ModelIdentity = {
@@ -148,7 +146,6 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
           input: call.input !== null && typeof call.input === 'object' && !Array.isArray(call.input) ? call.input : {},
         })),
         text,
-        step.providerParts,
       ),
       content: [],
       text,

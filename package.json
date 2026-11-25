@@ -604,15 +604,15 @@
                   "additionalProperties": false,
                   "required": ["id", "name", "url", "model", "apiType", "maxInputTokens", "maxOutputTokens"],
                   "properties": {
-                    "id": { "type": "string", "minLength": 1, "pattern": "^(?!lm:)", "markdownDescription": "Stable identifier; also names the secret-store entry of the key. Must not start with `lm:`." },
-                    "name": { "type": "string", "minLength": 1, "description": "Display name." },
+                    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(?!lm:)", "markdownDescription": "Stable identifier; also names the secret-store entry of the key. Must not start with `lm:`." },
+                    "name": { "type": "string", "minLength": 1, "maxLength": 256, "description": "Display name." },
                     "url": { "type": "string", "markdownDescription": "Base URL of the API, e.g. `https://host/openai/v1/`; https, or http on 127.0.0.1, localhost or [::1]. No query string." },
                     "model": { "type": "string", "minLength": 1, "description": "Model name sent in the request." },
                     "apiType": { "type": "string", "enum": ["chat-completions", "responses"], "description": "Wire format of the endpoint." },
                     "maxInputTokens": { "type": "integer", "minimum": 1, "description": "Input window of the model in tokens." },
                     "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit of the model in tokens; sent as the API's output cap (`max_output_tokens` on Responses, `max_tokens` or `max_completion_tokens` on Chat Completions). A cap key in `requestBody` (`max_tokens`, `max_completion_tokens`, `max_output_tokens`) makes the entry invalid." },
-                    "supportsReasoningEffort": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Reasoning efforts the model accepts." },
-                    "reasoningEffort": { "type": "string", "description": "Reasoning effort sent with each request." },
+                    "supportsReasoningEffort": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "description": "Reasoning efforts the model accepts." },
+                    "reasoningEffort": { "type": "string", "minLength": 1, "description": "Reasoning effort sent with each request." },
                     "forcedToolChoice": { "type": "boolean", "default": true, "description": "Whether the endpoint accepts a forced tool choice; when off, `auto` is sent." },
                     "requestBody": { "type": "object", "markdownDescription": "Extra request parameters, sent unchanged. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream`, `stream_options` and the output-cap keys (`max_tokens`, `max_completion_tokens`, `max_output_tokens`; see `maxOutputTokens`) are owned by the extension." },
                     "requestHeaders": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Extra request headers. Never a key." }
@@ -623,8 +623,8 @@
                   "additionalProperties": false,
                   "required": ["id", "name", "apiType", "selector"],
                   "properties": {
-                    "id": { "type": "string", "minLength": 1, "pattern": "^(?!lm:)", "markdownDescription": "Stable identifier; must not start with `lm:`." },
-                    "name": { "type": "string", "minLength": 1, "description": "Display name." },
+                    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(?!lm:)", "markdownDescription": "Stable identifier; must not start with `lm:`." },
+                    "name": { "type": "string", "minLength": 1, "maxLength": 256, "description": "Display name." },
                     "apiType": { "type": "string", "enum": ["vscode-lm"], "markdownDescription": "A model VS Code lists (`vscode.lm`), such as one from a chat subscription or a provider extension. It needs no URL or key and takes its input window from the model." },
                     "selector": {
                       "type": "object",

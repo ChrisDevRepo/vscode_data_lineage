@@ -8,7 +8,7 @@
  *   append-only provider-native transcript, and bounded rejection bookkeeping.
  *
  * The retry history is the transcript, never a rebuild: every attempt appends the port's own
- * `AIMessage` (text, every tool call with its own arguments, provider parts) exactly as the model
+ * `AIMessage` (text, every tool call with its own arguments, provider metadata) as the model
  * returned it, followed by one `ToolMessage` per call in call order — the accepted result, or the
  * rejection (reason and hint as text, the whole rejection in `artifact`). A reply with no tool call
  * (missing required call, empty generation) appends the model's own text `AIMessage` followed by
@@ -21,7 +21,6 @@ import { z } from 'zod';
 import { AIMessage, trimMessages } from '@langchain/core/messages';
 import {
   messageContentToText,
-  messageProviderParts,
   modelToolResultMessage,
   modelUserMessage,
   transcriptTurn,
@@ -1150,7 +1149,7 @@ function emitSynthesizedRejection(
   );
   input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code });
   const hasAttemptedTurn = messageContentToText(spec.attempted.content).trim().length > 0
-    || messageProviderParts(spec.attempted).length > 0;
+    || Boolean(spec.attempted.additional_kwargs?.reasoning || spec.attempted.additional_kwargs?.reasoning_content);
   const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
   return hasAttemptedTurn
     ? [spec.attempted, modelUserMessage(note)]

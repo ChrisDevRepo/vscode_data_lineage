@@ -16,6 +16,7 @@ export const outcome = (answer: Answer<unknown>): StepOutcome => (answer === BAC
 
 interface InputOptions {
   step: number;
+  totalSteps: number;
   prompt: string;
   value?: string;
   placeholder?: string;
@@ -26,6 +27,7 @@ interface InputOptions {
 
 interface PickOptions<T extends vscode.QuickPickItem> {
   step: number;
+  totalSteps: number;
   placeholder: string;
   items: T[];
   /** The item Enter takes; the first when absent. */
@@ -33,20 +35,20 @@ interface PickOptions<T extends vscode.QuickPickItem> {
   canGoBack: boolean;
 }
 
-/** One wizard step: `run` gets the 1-based step number shown in the title bar. */
+/** One wizard step: `run` gets the 1-based step number and total applicable count shown in the title bar. */
 export interface WizardStep {
   applies: () => boolean;
-  run: (stepNumber: number) => Promise<StepOutcome>;
+  run: (stepNumber: number, totalSteps: number) => Promise<StepOutcome>;
 }
 
-/** The prompts of one wizard, titled `title` and counting `totalSteps`. */
-export function wizardPrompts(title: string, totalSteps: number) {
+/** The prompts of one wizard, titled `title`. */
+export function wizardPrompts(title: string) {
   function askInput(options: InputOptions): Promise<Answer<string>> {
     return new Promise((resolve) => {
       const box = vscode.window.createInputBox();
       box.title = title;
       box.step = options.step;
-      box.totalSteps = totalSteps;
+      box.totalSteps = options.totalSteps;
       box.prompt = options.prompt;
       box.value = options.value ?? '';
       box.placeholder = options.placeholder;
@@ -70,7 +72,7 @@ export function wizardPrompts(title: string, totalSteps: number) {
       const pick = vscode.window.createQuickPick<T>();
       pick.title = title;
       pick.step = options.step;
-      pick.totalSteps = totalSteps;
+      pick.totalSteps = options.totalSteps;
       pick.placeholder = options.placeholder;
       pick.ignoreFocusOut = true;
       pick.matchOnDescription = true;
@@ -90,7 +92,8 @@ export function wizardPrompts(title: string, totalSteps: number) {
 
 /**
  * Walks `steps` from the first: a step that does not apply is skipped in the direction of travel,
- * Back returns to the previous applicable step.
+ * Back returns to the previous applicable step, and each step receives its 1-based ordinal and the
+ * count of currently applicable steps.
  *
  * @returns `true` once the last step answered, `false` when the user left the wizard.
  */
@@ -101,7 +104,9 @@ export async function runSteps(steps: readonly WizardStep[]): Promise<boolean> {
     if (at < 0) return false;
     const step = steps[at];
     if (!step.applies()) { at += direction; continue; }
-    const result = await step.run(at + 1);
+    const totalSteps = steps.filter((item) => item.applies()).length;
+    const stepNumber = steps.slice(0, at + 1).filter((item) => item.applies()).length;
+    const result = await step.run(stepNumber, totalSteps);
     if (result === 'cancel') return false;
     direction = result === 'back' ? -1 : 1;
     at += direction;

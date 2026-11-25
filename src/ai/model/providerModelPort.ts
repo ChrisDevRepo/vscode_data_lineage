@@ -16,7 +16,6 @@ import {
   errorToolTurnResult,
   isPortCancellation,
   messageContentToText,
-  messageProviderParts,
   type ModelPortErrorCode,
 } from './modelPort';
 import {
@@ -189,7 +188,6 @@ export class ProviderModelPort implements ModelPort {
         input.phase,
       );
       const text = messageContentToText(message.content);
-      const providerParts = messageProviderParts(message);
       const content: ToolGenerationContent[] = text ? [{ type: 'text', text }] : [];
       const toolCalls: GeneratedToolCall[] = [];
       const callIds = new Set<string>();
@@ -234,7 +232,6 @@ export class ProviderModelPort implements ModelPort {
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}`
         + ` observed_parts=${content.length} observed_text_chars=${text.length}`
-        + ` provider_parts=${providerParts.length}`
         + ` tool_calls=${toolCalls.length} duration_ms=${Date.now() - startedAt}`
         + (usage
           ? ` input_tokens=${usage.inputTokens ?? 'n/a'} output_tokens=${usage.outputTokens ?? 'n/a'}`

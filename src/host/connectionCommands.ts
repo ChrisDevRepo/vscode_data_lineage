@@ -19,9 +19,8 @@ import {
 import { outcome, runSteps, wizardPrompts, type WizardStep } from './wizardSteps';
 
 const WIZARD_TITLE = 'Add Database Connection';
-const WIZARD_STEPS = 6;
 
-const { askInput, askPick } = wizardPrompts(WIZARD_TITLE, WIZARD_STEPS);
+const { askInput, askPick } = wizardPrompts(WIZARD_TITLE);
 
 interface WizardState {
   server?: string;
@@ -114,9 +113,9 @@ export async function runAddConnectionFlow(
   const steps: WizardStep[] = [
     {
       applies: () => true,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const answer = await askInput({
-          step: n, canGoBack: false,
+          step, totalSteps, canGoBack: false,
           prompt: 'Server name or address — host, or host,port',
           value: state.server ? (state.port ? `${state.server},${state.port}` : state.server) : '',
           validate: (v) => tooLong(v, MAX_SERVER_LENGTH, 'server address')
@@ -133,9 +132,9 @@ export async function runAddConnectionFlow(
     },
     {
       applies: () => true,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const answer = await askPick({
-          step: n, canGoBack: true, placeholder: 'Authentication',
+          step, totalSteps, canGoBack: true, placeholder: 'Authentication',
           items: [
             { label: 'SQL Login', description: 'User name and password', value: 'sqlLogin' as const },
             { label: 'Microsoft Entra ID', description: 'Sign in with your Microsoft account, MFA supported', value: 'entraId' as const },
@@ -146,10 +145,10 @@ export async function runAddConnectionFlow(
       },
     },
     {
-      applies: () => state.authenticationType === 'sqlLogin',
-      run: async (n) => {
+      applies: () => state.authenticationType !== 'entraId',
+      run: async (step, totalSteps) => {
         const answer = await askInput({
-          step: n, canGoBack: true, prompt: 'SQL login user name', value: state.user ?? '',
+          step, totalSteps, canGoBack: true, prompt: 'SQL login user name', value: state.user ?? '',
           validate: (v) => (v.trim() ? tooLong(v, MAX_SYSNAME_LENGTH, 'user name') : 'A user name is required.'),
         });
         if (typeof answer === 'string') state.user = answer.trim();
@@ -158,7 +157,7 @@ export async function runAddConnectionFlow(
     },
     {
       applies: () => true,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         if (state.authenticationType === 'entraId') {
           let account: vscode.AuthenticationSessionAccountInformation;
           try {
@@ -182,7 +181,7 @@ export async function runAddConnectionFlow(
           }
           const ordered = [...tenants].sort((a, b) => Number(b.tenantId === preferred) - Number(a.tenantId === preferred));
           const answer = await askPick({
-            step: n, canGoBack: true, placeholder: `Directory of the server — signed in as ${account.label}`,
+            step, totalSteps, canGoBack: true, placeholder: `Directory of the server — signed in as ${account.label}`,
             items: ordered.map((t) => ({ label: t.displayName, description: t.defaultDomain, detail: t.tenantId, tenantId: t.tenantId })),
           });
           if (typeof answer === 'object') state.tenantId = answer.tenantId;
@@ -192,7 +191,7 @@ export async function runAddConnectionFlow(
           && !hostChanged(existing, state as Pick<BuiltInConnection, 'server' | 'port'>)
           && existing.user === state.user;
         const answer = await askInput({
-          step: n, canGoBack: true, password: true,
+          step, totalSteps, canGoBack: true, password: true,
           prompt: keepSaved ? 'Password — leave empty to keep the saved password' : 'Password — stored in the VS Code secret store',
           validate: (v) => passwordTooLong(v) ?? (v || keepSaved ? undefined : 'A password is required.'),
         });
@@ -202,9 +201,9 @@ export async function runAddConnectionFlow(
     },
     {
       applies: () => true,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const typed = await askInput({
-          step: n, canGoBack: true, value: state.database ?? '',
+          step, totalSteps, canGoBack: true, value: state.database ?? '',
           prompt: 'Database name — required',
           validate: (v) => v.trim() ? tooLong(v, MAX_SYSNAME_LENGTH, 'database name') : 'A database name is required.',
         });
@@ -214,10 +213,10 @@ export async function runAddConnectionFlow(
     },
     {
       applies: () => true,
-      run: async (n) => {
+      run: async (step, totalSteps) => {
         const suggested = describeConnection({ server: state.server!, port: state.port, database: state.database });
         const answer = await askInput({
-          step: n, canGoBack: true, prompt: 'Display name', value: existing?.name ?? suggested,
+          step, totalSteps, canGoBack: true, prompt: 'Display name', value: existing?.name ?? suggested,
           validate: (v) => (v.trim() ? tooLong(v, MAX_NAME_LENGTH, 'display name') : 'A name is required.'),
         });
         if (typeof answer === 'string') state.name = answer.trim();
