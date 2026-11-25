@@ -532,10 +532,8 @@ const ColumnRefSchema = z.object({
   col: z.string(),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Classify this source column’s own role for out_col, end to end; omit when SQL does not determine it. ' +
-    'pass_through: out_col takes this column’s value unchanged. compute: input of the expression that yields out_col, including a CASE condition operand. aggregate: argument of the aggregate that yields out_col. ' +
-    'combine: join, grouping, partition or ordering key. filter: predicate ' +
-    'selecting contributing rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
-    'display-only sorting contributes no role. ' +
+    'A value column: pass_through (out_col takes its value unchanged), compute (input of the expression that yields out_col), aggregate (argument of the aggregate that yields out_col). ' +
+    'A choosing column: combine (join, grouping, partition or ordering key) or filter (any other condition). ' +
     'A column that is no input of the expression or aggregate that yields out_col takes only combine or filter, even when an expression or aggregate changes it first.',
   ),
   note: z.string().max(COLUMN_FLOW_NOTE_MAX).optional().describe(
@@ -556,9 +554,7 @@ const ColumnFlowEntrySchema = z.object({
   writes_to: ColumnFlowWritesToObject.nullish().describe('Actual destination object and column for this procedure\'s output, as declared by its SQL; null when it writes no table or only a table outside the approved scope.'),
   returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
-    'List each source column that determines out_col, of two kinds. ' +
-    'Direct: its value flows into out_col (operands of its expression, an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs). ' +
-    'Indirect: it only joins, filters, groups, partitions or orders rows; list it with transforms combine or filter. ' +
+    'List each source column that determines out_col, of two kinds: a value column, whose value out_col is a function of, and a choosing column, which only chooses which rows or which other column’s value arrive. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
     '[] only when out_col has no in-scope source: no column computes it, or its source lies outside the approved scope.',
   ),
