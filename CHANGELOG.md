@@ -3,10 +3,10 @@
 ## [1.3.0] - Unreleased
 
 ### Changed
-- AI: the `@lineage` Copilot chat participant is replaced by a chat panel in the graph view (`/search`, `/trace`, model picker, approval before hop-by-hop exploration); models in `dataLineageViz.ai.models`, added and managed with **Data Lineage: Add AI Model** (provider presets, connection test) and the chat's **Add model** and **Manage models…**, keys kept in VS Code secret storage; `/` in the composer lists `/trace`, `/search` and `/clear` (alias `/new`, starts a new chat).
+- AI: Microsoft deprecated chat participants, so the `@lineage` Copilot participant is replaced by an embedded chat pane in the graph view (`/search`, `/trace`, model picker, approval before hop-by-hop exploration). Copilot is now only a model source: the chat uses the language models VS Code provides (Copilot plan, Language Models editor, provider extensions); **Data Lineage: Add AI Model** optionally adds an OpenAI-compatible endpoint (key in VS Code secret storage; provider presets, connection test, **Manage models…**).
 - Column traces show join and filter columns as indirect sources.
 - AI follow-ups that name a border table bring in its next-level objects.
-- AI: a model entry can be a VS Code language model (`apiType` `vscode-lm`, with a `selector`), added with the source **VS Code language model** in **Add AI Model**; the chat lists the models VS Code provides and, with `dataLineageViz.ai.defaultModel` empty, starts on a Copilot model, so an upgraded 1.2.7 user needs no setup.
+- AI: the chat lists the VS Code language models and, with `dataLineageViz.ai.defaultModel` empty, starts on a Copilot model, so an upgraded 1.2.7 user needs no setup; an `ai.models` entry with `apiType` `vscode-lm` and a `selector` pins one.
 
 ### Fixed
 - Database connect waits for an idle Azure SQL database to resume, with progress, retry and cancel.

@@ -129,7 +129,7 @@ built-in text of each release.
 
 ## What is sent to the model
 
-The AI uses the model entry named by `dataLineageViz.ai.defaultModel` (or, with it empty, the model the chat starts on). For a request, the model
+The AI uses the model picked in the chat (it starts on `dataLineageViz.ai.defaultModel`, or with it empty on your last pick). For a request, the model
 receives:
 
 - the user's prompt and the conversation history as text;

@@ -42,15 +42,9 @@ Once your model loads, the visual graph is ready to use:
 
 ## AI chat panel
 
-The graph view has its own chat pane (click **Chat** on its right edge) that answers lineage questions on the loaded model with a model you configure. Details: [`docs/FEATURES.md`](docs/FEATURES.md#ai-chat-panel).
+Microsoft has [deprecated chat participants](https://code.visualstudio.com/api/extension-guides/ai/chat), so the AI chat is now the extension's own pane in the graph view (click **Chat** on its right edge) instead of the `@lineage` Copilot participant of 1.2.x. It answers lineage questions on the loaded model with the language models VS Code provides through the [Language Model API](https://code.visualstudio.com/api/extension-guides/ai/language-model): your Copilot plan, models added in the Language Models editor ([**Chat: Manage Language Models**](https://code.visualstudio.com/docs/copilot/customization/language-models), including "Bring your own language model key"), or a model provider extension. Optionally, add an OpenAI-compatible endpoint whose key stays in VS Code's secret storage.
 
-- **`dataLineageViz.ai.models`** lists OpenAI-compatible endpoints (Chat Completions or Responses; an Azure `/openai/v1/` base URL or Anthropic's `/v1/` chat-completions URL works like any other). The pane's picker offers them, with an effort picker where the entry supports it.
-  An invalid entry is named and not offered; `dataLineageViz.ai.defaultModel` names the one to use.
-- **VS Code language models.** An entry with `apiType` `vscode-lm` and a `selector` (`vendor`, `family`, `id`) uses a model VS Code lists, such as the one from your Copilot subscription or a provider extension; it needs no URL or key. The picker also lists those models and, with `dataLineageViz.ai.defaultModel` empty, starts on a Copilot model, so an upgraded 1.2.7 user works with no setup; your last pick is kept. A live model gets no request settings; an entry sends its `requestBody` (the wizard writes `temperature` 0.1 and `top_p` 1) as model options, which the model's provider may ignore. The system prompt goes as the first user message, and there is no strict JSON mode; replies are checked as on any other model. Copilot's consent dialog appears on the first turn, and its quota applies.
-- **Data Lineage: Add AI Model** (or **Add model** in the chat) guides you through a provider preset (or the source **VS Code language model**), endpoint, model, key and display name, tests the connection (not for a VS Code language model) and saves the entry with default limits you can tune in `dataLineageViz.ai.models`; **Edit AI Model**, **Remove AI Model** and **Update AI Model Key** manage it later. The key is stored in VS Code's secret storage; it is never written to settings, logs or the webview.
-- **Guided exploration** — `/search` answers from lookup tools; `/trace` or a large question proposes a hop-by-hop exploration that runs only after you approve, refine or cancel the plan.
-
-The visual graph, search, trace, SQL preview, demo data, profiling, and export features work without any of this.
+Commands, models and settings: [`docs/FEATURES.md`](docs/FEATURES.md#ai-chat-panel). The graph, search, trace, SQL preview, demo data, profiling and export work without it.
 
 ## Features
 
@@ -58,7 +52,7 @@ The visual graph, search, trace, SQL preview, demo data, profiling, and export f
 - **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
 - **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
 - **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
-- **AI chat panel** — ask lineage questions in a chat pane docked in the graph, on OpenAI-compatible endpoints you configure (keys in secret storage); `/search`, `/trace` and approval before hop-by-hop exploration.
+- **AI chat panel** — ask lineage questions in a chat pane in the graph, with your VS Code language models (such as Copilot) or an API endpoint; `/search`, `/trace`, and approval before hop-by-hop exploration.
 - **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).

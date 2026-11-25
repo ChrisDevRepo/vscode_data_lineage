@@ -9,12 +9,13 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 ## Architectural boundaries
 
-- The AI uses two provider kinds behind one transport seam: an OpenAI-compatible
+- The AI uses two provider kinds behind one transport seam: a VS Code language
+  model (Language Model API; `apiType` `vscode-lm`, or a live model the chat lists with
+  no entry), which needs no key; and, as the alternative, an OpenAI-compatible
   endpoint (Chat Completions or Responses) listed in `dataLineageViz.ai.models`, whose
   API key is kept in VS Code secret storage under the entry id, never in settings, logs
-  or the webview; and a VS Code language model (`apiType` `vscode-lm`, or a live model the
-  chat lists with no entry), which needs no key. Structured output is the forced
-  synthetic tool on both.
+  or the webview. Structured output is the forced synthetic tool on both. Chat
+  participants are deprecated, so the chat is the extension's own pane, not a participant.
 - AI code works on the loaded lineage model. It can read object and SQL
   definitions. It cannot connect to a database, run SQL, start an import, or
   start table statistics.
