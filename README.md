@@ -5,7 +5,9 @@
 ![Status](https://img.shields.io/badge/status-stable-green.svg)
 
 Visualise SQL dependencies right inside VS Code. Browse your lineage graph with
-search, trace, and Schema View.
+search, trace, and Schema View — and, with your Copilot or other VS Code
+language model, ask the built-in AI chat to explore the loaded model in natural
+language.
 
 Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
@@ -31,7 +33,7 @@ Live projects read database metadata for lineage and can optionally profile tabl
 
 ## Explore your lineage
 
-Once your model loads, the visual graph is ready to use:
+Once your model loads, the visual graph is ready to use — no language model required:
 
 - **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly and focuses it in the graph.
 - **Trace dependencies** — follow sources upstream or consumers downstream from any node.
@@ -40,11 +42,30 @@ Once your model loads, the visual graph is ready to use:
 
 ![Interactive dependency graph with schema-coloured nodes](images/viz-screenshot.png)
 
-## AI chat panel
+## Optional AI lineage chat
 
-Microsoft has [deprecated chat participants](https://code.visualstudio.com/api/extension-guides/ai/chat), so the AI chat is now the extension's own pane in the graph view (click **Chat** on its right edge) instead of the `@lineage` Copilot participant of 1.2.x. It answers lineage questions on the loaded model with the language models VS Code provides through the [Language Model API](https://code.visualstudio.com/api/extension-guides/ai/language-model): your Copilot plan, models added in the Language Models editor ([**Chat: Manage Language Models**](https://code.visualstudio.com/docs/copilot/customization/language-models), including "Bring your own language model key"), or a model provider extension. Optionally, add an OpenAI-compatible endpoint whose key stays in VS Code's secret storage.
+Microsoft has [deprecated chat participants](https://code.visualstudio.com/api/extension-guides/ai/chat), so the AI chat is now the extension's own pane in the graph view (click **Chat** on its right edge), replacing the `@lineage` participant of 1.2.x. It uses your Copilot models through VS Code's [Language Model API](https://code.visualstudio.com/api/extension-guides/ai/language-model): models from your Copilot plan, from the Language Models editor ([**Chat: Manage Language Models**](https://code.visualstudio.com/docs/copilot/customization/language-models), including "Bring your own language model key") or from a provider extension. Optionally, add an OpenAI-compatible endpoint whose key stays in VS Code's secret storage. The assistant works only on the loaded data model.
 
-Commands, models and settings: [`docs/FEATURES.md`](docs/FEATURES.md#ai-chat-panel). The graph, search, trace, SQL preview, demo data, profiling and export work without it.
+```text
+trace from Sales.SalesOrderDetail upstream to the source tables
+how is sales calculated — show me the lineage in the app
+which objects are hubs with the most connections?
+```
+
+Use it to ask dependency questions, preview graph scopes, save useful previews as
+bookmarks, ask about what is on screen (*"explain this trace"*),
+recall what an earlier analysis found from its saved AI bookmark, and — where the
+metadata allows — follow column mappings or explain SQL logic.
+
+![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
+
+The chat has three paths:
+
+- **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered in chat by the selected model from read tools over the loaded model. `/search` pins this path. An explicit graph/render request is answered here too and drawn as a graph preview.
+- **Graph preview** — a bounded transient preview in the graph view, opened when you ask for one. Save it explicitly if you want a bookmark.
+- **Structured walkthrough** — `/trace`, a discovery scope that exceeds the configured budget, or the **Start deeper hop-by-hop analysis** follow-up first shows the planned scope and asks for confirmation. Once approved, the assistant walks the graph hop-by-hop and colours source / transform / target nodes in the result.
+
+Only the AI chat needs a language model: a Copilot plan model or any model in VS Code's Language Models editor, or optionally an OpenAI-compatible endpoint. The visual graph, search, trace, SQL preview, demo data, profiling, and export features work without one. Models and settings: [`docs/FEATURES.md`](docs/FEATURES.md#ai-chat-panel).
 
 ## Features
 
@@ -52,7 +73,7 @@ Commands, models and settings: [`docs/FEATURES.md`](docs/FEATURES.md#ai-chat-pan
 - **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
 - **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
 - **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
-- **AI chat panel** — ask lineage questions in a chat pane in the graph, with your VS Code language models (such as Copilot) or an API endpoint; `/search`, `/trace`, and approval before hop-by-hop exploration.
+- **Optional AI chat** — ask lineage questions in the chat pane, preview graph scopes, save previews as bookmarks, and follow column mappings where the metadata allows. The assistant can read what is currently on screen, and a bookmark saved from an AI-authored view keeps that run's findings so a later question can recall them.
 - **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).

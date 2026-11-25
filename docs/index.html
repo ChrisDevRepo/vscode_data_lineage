@@ -78,7 +78,7 @@
       </div>
       <h1>Data Lineage Viz</h1>
       <p class="subtitle">
-        See how tables, views, stored procedures, and functions connect — right inside VS Code. Import from .dacpac files or connect directly to SQL Server, Azure SQL, Fabric DW, or Synapse Dedicated SQL Pool. Includes Schema View.
+        See how tables, views, stored procedures, and functions connect — right inside VS Code. Import from .dacpac files or connect directly to SQL Server, Azure SQL, Fabric DW, or Synapse Dedicated SQL Pool. Includes an AI chat and Schema View.
       </p>
       <p style="font-size:.8rem;color:#94a3b8;margin-bottom:1.5rem;">Supports SQL Server 2016+ &middot; Azure SQL Database &middot; Fabric Data Warehouse &middot; Synapse Dedicated SQL Pool</p>
       <div class="btn-row">
@@ -107,13 +107,70 @@
         <span class="caption-detail">Full-text search across stored procedures, views, and functions. Click a result to zoom to the node and view its DDL side-by-side.</span>
         <img src="images/viz-search-screenshot.png" alt="Detail Search panel with DDL viewer and schema filter">
       </div>
+      <div class="showcase-item">
+        <span class="caption">AI-Powered Lineage Analysis</span>
+        <span class="caption-detail">Ask the built-in chat pane how sales are calculated. Explore SQL logic and request a graph preview; AI column mappings are best-effort findings.</span>
+        <img src="images/viz-ai-screenshot.png" alt="AI lineage view showing sales calculation lineage with annotated steps">
+      </div>
     </div>
   </section>
 
+  <section style="background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 60%,#312e81 100%);padding:4rem 1.5rem;text-align:center;">
+    <div style="max-width:720px;margin:0 auto;">
+      <div style="display:inline-flex;align-items:center;gap:.5rem;background:rgba(99,102,241,.25);border:1px solid rgba(165,180,252,.4);border-radius:9999px;padding:.3rem .9rem;margin-bottom:1.5rem;">
+        <span style="font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#a5b4fc;text-transform:uppercase;">AI analysis</span>
+        <span style="font-size:.9rem;">&#10024;</span>
+      </div>
+      <h2 style="font-size:2rem;font-weight:800;color:#fff;margin-bottom:.75rem;line-height:1.2;">
+        Ask the <span style="color:#a5b4fc;">built-in lineage chat</span>
+      </h2>
+      <p style="font-size:1rem;color:#94a3b8;max-width:560px;margin:0 auto 2rem;">
+        Trace how your database objects connect — from source tables to reporting views. The AI assistant works from your <em style="color:#c7d2fe;">own data model</em> and can go further, analyzing column mappings and SQL logic from the available metadata.
+      </p>
+
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:.75rem;overflow:hidden;text-align:left;max-width:580px;margin:0 auto 2rem;box-shadow:0 25px 60px rgba(0,0,0,.5);">
+        <div style="background:#1e293b;padding:.6rem 1rem;display:flex;align-items:center;gap:.5rem;border-bottom:1px solid #334155;">
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#ef4444;display:inline-block;"></span>
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#f59e0b;display:inline-block;"></span>
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+          <span style="font-size:.75rem;color:#64748b;margin-left:.5rem;">Data Lineage chat</span>
+        </div>
+        <div style="padding:1.25rem 1.5rem;font-family:'Consolas','Fira Code',monospace;font-size:.82rem;line-height:2.2;color:#e2e8f0;">
+          <div><span style="color:#e2e8f0;">trace from Sales.SalesOrderDetail upstream to the source tables</span></div>
+          <div><span style="color:#e2e8f0;">how is sales calculated &mdash; show me the lineage up to source in the app</span></div>
+          <div><span style="color:#e2e8f0;">which objects are hubs with the most connections?</span></div>
+        </div>
+      </div>
+
+      <div style="max-width:580px;margin:0 auto 2rem;border-radius:.75rem;overflow:hidden;border:1px solid #334155;box-shadow:0 15px 40px rgba(0,0,0,.4);">
+        <img src="images/viz-ai-screenshot.png" alt="AI lineage view showing sales calculation trace with annotated steps and column mappings" style="width:100%;display:block;">
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;">
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> Traces your actual data model
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> Save graph previews as bookmarks
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> AI assistant analyzes column mappings and SQL logic
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> Uses your Copilot models through VS Code (1.101+), or optionally an API key
+        </div>
+      </div>
+    </div>
+  </section>
 
   <hr class="divider">
 
   <section class="features">
+    <div class="feature">
+      <div class="icon">&#10024;</div>
+      <h3>AI chat</h3>
+      <p>Trace dependencies and create bookmarked graph views from your actual data model. The AI assistant can go further — analyzing column mappings and SQL logic from the available metadata.</p>
+    </div>
     <div class="feature">
       <div class="icon">&#128193;</div>
       <h3>Data Sources</h3>
