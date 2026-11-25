@@ -4121,16 +4121,21 @@ export class NavigationEngine implements IHopStateMachine {
     const outSet = new Set(this.graph.outNeighbors(focusId));
     const ids = Array.from(new Set([...inSet, ...outSet]));
     const edgeVerb = new Map<string, string>();
+    const edgeSide = new Map<string, 'upstream' | 'downstream'>();
     for (const e of this.model.edges) {
       if (e.source !== focusId && e.target !== focusId) continue;
       const other = e.source === focusId ? e.target : e.source;
       const verb = edgeApiType(e, this.nodeMap.get(e.source)?.type ?? '');
-      if (verb !== 'read' || !edgeVerb.has(other)) edgeVerb.set(other, verb);
+      if (verb !== 'read' || !edgeVerb.has(other)) {
+        edgeVerb.set(other, verb);
+        // The kept edge sets the side too: a written table is downstream, even if also read.
+        edgeSide.set(other, e.source === focusId ? 'downstream' : 'upstream');
+      }
     }
     const originWrites = this.originWrittenCarrierIds();
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
-      const edgeDirection = inSet.has(nid) ? 'upstream' : 'downstream';
+      const edgeDirection = edgeSide.get(nid)!;
       // A visited table was folded (no hop of its own), so this line is the only place its column types and nullability reach the model.
       const foldedTable = !SCRIPT_TYPES.has(n.type) && this.visited.has(nid);
       const cols = this.tracer
