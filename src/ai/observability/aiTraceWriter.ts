@@ -9,7 +9,7 @@ import { markGitIgnored } from '../../utils/gitIgnoredDir';
  * prompt, model text, tool argument/result or error prose; wire records do, but only after the user
  * enables the diagnostic command for this extension host session.
  */
-export type RuntimeLifecycleRecord =
+type RuntimeLifecycleRecord =
   | {
       readonly type: 'turn-start';
       readonly requestId: string;

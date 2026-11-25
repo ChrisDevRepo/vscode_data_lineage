@@ -1,6 +1,6 @@
 /** Optional service runners; no question registry, scoring, campaign scheduling, or default service calls. */
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
 import { z } from 'zod';
@@ -18,26 +18,23 @@ import { DEFAULT_CONFIG } from '../../src/engine/types';
 import { executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/connectionManager';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
-import { exportRunToLangfuse, resolveLangfuseConfig } from './langfuseExport';
 import { GateRoundSchema, type GateRoundPolicy } from './gatePolicy';
 import { runHarnessTurn } from './runTurn';
 import { createHarnessSession, repoPath } from './sessionFactory';
-import { parseTrace } from './traceModel';
 import { setShimLogSink, Uri } from './vscodeHostShim';
 
 const DEFAULT_PROMPT = 'Summarize the loaded database and its main dependencies.';
 const HELP = `Optional testing toolset (no scoring):
   npm run test:ai:headless -- [--dacpac FILE] [--prompt TEXT] [--followup TEXT|click:LABEL ...]
                             [--gate JSON] [--cards open|closed]
-                            [--timeout-ms N] [--langfuse] [--trace-verbose]
+                            [--timeout-ms N] [--trace-verbose]
   npm run test:db:smoke -- [--timeout-ms N]
 AI runs one model entry on the product provider port: AI_TEST_ENDPOINT (the entry url),
 AI_TEST_API_KEY, AI_TEST_MODEL, AI_TEST_API_TYPE (chat-completions|responses),
 AI_TEST_MAX_INPUT_TOKENS, AI_TEST_MAX_OUTPUT_TOKENS, optional AI_TEST_REASONING_EFFORT,
 AI_TEST_FORCED_TOOL_CHOICE (false sends auto) and AI_TEST_REQUEST_BODY (JSON).
 DB uses DB_TEST_SERVER, DB_TEST_DATABASE, DB_TEST_USER, DB_TEST_PASSWORD, optional
-DB_TEST_PORT, DB_TEST_ENCRYPT and DB_TEST_TRUST_SERVER_CERTIFICATE. Langfuse uses LANGFUSE_BASE_URL,
-LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY. All services require explicit setup.
+DB_TEST_PORT, DB_TEST_ENCRYPT and DB_TEST_TRUST_SERVER_CERTIFICATE. All services require explicit setup.
 Artifacts are written only under ignored test-results/headless. AI gates are
 simulated: --gate takes a JSON array of rounds, round N answering card N across the run's turns;
 a card past the list is held open (run.json turns[].unansweredCard). A round is
@@ -58,16 +55,14 @@ export function parseOptions(kind: string, args: readonly string[]) {
   let dacpac = repoPath('assets', 'demo.dacpac');
   let prompt = DEFAULT_PROMPT;
   let timeoutMs = 300_000;
-  let langfuse = false;
   let verbose = false;
   let gate: GateRoundPolicy[] | undefined;
   let cards: 'open' | 'closed' = 'closed';
   const followups: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
-    if (kind === 'ai' && ['--langfuse', '--trace-verbose'].includes(flag)) {
-      if (flag === '--langfuse') langfuse = true;
-      else verbose = true;
+    if (kind === 'ai' && flag === '--trace-verbose') {
+      verbose = true;
       continue;
     }
     if (!(flag === '--timeout-ms' || kind === 'ai' && ['--dacpac', '--prompt', '--followup', '--gate', '--cards'].includes(flag))) {
@@ -88,7 +83,7 @@ export function parseOptions(kind: string, args: readonly string[]) {
       }
     }
   }
-  return { dacpac, prompt, followups, gate, cards, timeoutMs, langfuse, verbose };
+  return { dacpac, prompt, followups, gate, cards, timeoutMs, verbose };
 }
 
 /** The text a follow-up step sends: the step itself, or for `click:LABEL` the prompt of the panel button LABEL that the session offers (followupButtons), expanded as the panel's turn expands it. */
@@ -148,24 +143,17 @@ export function aiTestEntry(env: NodeJS.ProcessEnv): OpenAiModelEntry {
   return entry;
 }
 
-/** Runs one selected smoke with explicit configuration and independent runtime/export outcomes. */
+/** Runs one selected smoke with explicit configuration and its runtime outcome. */
 export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<number> {
   if (args.includes('--help')) { console.log(HELP); return 0; }
   let options: ReturnType<typeof parseOptions>;
   let entry: OpenAiModelEntry | undefined;
   let db: ReturnType<typeof databaseConfig> | undefined;
-  let langfuse: ReturnType<typeof resolveLangfuseConfig>;
   try {
     options = parseOptions(kind, args);
     if (kind === 'db') db = databaseConfig(process.env);
     else {
       entry = aiTestEntry(process.env);
-    }
-    langfuse = options.langfuse ? resolveLangfuseConfig(process.env) : null;
-    if (options.langfuse && !langfuse) throw new Error('Set all LANGFUSE_* connection variables for --langfuse.');
-    if (langfuse) {
-      const url = new URL(langfuse.baseUrl);
-      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('LANGFUSE_BASE_URL must use HTTP(S) without embedded credentials.');
     }
   } catch (error) {
     const detail = error instanceof z.ZodError
@@ -182,7 +170,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
   const watchdog = setTimeout(() => controller.abort(), options.timeoutMs);
   const interrupt = () => controller.abort();
   process.once('SIGINT', interrupt);
-  const result: Record<string, unknown> = { kind, runtime: 'error', export: 'disabled', durationMs: 0 };
+  const result: Record<string, unknown> = { kind, runtime: 'error', durationMs: 0 };
   const started = Date.now();
   let traceWriter: AiTraceWriter | undefined;
   try {
@@ -232,7 +220,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       }
     } else {
       traceWriter = new AiTraceWriter();
-      const tracePath = await traceWriter.enable(runDir, { origin: 'headless-harness', verbose: options.verbose });
+      await traceWriter.enable(runDir, { origin: 'headless-harness', verbose: options.verbose });
       const { session, budget } = await createHarnessSession({ dacpacPath: options.dacpac, contextWindow: entry!.maxInputTokens });
       result.model = entry!.model;
       result.apiType = entry!.apiType;
@@ -257,25 +245,12 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       result.turns = turns;
       result.runtime = turns.at(-1)?.outcome ?? 'error';
       await traceWriter.close();
-      if (langfuse) {
-        const exportController = new AbortController();
-        const exportTimeout = setTimeout(() => exportController.abort(), 30_000);
-        try {
-          const exported = await exportRunToLangfuse(parseTrace(readFileSync(tracePath, 'utf8')), {
-            ...langfuse, fetchImpl: (url, init) => fetch(url, { ...init, signal: exportController.signal }),
-          });
-          result.export = exported.errors.length ? 'error' : 'ok';
-          writeFileSync(join(runDir, 'langfuse.json'), JSON.stringify(exported, null, 2) + '\n');
-          result.exportedSpans = exported.exported;
-          result.traceIds = exported.traceIds;
-        } catch { result.export = 'error'; } finally { clearTimeout(exportTimeout); }
-      }
     }
   } catch (error) {
     const diagnostic = sanitizeProviderErrorDiagnostic(error, kind);
     const safeDiagnostic = JSON.stringify(diagnostic, (_key, value: unknown) => {
       if (typeof value !== 'string') return value;
-      for (const key of ['DB_TEST_PASSWORD', 'AI_TEST_API_KEY', 'LANGFUSE_SECRET_KEY']) {
+      for (const key of ['DB_TEST_PASSWORD', 'AI_TEST_API_KEY']) {
         const secret = process.env[key];
         if (secret) value = (value as string).split(secret).join('[redacted]');
       }
@@ -292,5 +267,5 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
     writeFileSync(join(runDir, 'run.json'), JSON.stringify(result, null, 2) + '\n');
     console.log(JSON.stringify({ ...result, artifacts: runDir }));
   }
-  return result.runtime === 'cancelled' ? 3 : result.runtime !== 'ok' || result.export === 'error' ? 2 : 0;
+  return result.runtime === 'cancelled' ? 3 : result.runtime !== 'ok' ? 2 : 0;
 }
