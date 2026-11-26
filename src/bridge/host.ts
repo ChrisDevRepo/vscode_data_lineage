@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { z } from 'zod';
 import { Logger, type LogCategory } from '../utils/log';
-import { notifyErrorOnce } from '../utils/notifications';
+import { isFirstToast, notifyError } from '../utils/notifications';
 import {
   BRIDGE_PROTOCOL_VERSION,
   ExtensionToWebviewMsgSchema,
@@ -79,19 +79,22 @@ function postValidated<S extends z.ZodTypeAny>(
   const parsed = schema.safeParse(msg);
   if (!parsed.success) {
     const type = (msg as { type?: string }).type ?? '?';
+    // The reason is part of the operation: an error line carries no message, and the toast sends the
+    // reader to this line for the detail.
+    const issues = parsed.error.issues.map(({ path, code }) => `${path.join('.') || '(root)'}:${code}`);
+    const operation = `${label}(${type}) — dropped, failed validation issues=${issues.join(', ')}`;
     if (!notifyDrop) {
-      logger.error(
-        `${label}(${type}) — dropped, failed validation`,
-        new Error(`issues=${summarizeZodError(parsed.error)}`),
-      );
+      logger.error(operation, undefined);
       return Promise.resolve(false);
     }
-    notifyErrorOnce(
+    const message = `Data Lineage dropped an internal "${type}" message that failed validation — the view may be incomplete. See the Data Lineage output channel for detail.`;
+    notifyError(
       logger,
-      `${label}(${type})`,
-      `Data Lineage dropped an internal "${type}" message that failed validation — the view may be incomplete. See the Data Lineage output channel for detail.`,
+      operation,
+      message,
       undefined,
-      { issues: summarizeZodError(parsed.error) },
+      undefined,
+      isFirstToast(`${label}(${type})`, message) ? vscode.window.showErrorMessage : () => {},
     );
     return Promise.resolve(false);
   }
