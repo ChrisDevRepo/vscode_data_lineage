@@ -590,10 +590,15 @@ export class AiSession {
     answer: string,
     detailWalk: { readonly origin: string; readonly walkCount: number } | null,
     readCatalog: boolean,
+    observations: readonly DiscoveryEvidenceObservation[] = [],
   ): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'settleDiscoveryTurn');
     if (guard.kind !== 'accepted') return guard;
-    const scope = this.discoveryScopeArtifact?.turnEpoch === token ? this.discoveryScopeArtifact : null;
+    const readObservation = observations.some((observation) => {
+      if ('refused' in observation && (observation as { refused?: boolean }).refused) return false;
+      try { return !readToolError(JSON.parse(observation.result)); } catch { return false; }
+    });
+    const scope = readObservation && this.discoveryScopeArtifact?.turnEpoch === token ? this.discoveryScopeArtifact : null;
     const walk = scope && scope.nodeIds.length >= 2
       ? { origin: scope.origin, walkCount: scope.nodeIds.length }
       : detailWalk;

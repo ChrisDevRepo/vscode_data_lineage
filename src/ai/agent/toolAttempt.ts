@@ -1422,24 +1422,24 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     const { resultText } = invoked;
 
     const detectedGate = input.detectGate?.(call.toolName, resultText) ?? null;
-    const detectedReroute = input.detectReroute?.(call.toolName, resultText) ?? false;
+    let detectedReroute = input.detectReroute?.(call.toolName, resultText) ?? false;
     const detectedRefusal = input.detectRefusal?.(call.toolName, resultText) ?? null;
-    const controlSuccess = detectedGate !== null || detectedReroute || detectedRefusal !== null;
+    let controlSuccess = detectedGate !== null || detectedReroute || detectedRefusal !== null;
     const resultRejection = controlSuccess ? null : rejectionFromResult(resultText);
     const isError = resultRejection !== null;
-    input.onToolResult?.(call.toolName, call.input, isError, resultText);
     const terminalSuccess = !isError && (
       call.toolName === input.requiredTerminalTool
       || (input.isPhaseComplete?.() ?? false)
     );
 
     if (resultRejection) {
+      input.onToolResult?.(call.toolName, call.input, true, resultText);
       const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome({ ...call, schema: () => definition?.inputSchema, terminal: stepTerminalTool(input), offered: offeredToolNames(input.registry) }, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName, accepted: false };
     } else {
-      const observe = !controlSuccess && !terminalSuccess;
+      let observe = !controlSuccess && !terminalSuccess;
       let storedResult = resultText;
       let refused = false;
       if (observe) {
@@ -1455,9 +1455,15 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
             + ` held=${heldObservationTokens}`
             + ` budget=${storedEvidenceKindTokens(model.budget)}`,
           );
+          if (input.detectReroute?.(call.toolName, storedResult)) {
+            detectedReroute = true;
+            controlSuccess = true;
+            observe = false;
+          }
         }
-        heldObservationTokens += await model.getNumTokens(storedResult);
+        if (observe) heldObservationTokens += await model.getNumTokens(storedResult);
       }
+      input.onToolResult?.(call.toolName, call.input, refused && !controlSuccess, storedResult);
       const outcome = recordToolOutcome(
         { ...call, terminal: stepTerminalTool(input), offered: offeredToolNames(input.registry) },
         {

@@ -31,4 +31,14 @@ describe('over-budget refusal readers', () => {
     queueDiscoveryBudgetNotice({ queueClosingNotice }, 'lineage_search_ddl', JSON.stringify(reply));
     expect(queueClosingNotice).toHaveBeenCalledOnce();
   });
+
+  it('reroutes a result_too_large scope bundle reply to SM approval and reserves >= 75% of small-window blocks for stored evidence', () => {
+    const tooLarge = JSON.stringify({
+      code: REJECTION_CODES.resultTooLarge,
+      reason: 'This result is larger than the evidence this step can hold, so none of it was stored.',
+      detail: { tool: 'lineage_get_scope_bundle', tokens: 776, held_tokens: 0, budget: 485 },
+    });
+    expect(detectOverBudgetFromResult('lineage_get_scope_bundle', tooLarge)).toBe(true);
+    expect(detectOverBudgetFromResult('lineage_get_object_detail', tooLarge)).toBe(false);
+  });
 });

@@ -774,7 +774,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const sess = deps.getSession();
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
       deps.logger?.debug(`[AI] [Discovery] malformed canonical output tool=${toolName} callId=${trunc(sanitizeForLog(callId), 64)} — skipped for walk capture`));
-    observeWrite(sess.settleDiscoveryTurn(deps.turnEpoch, state.prompt, res.text, walk, nextAttempt.observations.length > 0));
+    observeWrite(sess.settleDiscoveryTurn(deps.turnEpoch, state.prompt, res.text, walk, nextAttempt.observations.length > 0, nextAttempt.observations));
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
       : [];

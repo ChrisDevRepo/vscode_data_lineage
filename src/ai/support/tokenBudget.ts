@@ -184,10 +184,16 @@ export function contextBlockTokens(budget: TurnTokenBudget): number {
 
 /**
  * Token budget for one stored evidence kind (observations or rejections) or one canonical discovery
- * result, held below {@link contextBlockTokens} so one entry cannot fill the block.
+ * result, held below {@link contextBlockTokens} so one entry cannot fill the block. On small-window
+ * models (above 8k tokens) where subtracting {@link CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS} would starve
+ * discovery below {@link CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS}, at least
+ * {@link CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS} is kept.
  */
 export function storedEvidenceKindTokens(budget: TurnTokenBudget): number {
-  return contextBlockTokens(budget) - CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS;
+  const block = contextBlockTokens(budget);
+  return block > CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS
+    ? Math.max(CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS, block - CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS)
+    : block - CONTEXT_BLOCK_ITEM_HEADROOM_TOKENS;
 }
 
 
