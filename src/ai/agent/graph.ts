@@ -444,6 +444,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, sess.retainableReportSections());
       },
       holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
+      submissionRouteFaults: (input) => {
+        const engine = deps.getSession().stateMachine as NavigationEngine | null;
+        if (!engine) return null;
+        const routes = engine.submissionRouteFaults(input);
+        return routes.length > 0 ? { routes, rejection: engine.routeRejection(routes) } : null;
+      },
     });
   };
 

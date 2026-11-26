@@ -74,6 +74,7 @@ const ChatFollowupSchema = z.object({ label: z.string(), prompt: z.string() });
 /** Composer state: the picker lists, the selection, whether a turn runs, and the follow-ups. */
 const ChatStateMsgSchema = z.object({
   type: z.literal('chat.state'),
+  provider: z.enum(['vscode-lm', 'api-key']).optional(),
   models: z.array(ChatModelSchema),
   selectedModelId: z.string(),
   effort: z.string().optional(),

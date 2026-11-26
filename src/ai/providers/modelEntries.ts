@@ -10,6 +10,14 @@ import { z } from 'zod';
 /** Wire formats of one endpoint: the OpenAI Chat Completions and Responses APIs. */
 const MODEL_API_TYPES = ['chat-completions', 'responses'] as const;
 
+/** Active AI transport modes: VS Code language models (`vscode.lm`) vs. direct OpenAI-compatible API keys. */
+export type AiProviderMode = 'vscode-lm' | 'api-key';
+
+/** Normalizes a raw `dataLineageViz.ai.provider` value to a known mode (`undefined` when unset or invalid). */
+export function parseAiProviderMode(raw: unknown): AiProviderMode | undefined {
+  return raw === 'vscode-lm' || raw === 'api-key' ? raw : undefined;
+}
+
 /**
  * Request fields the port owns. `requestBody` carries everything else unchanged; a key of this
  * list would replace the conversation, tool offer, stream shape or output cap (`maxOutputTokens`

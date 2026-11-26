@@ -42,11 +42,15 @@ function toInfo(model: vscode.LanguageModelChat): LmModelInfo {
 }
 
 /**
- * Copilot Auto is offered nowhere on this source: it refuses a request whose last message is tool
- * results, which every tool loop sends.
+ * Copilot Auto and VS Code's internal/core-only utility and dictation models are offered nowhere on
+ * this source: Auto refuses a request whose last message is tool results, utility-small is a tiny
+ * internal helper model, and dictation/luna aliases are restricted to VS Code core.
  */
+const INTERNAL_COPILOT_ID = /^(?:auto|copilot-utility-|copilot-dictation-)|-luna$/i;
+
 function isOffered(model: vscode.LanguageModelChat): boolean {
-  return !(model.vendor === 'copilot' && model.id === 'auto');
+  if (model.vendor !== 'copilot') return true;
+  return !INTERNAL_COPILOT_ID.test(model.id) && !INTERNAL_COPILOT_ID.test(model.family);
 }
 
 /** Lists the live models and resolves each entry's selector by VS Code's own matching, first offered match. */

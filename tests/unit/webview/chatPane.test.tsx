@@ -142,7 +142,8 @@ describe('follow-up suggestions', () => {
       await act(async () => { [...(host?.querySelectorAll('button') ?? [])].find((el) => el.textContent === 'Go')?.click(); });
       expect(postMessage).toHaveBeenCalledWith({ type: 'chat.send', text: 'Go on' });
       expect(stop()).toBeNull();
-      post({ type: 'chat.state', models: [{ id: 'm', name: 'M' }], selectedModelId: 'm', busy: true, turnId: 's:r1', followups: [] });
+      post({ type: 'chat.state', provider: 'api-key', models: [{ id: 'm', name: 'M' }], selectedModelId: 'm', busy: true, turnId: 's:r1', followups: [] });
+      expect(host.querySelector('[data-slot="chat-transport-footer"]')?.textContent).toBe('Mode: Direct API key');
       await act(async () => { (stop() as HTMLElement | null)?.click(); });
       expect(postMessage).toHaveBeenCalledWith({ type: 'chat.cancel', turnId: 's:r1' });
     });

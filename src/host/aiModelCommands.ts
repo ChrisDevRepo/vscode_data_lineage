@@ -8,7 +8,8 @@
 
 import * as vscode from 'vscode';
 import { ModelPortError, modelUserMessage } from '../ai/model/modelPort';
-import { apiKeySecretName, baseUrlFault, MAX_ENTRY_NAME_LENGTH, parseModelEntries, type ModelEntry, type OpenAiModelEntry } from '../ai/providers/modelEntries';
+import { apiKeySecretName, baseUrlFault, MAX_ENTRY_NAME_LENGTH, parseAiProviderMode, parseModelEntries, type ModelEntry, type OpenAiModelEntry } from '../ai/providers/modelEntries';
+import { activeRawModels } from '../ai/providers/modelPortFactory';
 import { createProviderModelPort } from '../ai/providers/openAiTransport';
 import { loadLmCatalog, type LmModelInfo } from '../ai/providers/vscodeLmTransport';
 import { sanitizeProviderError } from '../ai/support/text';
@@ -85,6 +86,16 @@ interface WizardState {
 
 const AI_CONFIG_SECTION = 'dataLineageViz.ai';
 const MODELS_SETTING = 'models';
+const VSCODE_LM_MODELS_SETTING = 'vscodeLmModels';
+
+/** Setting key (`models` or `vscodeLmModels`) that owns `lm` entries in the current configuration. */
+function targetSettingFor(lm: boolean): string {
+  if (!lm) return MODELS_SETTING;
+  const cfg = vscode.workspace.getConfiguration(AI_CONFIG_SECTION);
+  return parseAiProviderMode(cfg.get('provider')) !== undefined && Array.isArray(cfg.get(VSCODE_LM_MODELS_SETTING))
+    ? VSCODE_LM_MODELS_SETTING
+    : MODELS_SETTING;
+}
 
 /** A readable entry id from the display name, made unique among the ids already in the list. */
 function newEntryId(name: string, taken: readonly unknown[]): string {
@@ -136,15 +147,18 @@ function testConnection(entry: OpenAiModelEntry, apiKey: string, logger: Logger)
  * @returns The saved entry id, or `undefined` when the user cancelled.
  */
 async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, existing?: ModelEntry): Promise<string | undefined> {
+  const providerMode = parseAiProviderMode(vscode.workspace.getConfiguration(AI_CONFIG_SECTION).get('provider'));
   const existingApi = existing?.apiType === 'vscode-lm' ? undefined : existing;
   const savedKey = existingApi ? await secrets.get(apiKeySecretName(existingApi.id)) : undefined;
+  const singleOpenAiFlow = existing === undefined && providerMode === 'api-key';
+  const singleLmFlow = existing === undefined && providerMode === 'vscode-lm';
   const state: WizardState = existingApi
     ? { lm: false, url: existingApi.url, model: existingApi.model, name: existingApi.name, key: savedKey }
-    : { lm: existing !== undefined, url: '', model: '', name: existing?.name ?? '' };
+    : { lm: singleLmFlow || existing !== undefined, url: '', model: '', name: existing?.name ?? '' };
 
   const steps: WizardStep[] = [
     {
-      applies: () => existing === undefined,
+      applies: () => existing === undefined && !singleOpenAiFlow && !singleLmFlow,
       run: async (step, totalSteps) => {
         const presetItems: SourceItem[] = PRESETS.map((preset) => ({ label: preset.label, description: preset.description, preset }));
         const lmItem: SourceItem = { label: LM_SOURCE_LABEL, description: 'Models other extensions provide, e.g. a chat subscription' };
@@ -166,7 +180,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
       applies: () => !state.lm,
       run: async (step, totalSteps) => {
         const answer = await askInput({
-          step, totalSteps, canGoBack: existing === undefined, value: state.url,
+          step, totalSteps, canGoBack: existing === undefined && !singleOpenAiFlow, value: state.url,
           prompt: 'Base URL of the OpenAI-compatible API, e.g. https://host/v1/',
           validate: (v) => {
             const fault = v.trim() ? baseUrlFault(v.trim()) : 'is required';
@@ -213,7 +227,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
         const selector = existing?.apiType === 'vscode-lm' ? existing.selector : undefined;
         const items = live.map((info) => ({ label: info.name, description: `${info.vendor} · ${info.family}`, detail: `${info.maxInputTokens} input tokens`, info }));
         const answer = await askPick({
-          step, totalSteps, canGoBack: existing === undefined, placeholder: LM_SOURCE_LABEL, items,
+          step, totalSteps, canGoBack: existing === undefined && !singleLmFlow, placeholder: LM_SOURCE_LABEL, items,
           active: items.find((item) => item.info === state.lmModel)
             ?? items.find((item) => selector !== undefined && Object.entries(selector).every(([key, value]) => item.info[key as keyof typeof selector] === value)),
         });
@@ -237,14 +251,16 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
   if (!await runSteps(steps)) return undefined;
   let openSettings = false;
   while (true) {
-    const models = readRawList(AI_CONFIG_SECTION, MODELS_SETTING);
+    const settingKey = targetSettingFor(state.lm);
+    const models = readRawList(AI_CONFIG_SECTION, settingKey);
     const id = existing?.id ?? newEntryId(state.name, models);
     const stored = models.find((entry) => rawId(entry) === id) as Record<string, unknown> | undefined;
+    const defaultRequestBody = state.preset ? state.preset.requestBody : (singleOpenAiFlow ? SAMPLING_REQUEST_BODY : undefined);
     const added = stored ? {} : {
       apiType: state.preset?.apiType ?? 'chat-completions',
       maxInputTokens: DEFAULT_MAX_INPUT_TOKENS,
       maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      ...(state.preset?.requestBody ? { requestBody: state.preset.requestBody } : {}),
+      ...(defaultRequestBody ? { requestBody: defaultRequestBody } : {}),
     };
     const { vendor, family, id: modelId } = state.lmModel ?? {};
     const candidate = state.lm
@@ -265,7 +281,7 @@ async function runModelWizard(secrets: vscode.SecretStorage, logger: Logger, exi
         openSettings = true;
       }
     }
-    await rewriteRawList(AI_CONFIG_SECTION, MODELS_SETTING, (entries) => {
+    await rewriteRawList(AI_CONFIG_SECTION, settingKey, (entries) => {
       const at = entries.findIndex((item) => rawId(item) === id);
       if (at >= 0) entries[at] = candidate;
       else entries.push(candidate);
@@ -289,7 +305,15 @@ async function offerSettingsJson(): Promise<void> {
 
 /** The valid entry an argument names by id, or the picked one; an invalid entry is warned about. `needsKey` leaves out the entries that take no key. */
 async function entryFromArg(arg: unknown, placeholder: string, logger: Logger, needsKey = false): Promise<ModelEntry | undefined> {
-  const { entries: all, invalid } = parseModelEntries(vscode.workspace.getConfiguration(AI_CONFIG_SECTION).get(MODELS_SETTING));
+  const cfg = vscode.workspace.getConfiguration(AI_CONFIG_SECTION);
+  const mode = parseAiProviderMode(cfg.get('provider'));
+  const rawModels = cfg.get(MODELS_SETTING);
+  const rawLmModels = mode !== undefined ? cfg.get(VSCODE_LM_MODELS_SETTING) : undefined;
+  const { entries: all, invalid } = parseModelEntries(activeRawModels({
+    provider: mode,
+    models: rawModels,
+    vscodeLmModels: rawLmModels !== rawModels ? rawLmModels : undefined,
+  }));
   if (invalid.length > 0) {
     notifyWarning(
       logger,
@@ -298,7 +322,12 @@ async function entryFromArg(arg: unknown, placeholder: string, logger: Logger, n
       { issues: invalid.flatMap((entry) => entry.issues) },
     );
   }
-  const entries = needsKey ? all.filter((entry) => entry.apiType !== 'vscode-lm') : all;
+  const entries = all.filter((entry) => {
+    if (needsKey && entry.apiType === 'vscode-lm') return false;
+    if (mode === 'vscode-lm') return entry.apiType === 'vscode-lm';
+    if (mode === 'api-key') return entry.apiType !== 'vscode-lm';
+    return true;
+  });
   const id = typeof arg === 'string' ? arg : (arg as { id?: unknown } | undefined)?.id;
   if (typeof id === 'string') return entries.find((entry) => entry.id === id);
   if (entries.length === 0) {
@@ -330,13 +359,19 @@ export function registerAiModelCommands(context: vscode.ExtensionContext, logger
     vscode.commands.registerCommand(REMOVE_AI_MODEL_COMMAND, async (arg?: unknown): Promise<void> => {
       const target = await entryFromArg(arg, 'Select a model to remove', logger);
       if (!target) return;
-      await rewriteRawList(AI_CONFIG_SECTION, MODELS_SETTING, (entries) => entries.filter((entry) => rawId(entry) !== target.id));
+      const settingKey = targetSettingFor(target.apiType === 'vscode-lm');
+      await rewriteRawList(AI_CONFIG_SECTION, settingKey, (entries) => entries.filter((entry) => rawId(entry) !== target.id));
       await context.secrets.delete(apiKeySecretName(target.id));
       logger.info('Removed AI model');
       logger.debug(`Removed AI model ${target.id}`);
     }),
 
     vscode.commands.registerCommand(UPDATE_AI_MODEL_KEY_COMMAND, async (arg?: unknown): Promise<boolean> => {
+      const mode = parseAiProviderMode(vscode.workspace.getConfiguration(AI_CONFIG_SECTION).get('provider'));
+      if (mode === 'vscode-lm') {
+        void vscode.window.showInformationMessage('API keys are only used when dataLineageViz.ai.provider is set to "api-key".');
+        return false;
+      }
       const target = await entryFromArg(arg, 'Select the model the key belongs to', logger, true);
       if (!target) return false;
       const key = await vscode.window.showInputBox({
@@ -353,13 +388,15 @@ export function registerAiModelCommands(context: vscode.ExtensionContext, logger
     }),
 
     vscode.commands.registerCommand(MANAGE_AI_MODELS_COMMAND, async (): Promise<void> => {
+      const mode = parseAiProviderMode(vscode.workspace.getConfiguration(AI_CONFIG_SECTION).get('provider'));
+      const commands = [
+        { label: 'Add AI Model', command: ADD_AI_MODEL_COMMAND },
+        { label: 'Edit AI Model', command: EDIT_AI_MODEL_COMMAND },
+        { label: 'Remove AI Model', command: REMOVE_AI_MODEL_COMMAND },
+        ...(mode === 'vscode-lm' ? [] : [{ label: 'Update AI Model Key', command: UPDATE_AI_MODEL_KEY_COMMAND }]),
+      ];
       const picked = await vscode.window.showQuickPick(
-        [
-          { label: 'Add AI Model', command: ADD_AI_MODEL_COMMAND },
-          { label: 'Edit AI Model', command: EDIT_AI_MODEL_COMMAND },
-          { label: 'Remove AI Model', command: REMOVE_AI_MODEL_COMMAND },
-          { label: 'Update AI Model Key', command: UPDATE_AI_MODEL_KEY_COMMAND },
-        ],
+        commands,
         { placeHolder: 'Manage AI models', ignoreFocusOut: true },
       );
       if (picked) await vscode.commands.executeCommand(picked.command);

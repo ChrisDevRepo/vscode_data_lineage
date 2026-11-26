@@ -13,7 +13,8 @@ import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet
 import { buildAiToolRegistry } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
-import { parseModelEntries, type VscodeLmModelEntry } from './ai/providers/modelEntries';
+import { parseAiProviderMode, parseModelEntries, type VscodeLmModelEntry } from './ai/providers/modelEntries';
+import { activeRawModels } from './ai/providers/modelPortFactory';
 import { findLmModel, loadLmCatalog, onLmModelsChanged, type LmCatalog } from './ai/providers/vscodeLmTransport';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
@@ -102,7 +103,14 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   const reloadLmCatalog = (): void => {
     if (!chat) return;
     const load = ++lmLoads;
-    const { entries } = parseModelEntries(vscode.workspace.getConfiguration('dataLineageViz.ai').get('models'));
+    const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
+    const provider = parseAiProviderMode(cfg.get('provider'));
+    if (provider === 'api-key') {
+      lmCatalog = { live: [], resolved: new Map() };
+      chat.refresh();
+      return;
+    }
+    const { entries } = parseModelEntries(activeRawModels({ provider, models: cfg.get('models'), vscodeLmModels: cfg.get('vscodeLmModels') }));
     loadLmCatalog(entries.filter((entry): entry is VscodeLmModelEntry => entry.apiType === 'vscode-lm'))
       .then((catalog) => {
         if (load !== lmLoads) return;
@@ -131,7 +139,14 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         getSession,
         modelSources: () => {
           const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
-          return { models: cfg.get('models'), defaultModel: cfg.get<string>('defaultModel'), secrets: context.secrets, lmModel: (id) => findLmModel(lmCatalog, id) };
+          return {
+            provider: parseAiProviderMode(cfg.get('provider')),
+            models: cfg.get('models'),
+            vscodeLmModels: cfg.get('vscodeLmModels'),
+            defaultModel: cfg.get<string>('defaultModel'),
+            secrets: context.secrets,
+            lmModel: (id) => findLmModel(lmCatalog, id),
+          };
         },
         lmCatalog: () => lmCatalog,
         lastPick: {
@@ -241,7 +256,11 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         }
       }
 
-      if (e.affectsConfiguration('dataLineageViz.ai.models')) {
+      if (
+        e.affectsConfiguration('dataLineageViz.ai.provider')
+        || e.affectsConfiguration('dataLineageViz.ai.models')
+        || e.affectsConfiguration('dataLineageViz.ai.vscodeLmModels')
+      ) {
         chat?.refresh();
         reloadLmCatalog();
       } else if (e.affectsConfiguration('dataLineageViz.ai.defaultModel')) chat?.refresh();
