@@ -19,7 +19,7 @@ import { preferredStartModel, type LmCatalog } from '../ai/providers/vscodeLmTra
 import type { LineageRuntime } from '../ai/runtime/lineageRuntime';
 import { TurnEventSink } from '../ai/runtime/turnEventSink';
 import type { AiSession } from '../ai/session/session';
-import { sanitizeDescriptionForChat } from '../ai/support/text';
+import { causeCodes, formatProviderErrorDiagnostic, sanitizeDescriptionForChat, type TurnStop } from '../ai/support/text';
 import { calibrateTurnBudget } from '../ai/support/tokenBudget';
 import { Logger, OUTPUT_POINTER } from '../utils/log';
 import { notifyError, notifyWarningOnce } from '../utils/notifications';
@@ -241,6 +241,7 @@ export class ChatController {
     const session = getSession();
     const trigger = normalizeTrigger(prompt);
     let failure: unknown;
+    let stop: TurnStop | undefined;
     try {
       if (trigger === normalizeTrigger(SHOW_FULL_DESCRIPTION_TRIGGER)) {
         sink.stream(session.lastPresentResultDescription
@@ -270,20 +271,28 @@ export class ChatController {
         signal: turn.abort.signal,
       });
       logger.info(`[${getSession().id}] chat turn terminal status=${result.outcome} modelCalls=${result.modelCalls}`);
+      // The runtime ends a failed turn by its result, not by a throw; the stop it reports is the failure to log.
+      stop = result.outcome === 'error' ? result.failure.turnStop : undefined;
     } catch (error) {
       failure = error;
       sink.fail(error instanceof ModelPortError ? error.message : 'The assistant could not complete the request.');
     } finally {
       this.flushText(turn);
       if (sink.terminalStatus === 'error') {
+        // The error line carries the stop's fields and the redacted external message of a provider or
+        // network stop; the sanitized cause chain goes to debug.
+        const external = stop?.source === 'provider' || stop?.source === 'network' ? stop.diagnostic : undefined;
+        const quoted = external && `"${external.message}"`;
+        const causes = stop?.diagnostic ? causeCodes(stop.diagnostic) : [];
         notifyError(
           logger,
-          'Chat turn failed',
+          `Chat turn failed${stop ? ` source=${stop.source} code=${stop.code}${causes.length ? ` cause=${causes.join(',')}` : ''}${quoted ? ` message=${quoted}` : ''}` : ''}`,
           `Data Lineage: the assistant could not finish — ${OUTPUT_POINTER}.`,
           failure,
           undefined,
           this.deps.showErrorMessage,
         );
+        if (stop?.diagnostic) logger.debug(`Chat turn failed — ${formatProviderErrorDiagnostic(stop.diagnostic)}`);
       }
       this.turn = undefined;
       this.post(this.stateMsg());
