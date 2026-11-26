@@ -267,11 +267,12 @@ describe('vscode-lm catalog', () => {
   const model = (over: Record<string, unknown>) => ({ id: 'a', name: 'A', vendor: 'other', family: 'fa', version: '1', maxInputTokens: 100, ...over });
 
   it('lists the live models, resolves each entry by its selector and keeps the host order', async () => {
-    (vscode.lm as unknown as { models: unknown[] }).models = [model({}), model({ id: 'c', name: 'C', vendor: 'copilot', family: 'fc', maxInputTokens: 200 })];
-    const catalog = await loadLmCatalog([{ ...ENTRY, id: 'mine', selector: { family: 'fc' } }, { ...ENTRY, id: 'lost', selector: { family: 'none' } }]);
+    (vscode.lm as unknown as { models: unknown[] }).models = [model({ id: 'auto', name: 'Auto', vendor: 'copilot' }), model({}), model({ id: 'c', name: 'C', vendor: 'copilot', family: 'fc', maxInputTokens: 200 })];
+    const catalog = await loadLmCatalog([{ ...ENTRY, id: 'mine', selector: { family: 'fc' } }, { ...ENTRY, id: 'lost', selector: { family: 'none' } }, { ...ENTRY, id: 'auto', selector: { id: 'auto' } }]);
     expect(catalog.live.map((info) => [info.selectionId, info.name, info.maxInputTokens])).toEqual([['lm:other/a', 'A', 100], ['lm:copilot/c', 'C', 200]]);
     expect(catalog.resolved.get('mine')?.id).toBe('c');
     expect(catalog.resolved.has('lost')).toBe(false);
+    expect(catalog.resolved.has('auto')).toBe(false);
     expect(preferredStartModel(catalog.live)?.selectionId).toBe('lm:copilot/c');
     expect(preferredStartModel(catalog.live.slice(0, 1))).toBeUndefined();
   });

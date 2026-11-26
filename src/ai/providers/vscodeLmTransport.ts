@@ -41,12 +41,20 @@ function toInfo(model: vscode.LanguageModelChat): LmModelInfo {
   return { selectionId: `${LIVE_MODEL_ID_PREFIX}${vendor}/${id}`, id, name, vendor, family, version, maxInputTokens, model };
 }
 
-/** Lists the live models and resolves each entry's selector by VS Code's own matching, first match. */
+/**
+ * Copilot Auto is offered nowhere on this source: it refuses a request whose last message is tool
+ * results, which every tool loop sends.
+ */
+function isOffered(model: vscode.LanguageModelChat): boolean {
+  return !(model.vendor === 'copilot' && model.id === 'auto');
+}
+
+/** Lists the live models and resolves each entry's selector by VS Code's own matching, first offered match. */
 export async function loadLmCatalog(entries: readonly VscodeLmModelEntry[]): Promise<LmCatalog> {
-  const live = (await vscode.lm.selectChatModels()).map(toInfo);
+  const live = (await vscode.lm.selectChatModels()).filter(isOffered).map(toInfo);
   const resolved = new Map<string, LmModelInfo>();
   for (const entry of entries) {
-    const [match] = await vscode.lm.selectChatModels(entry.selector);
+    const [match] = (await vscode.lm.selectChatModels(entry.selector)).filter(isOffered);
     if (match) resolved.set(entry.id, toInfo(match));
   }
   return { live, resolved };
