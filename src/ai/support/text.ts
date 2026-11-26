@@ -240,13 +240,32 @@ export function hopProgressBlock(current: number, total: number, label: string, 
 }
 
 /**
- * The external message of a provider or network stop as the chat line quotes it: already redacted
- * and length-capped by {@link sanitizeProviderErrorDiagnostic}, Markdown-escaped, in double quotes.
- * Undefined for any other source, whose text is Data Lineage's own.
+ * The diagnostic of a provider or network stop: the only stops whose message is the provider's own.
+ * Already redacted and length-capped by {@link sanitizeProviderErrorDiagnostic}.
  */
+function externalDiagnostic(stop: TurnStop): ProviderErrorDiagnostic | undefined {
+  return stop.source === 'provider' || stop.source === 'network' ? stop.diagnostic : undefined;
+}
+
+/** The external message as the chat line quotes it: Markdown-escaped, in double quotes. */
 function quotedExternalMessage(stop: TurnStop): string | undefined {
-  const external = stop.source === 'provider' || stop.source === 'network' ? stop.diagnostic : undefined;
+  const external = externalDiagnostic(stop);
   return external && `"${escapeMarkdownText(external.message)}"`;
+}
+
+/**
+ * The fields of a turn stop for its log line: the host's error line of a failed turn, or the warn
+ * line of a stop the turn survives. Source, the class of the exception behind it when its code is
+ * not already that class name, the code, the codes of its cause chain, and the external message
+ * quoted for a provider or network stop. The sanitized diagnostic itself stays for a debug line.
+ */
+export function turnStopLogFields(stop: TurnStop): string {
+  const external = externalDiagnostic(stop);
+  const causes = stop.diagnostic ? causeCodes(stop.diagnostic) : [];
+  const name = stop.diagnostic?.name;
+  const cls = stop.source === 'internal' && name !== undefined && name !== stop.code ? ` class=${name}` : '';
+  return `source=${stop.source}${cls} code=${stop.code}`
+    + `${causes.length ? ` cause=${causes.join(',')}` : ''}${external ? ` message="${external.message}"` : ''}`;
 }
 
 /**

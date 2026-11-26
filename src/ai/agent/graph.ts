@@ -47,7 +47,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, describeTurnStop, hopProgressBlock, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type TurnStop } from '../support/text';
+import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, describeTurnStop, hopProgressBlock, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, turnStopLogFields, type TurnStop } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -906,7 +906,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
     const nextAttempt = recordAttempt(priorAttempt, res, 'gate_refine', refineStartedAt);
     if (res.stop === 'error') {
-      deps.logger?.warn(`[AI] Scope refinement failed — source=${res.turnStop.source} code=${res.turnStop.code}, proposal kept pending`);
+      deps.logger?.warn(`[AI] Scope refinement failed — ${turnStopLogFields(res.turnStop)}, proposal kept pending`);
       return keepPendingGate(res.turnStop);
     }
     if (res.stop === 'gate') {
@@ -925,7 +925,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (stopped?.reason === 'backend_fault') return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
     if (stopped) {
       // The turn goes on, so no turn-terminal error line follows this stop.
-      deps.logger?.error(`[AI] [Stop] phase=${stopped.stop.phase} reason=${stopped.reason} code=${stopped.stop.code} disposition=proposal_pending`, undefined);
+      deps.logger?.error(`[AI] [Stop] phase=${stopped.stop.phase} reason=${stopped.reason} ${turnStopLogFields(stopped.stop)} disposition=proposal_pending`, undefined);
       return keepPendingGate(stopped.stop);
     }
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'gate_refine' };

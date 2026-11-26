@@ -11,6 +11,7 @@ import { ModelPortError, modelUserMessage } from '../ai/model/modelPort';
 import { apiKeySecretName, baseUrlFault, MAX_ENTRY_NAME_LENGTH, parseModelEntries, type ModelEntry, type OpenAiModelEntry } from '../ai/providers/modelEntries';
 import { createProviderModelPort } from '../ai/providers/openAiTransport';
 import { loadLmCatalog, type LmModelInfo } from '../ai/providers/vscodeLmTransport';
+import { sanitizeProviderError } from '../ai/support/text';
 import type { Logger } from '../utils/log';
 import { notifyWarning } from '../utils/notifications';
 import { rawId, readRawList, rewriteRawList } from './rawSettingList';
@@ -109,8 +110,13 @@ function testConnection(entry: OpenAiModelEntry, apiKey: string, logger: Logger)
       return undefined;
     } catch (err) {
       if (abort.signal.aborted) return 'cancelled';
+      if (err instanceof ModelPortError) {
+        // The user sees this message in the wizard's dialog; the error line keeps it too, redacted.
+        logger.error(`Test AI model connection — message="${sanitizeProviderError(err.message)}"`, err);
+        return err.message;
+      }
       logger.error('Test AI model connection', err);
-      return err instanceof ModelPortError ? err.message : 'The endpoint could not be reached.';
+      return 'The endpoint could not be reached.';
     }
   });
 }
