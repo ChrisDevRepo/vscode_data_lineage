@@ -99,6 +99,17 @@ function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage 
   throw new ModelPortError('invalid_request', `Unsupported LangChain message type: ${message.getType()}.`);
 }
 
+/**
+ * Copilot Auto routes a request on the text of its last user message and rejects one that ends with tool
+ * results ("Auto mode needs a prompt or a command to route a request."), so a tool loop continues with this
+ * trailing user prompt. Nothing else is sent for any other model.
+ */
+const COPILOT_AUTO_ROUTING_TEXT = 'Continue.';
+
+function isCopilotAuto(model: vscode.LanguageModelChat): boolean {
+  return model.vendor === 'copilot' && model.id === 'auto';
+}
+
 /** Token usage from the UTF-8 JSON data part VS Code's built-in providers stream (OpenAI names); undefined if bad. */
 function parseUsageData(data: unknown): UsageMetadata | undefined {
   if (!(data instanceof Uint8Array)) return undefined;
@@ -190,10 +201,12 @@ export class VscodeLmChatModel extends BaseChatModel<VscodeLmCallOptions> {
     const chunk = (message: AIMessageChunk) => new ChatGenerationChunk({ message, text: typeof message.content === 'string' ? message.content : '' });
     try {
       if (signal?.aborted) throw cancelledError();
+      const nativeMessages = messages.map(toVscodeMessage);
+      if (isCopilotAuto(this.model) && ToolMessage.isInstance(messages.at(-1))) nativeMessages.push(vscode.LanguageModelChatMessage.User(COPILOT_AUTO_ROUTING_TEXT));
       const toolMode = isForcedToolChoice(toolChoice)
         ? vscode.LanguageModelChatToolMode.Required
         : vscode.LanguageModelChatToolMode.Auto;
-      const response = await this.model.sendRequest(messages.map(toVscodeMessage), {
+      const response = await this.model.sendRequest(nativeMessages, {
         ...(tools.length > 0 ? { tools: tools.map(({ function: { name, description, parameters } }) => ({ name, description, inputSchema: parameters })), toolMode } : {}),
         ...(Object.keys(this.modelOptions).length > 0 ? { modelOptions: this.modelOptions } : {}),
       }, cancellation.token);

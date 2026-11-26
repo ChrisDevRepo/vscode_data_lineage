@@ -23,7 +23,6 @@
 - **A model entry is not offered.** The warning names the entry in `dataLineageViz.ai.models` and what is wrong with it: an `https` URL (or `http` on `127.0.0.1`, `localhost` or `[::1]`), an `apiType` of `chat-completions` or `responses`, and token limits are required. Keys never belong in an entry.
 - **A `vscode-lm` entry is not offered.** No model VS Code lists matches its `selector`; the warning names the entry. Install and sign in to the extension that provides the model, or change the selector (**Edit AI Model** lists the models available now).
 - **No model in the chat on a fresh install.** With `ai.models` empty, the chat lists the models VS Code provides; with none installed it shows **Add model**.
-- **A follow-up fails with Copilot's "Auto" model.** A follow-up whose history ends in tool results can fail on "Auto" (VS Code issue [microsoft/vscode#340675](https://github.com/microsoft/vscode/issues/340675)); pick a named model in the chat's model picker.
 - **"No API key is stored".** Run **Data Lineage: Update AI Model Key** and pick the entry.
 - **An endpoint rejects a forced tool call.** Set `forcedToolChoice` to `false` on that entry; the extension then sends `auto`.
 
