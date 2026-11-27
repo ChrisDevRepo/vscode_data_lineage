@@ -136,7 +136,7 @@ export function openPanel(
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
     const parsed = MainPanelToExtensionMsgSchema.safeParse(rawMsg);
     if (!parsed.success) {
-      bridgeLogger.error('Rejected malformed webview message', new Error(`type=${rawMsg?.type ?? '?'}: ${summarizeZodError(parsed.error)}`));
+      bridgeLogger.error(`Rejected malformed webview message type=${rawMsg?.type ?? '?'}: ${summarizeZodError(parsed.error)}`, undefined);
       return;
     }
     const msg = parsed.data;

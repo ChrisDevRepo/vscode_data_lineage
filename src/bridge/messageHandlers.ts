@@ -514,7 +514,7 @@ export function createMessageHandlers(
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
           const parsed = DetailPanelToExtensionMsgSchema.safeParse(rawM);
           if (!parsed.success) {
-            host.log('error', 'Bridge', 'Rejected malformed detail-panel message', new Error(`type=${rawM?.type ?? '?'}: ${summarizeZodError(parsed.error)}`));
+            host.log('error', 'Bridge', `Rejected malformed detail-panel message type=${rawM?.type ?? '?'}: ${summarizeZodError(parsed.error)}`);
             return;
           }
           try {
