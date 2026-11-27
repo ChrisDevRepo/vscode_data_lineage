@@ -592,6 +592,46 @@
             "default": "",
             "markdownDescription": "Path to a custom AI output templates YAML file; empty uses the built-in templates. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md)"
           },
+          "dataLineageViz.ai.provider": {
+            "type": "string",
+            "enum": ["vscode-lm", "api-key"],
+            "default": "vscode-lm",
+            "scope": "application",
+            "enumDescriptions": [
+              "VS Code Language Models (Copilot subscription, Chat: Manage Language Models, or provider extensions via vscode.lm).",
+              "Direct OpenAI-compatible API key endpoints configured in dataLineageViz.ai.models with keys in VS Code SecretStorage (vscode.lm is bypassed)."
+            ],
+            "markdownDescription": "Hard switch choosing the AI transport mode: `vscode-lm` (default, using VS Code language models / Copilot subscription and `dataLineageViz.ai.vscodeLmModels`) or `api-key` (using your own OpenAI-compatible endpoints in `dataLineageViz.ai.models` with keys in VS Code secret storage, completely bypassing `vscode.lm`)."
+          },
+          "dataLineageViz.ai.vscodeLmModels": {
+            "type": "array",
+            "default": [],
+            "scope": "application",
+            "markdownDescription": "Optional pinned VS Code language model entries (`apiType` `vscode-lm`) used when `dataLineageViz.ai.provider` is `vscode-lm`. Live VS Code language models (except Copilot Auto and internal utility models) are listed automatically even when this list is empty.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "name", "apiType", "selector"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(?!lm:)", "markdownDescription": "Stable identifier; must not start with `lm:`." },
+                "name": { "type": "string", "minLength": 1, "maxLength": 256, "description": "Display name." },
+                "apiType": { "type": "string", "enum": ["vscode-lm"], "markdownDescription": "A model VS Code lists (`vscode.lm`), such as one from a chat subscription or a provider extension. It needs no URL or key and takes its input window from the model." },
+                "selector": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "markdownDescription": "Which VS Code language model the entry uses; VS Code matches the first model that fits every field given.",
+                  "properties": {
+                    "vendor": { "type": "string", "minLength": 1, "description": "Provider of the model." },
+                    "family": { "type": "string", "minLength": 1, "description": "Model family." },
+                    "id": { "type": "string", "minLength": 1, "description": "Model id." }
+                  }
+                },
+                "maxOutputTokens": { "type": "integer", "minimum": 1, "description": "Output limit sent to the model as `max_tokens` in its options; a cap key in `requestBody` makes the entry invalid." },
+                "forcedToolChoice": { "type": "boolean", "default": true, "description": "Whether the model accepts a forced tool choice; when off, `auto` is sent." },
+                "requestBody": { "type": "object", "markdownDescription": "Model options (for example `temperature`, `top_p`), sent unchanged. The model's provider decides which it honors. `model`, `messages`, `input`, `tools`, `tool_choice`, `stream`, `stream_options` and the output-cap keys (`max_tokens`, `max_completion_tokens`, `max_output_tokens`; see `maxOutputTokens`) are owned by the extension." }
+              }
+            }
+          },
           "dataLineageViz.ai.models": {
             "type": "array",
             "default": [],

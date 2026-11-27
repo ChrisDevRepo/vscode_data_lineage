@@ -39,7 +39,7 @@ const TOOLKIT: Toolkit = {
 };
 const AUI_CONFIG = AuiConfig({ tools: Tools({ toolkit: TOOLKIT }) });
 
-/** The message content parts the library renders for a store message's parts (errors are not parts). @internal */
+/** The message content parts the library renders for a store message's parts (errors are not parts). */
 export function toContent(parts: readonly ChatPart[], turnId: string): Exclude<ThreadMessageLike['content'], string> {
   return parts.flatMap((part): Exclude<ThreadMessageLike['content'], string> => {
     switch (part.type) {
@@ -71,7 +71,6 @@ export function toContent(parts: readonly ChatPart[], turnId: string): Exclude<T
 
 /**
  * Maps a store message to the library's message shape; an error part becomes the message's error status.
- * @internal
  */
 export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
   const error = message.parts.filter(part => part.type === 'error').at(-1);
@@ -89,7 +88,6 @@ function textOf(message: AppendMessage): string {
 
 /**
  * The host has answered and offers no model, so a send could only fail.
- * @internal
  */
 export function modelsMissing(state: ChatState): boolean {
   return state.ready && state.models.length === 0;
@@ -109,7 +107,6 @@ function ManageModelsItem() {
 /**
  * Model picker (with the effort levels of the selected model and a Manage models… row) in the
  * composer's action row; with no model configured, the notice and the Add model button instead.
- * @internal
  */
 export function ComposerControls() {
   const { state, actions } = useChatContext();
@@ -243,6 +240,9 @@ export default function ChatPane() {
             <ComposerPrimitive.TriggerPopoverRoot>
               <Thread components={THREAD_COMPONENTS} autoFocus={false} />
             </ComposerPrimitive.TriggerPopoverRoot>
+          </div>
+          <div className="text-muted-foreground flex items-center justify-between px-3 py-1 text-xs" data-slot="chat-transport-footer">
+            <span>{state.provider === 'api-key' ? 'Mode: Direct API key' : 'Mode: VS Code LM (Copilot)'}</span>
           </div>
         </div>
       </AssistantRuntimeProvider>

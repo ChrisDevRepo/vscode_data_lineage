@@ -444,6 +444,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, sess.retainableReportSections());
       },
       holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
+      submissionRouteFaults: (input) => {
+        const engine = deps.getSession().stateMachine as NavigationEngine | null;
+        if (!engine) return null;
+        const routes = engine.submissionRouteFaults(input);
+        return routes.length > 0 ? { routes, rejection: engine.routeRejection(routes) } : null;
+      },
     });
   };
 
@@ -768,7 +774,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const sess = deps.getSession();
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
       deps.logger?.debug(`[AI] [Discovery] malformed canonical output tool=${toolName} callId=${trunc(sanitizeForLog(callId), 64)} — skipped for walk capture`));
-    observeWrite(sess.settleDiscoveryTurn(deps.turnEpoch, state.prompt, res.text, walk, nextAttempt.observations.length > 0));
+    observeWrite(sess.settleDiscoveryTurn(deps.turnEpoch, state.prompt, res.text, walk, nextAttempt.observations.length > 0, nextAttempt.observations));
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
       : [];

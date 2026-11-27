@@ -479,10 +479,14 @@ class ToolHandler implements ToolServices {
       });
       const invalidIds = engine.validateNeighborIds(ids);
       if (invalidIds.length > 0) {
+        const invalidSet = new Set(invalidIds);
+        const pointers = ids.flatMap((id, index) => (invalidSet.has(id) ? [`/ids/${index}`] : []));
+        const issuePaths = ids.flatMap((id, index) => (invalidSet.has(id) ? [`ids.${index}`] : []));
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
           code: REJECTION_CODES.outOfScopeOrNotNeighbor,
-          reason: `Not a direct neighbor of the current object, or outside the scope: ${invalidIds.join(', ')}.`,
+          reason: `${pointers.join(', ')}: not a direct neighbor of the current object, or outside the scope.`,
           hint: 'Send only ids listed as neighbors of the current object.',
+          issuePaths,
           detail: { invalid_ids: invalidIds },
         }), input);
       }

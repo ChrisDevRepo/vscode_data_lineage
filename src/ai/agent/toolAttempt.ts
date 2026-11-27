@@ -28,7 +28,8 @@ import {
 } from '../model/modelPort';
 import { assertToolPairingWellFormed } from '../model/messageWellFormed';
 import type { TurnEventSink } from '../runtime/turnEventSink';
-import type { HeldSubmissionParts } from '../sm/smTypes';
+import type { HeldSubmissionParts, InvalidRoute } from '../sm/smTypes';
+import { routeDirectives } from '../sm/smRouteValidation';
 import {
   escapePromptText,
   formatProviderErrorDiagnostic,
@@ -297,6 +298,12 @@ interface ToolAttemptBody {
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` if none. */
 type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
 
+/** Fatal route faults of an argument-rejected `lineage_submit_findings` payload, with their rejection. */
+type SubmissionRouteFaults = (input: unknown) => {
+  readonly routes: readonly InvalidRoute[];
+  readonly rejection: ToolRejection;
+} | null;
+
 /**
  * Holds the valid fields of a rejected `lineage_present_result` payload; returns the repair
  * sentence.
@@ -356,6 +363,8 @@ interface ToolGenerationAttemptInput {
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedSubmission}. */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
+  /** See {@link ToolAttemptExecutionOptions.submissionRouteFaults}. */
+  readonly submissionRouteFaults?: SubmissionRouteFaults;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedPresentResult}. */
   readonly holdRejectedPresentResult?: HoldRejectedPresentResult;
 }
@@ -406,6 +415,12 @@ interface ToolAttemptExecutionOptions {
    * them. Returns `null` when nothing is held.
    */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
+  /**
+   * Fatal column, prune and question route faults of an argument-rejected `lineage_submit_findings`
+   * call against the current focus, so the first rejection reports them and keeps their fields out
+   * of the held draft.
+   */
+  readonly submissionRouteFaults?: SubmissionRouteFaults;
   /**
    * Holds the valid fields of a schema-rejected `lineage_present_result` call in the session's held
    * draft and returns the repair sentence for the rejection hint, or `null` when nothing was held.
@@ -663,38 +678,46 @@ function withRepairHint(data: ToolOutcomeData, sentence: string): ToolOutcomeDat
 }
 
 /**
- * A notation rejection united with the served schema's faults of the same reply, so the retry learns
- * every fault: the schema faults carry their field repair as the submit handler states it. A fault
- * at or under a notation path is the notation's own and stays unstated.
+ * A notation rejection united with the served schema's faults and any route faults of the same
+ * reply, so the retry learns every fault: the schema and route faults carry their field repair as
+ * the submit handler states it. A fault at or under a notation path is the notation's own and stays
+ * unstated.
  *
- * @returns The united rejection, or `null` when every schema fault is the notation's own.
+ * @returns The united rejection, or `null` when every schema fault is the notation's own and no
+ *   route fault exists.
  */
 function notationWithSchemaFaults(
   call: Extract<GeneratedToolCall, { valid: false }>,
-  error: z.ZodError,
+  error: z.ZodError | undefined,
   schema: z.ZodType | undefined,
+  routeFaults?: { readonly routes: readonly InvalidRoute[]; readonly rejection: ToolRejection } | null,
 ): ToolOutcomeData | null {
   const notation = call.issuePaths ?? [];
   const own = (path: string) => notation.some(at => path === at || path.startsWith(`${at}.`));
-  const issues = error.issues.flatMap((issue): z.core.$ZodIssue[] => {
+  const issues = (error?.issues ?? []).flatMap((issue): z.core.$ZodIssue[] => {
     if (issue.code !== 'unrecognized_keys') return own(issue.path.join('.')) ? [] : [issue];
     const keys = issue.keys.filter(key => !own([...issue.path, key].join('.')));
     return keys.length > 0 ? [{ ...issue, keys }] : [];
   });
-  if (issues.length === 0) return null;
-  const faults = new z.ZodError(issues);
-  return outcomeOfRejection(combineToolRejections([
+  if (issues.length === 0 && !routeFaults) return null;
+  const faults = issues.length > 0 ? new z.ZodError(issues) : null;
+  const combined = combineToolRejections([
     makeRejection({
       code: call.code,
       reason: call.reason,
       hint: call.hint,
       errors: notation.map(path => ({ path, code: REJECTION_CODES.toolCallNotation, stated: true })),
     }),
-    {
+    ...(faults ? [{
       ...rejectionFromZodError(faults, { code: REJECTION_CODES.invalidInput, input: call.input, schema }),
       hint: zodFieldRepairHint(faults, call.input, schema),
-    },
-  ]));
+    }] : []),
+    ...(routeFaults ? [{
+      ...routeFaults.rejection,
+      hint: routeDirectives(routeFaults.routes).join(' '),
+    }] : []),
+  ]);
+  return outcomeOfRejection(combined);
 }
 
 /** The names of the tools the step offers. */
@@ -1125,6 +1148,7 @@ export async function executeToolAttempt(
     traceSyntheticRejection: options.traceSyntheticRejection,
     presentResultRepairDraftContext: options.presentResultRepairDraftContext,
     holdRejectedSubmission: options.holdRejectedSubmission,
+    submissionRouteFaults: options.submissionRouteFaults,
     holdRejectedPresentResult: options.holdRejectedPresentResult,
     priorObservations: priorState?.observations,
     priorState,
@@ -1322,13 +1346,15 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       let held: HeldSubmissionParts | null | undefined;
       if (argumentRejected && call.toolName === SUBMIT_FINDINGS_TOOL) {
         // The call's valid parts are held. Notation is found before the schema check, so the
-        // served schema's own faults fail their fields too and are stated with the notation.
+        // served schema's own faults and route faults fail their fields too and are stated with the notation.
         const servedSchema = schema();
         const served = servedSchema?.safeParse(call.input);
         const schemaPaths = served && !served.success ? served.error.issues.map(issue => issue.path.join('.')) : [];
-        held = input.holdRejectedSubmission?.(call.input, [...(call.issuePaths ?? []), ...schemaPaths]);
-        if (served && !served.success && call.code === REJECTION_CODES.toolCallNotation) {
-          rejected = notationWithSchemaFaults(call, served.error, servedSchema) ?? rejected;
+        const routeFaults = input.submissionRouteFaults?.(call.input) ?? null;
+        const routePaths = routeFaults?.rejection.issuePaths ?? [];
+        held = input.holdRejectedSubmission?.(call.input, [...(call.issuePaths ?? []), ...schemaPaths, ...routePaths]);
+        if (call.code === REJECTION_CODES.toolCallNotation) {
+          rejected = notationWithSchemaFaults(call, served && !served.success ? served.error : undefined, servedSchema, routeFaults) ?? rejected;
         }
       } else if (schemaRejected && call.toolName === PRESENT_RESULT_TOOL && input.holdRejectedPresentResult) {
         resend = input.holdRejectedPresentResult(call.input, call.issuePaths ?? []) ?? undefined;
@@ -1396,24 +1422,24 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     const { resultText } = invoked;
 
     const detectedGate = input.detectGate?.(call.toolName, resultText) ?? null;
-    const detectedReroute = input.detectReroute?.(call.toolName, resultText) ?? false;
+    let detectedReroute = input.detectReroute?.(call.toolName, resultText) ?? false;
     const detectedRefusal = input.detectRefusal?.(call.toolName, resultText) ?? null;
-    const controlSuccess = detectedGate !== null || detectedReroute || detectedRefusal !== null;
+    let controlSuccess = detectedGate !== null || detectedReroute || detectedRefusal !== null;
     const resultRejection = controlSuccess ? null : rejectionFromResult(resultText);
     const isError = resultRejection !== null;
-    input.onToolResult?.(call.toolName, call.input, isError, resultText);
     const terminalSuccess = !isError && (
       call.toolName === input.requiredTerminalTool
       || (input.isPhaseComplete?.() ?? false)
     );
 
     if (resultRejection) {
+      input.onToolResult?.(call.toolName, call.input, true, resultText);
       const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome({ ...call, schema: () => definition?.inputSchema, terminal: stepTerminalTool(input), offered: offeredToolNames(input.registry) }, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName, accepted: false };
     } else {
-      const observe = !controlSuccess && !terminalSuccess;
+      let observe = !controlSuccess && !terminalSuccess;
       let storedResult = resultText;
       let refused = false;
       if (observe) {
@@ -1429,9 +1455,15 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
             + ` held=${heldObservationTokens}`
             + ` budget=${storedEvidenceKindTokens(model.budget)}`,
           );
+          if (input.detectReroute?.(call.toolName, storedResult)) {
+            detectedReroute = true;
+            controlSuccess = true;
+            observe = false;
+          }
         }
-        heldObservationTokens += await model.getNumTokens(storedResult);
+        if (observe) heldObservationTokens += await model.getNumTokens(storedResult);
       }
+      input.onToolResult?.(call.toolName, call.input, refused && !controlSuccess, storedResult);
       const outcome = recordToolOutcome(
         { ...call, terminal: stepTerminalTool(input), offered: offeredToolNames(input.registry) },
         {

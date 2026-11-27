@@ -120,12 +120,20 @@ describe('VscodeLmChatModel tool mode', () => {
     return sent[0].options;
   };
 
-  it('forces Required for one named tool and for a required choice, Auto otherwise', async () => {
+  it('forces Required for one named tool and for a required choice, Auto otherwise (and Auto for multi-tool required on Claude models)', async () => {
     const two = [...tools, { name: 'other', description: 'd', inputSchema: z.object({}) }];
     expect(await modeOf({ type: 'tool', toolName: 'lineage_search' }, two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [{ name: 'lineage_search' }] });
     expect(await modeOf('required', two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required });
     expect((await modeOf('required', two)).tools).toHaveLength(2);
     expect(await modeOf(undefined, two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
+
+    const claude = fakeModel(replying(new vscode.LanguageModelTextPart('x')));
+    claude.raw.family = 'claude-sonnet-4';
+    const claudePort = new ProviderModelPort(createVscodeLmChat(LIVE_ENTRY, claude.model), {});
+    await claudePort.generateToolTurn({ messages: [new HumanMessage('go')], tools: two, toolChoice: 'required', phase: 't' });
+    expect(claude.sent[0].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
+    await claudePort.generateToolTurn({ messages: [new HumanMessage('go')], tools: two, toolChoice: { type: 'tool', toolName: 'lineage_search' }, phase: 't' });
+    expect(claude.sent[1].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [{ name: 'lineage_search' }] });
   });
 
   it('sends Auto and records toolMode 1 when forcedToolChoice is false, keeping Required and toolMode 2 when true', async () => {
@@ -267,7 +275,14 @@ describe('vscode-lm catalog', () => {
   const model = (over: Record<string, unknown>) => ({ id: 'a', name: 'A', vendor: 'other', family: 'fa', version: '1', maxInputTokens: 100, ...over });
 
   it('lists the live models, resolves each entry by its selector and keeps the host order', async () => {
-    (vscode.lm as unknown as { models: unknown[] }).models = [model({ id: 'auto', name: 'Auto', vendor: 'copilot' }), model({}), model({ id: 'c', name: 'C', vendor: 'copilot', family: 'fc', maxInputTokens: 200 })];
+    (vscode.lm as unknown as { models: unknown[] }).models = [
+      model({ id: 'auto', name: 'Auto', vendor: 'copilot' }),
+      model({ id: 'copilot-utility-small', name: 'Utility', vendor: 'copilot', family: 'copilot-utility-small' }),
+      model({ id: 'copilot-dictation-cleanup-luna', name: 'GPT-5.6 Luna', vendor: 'copilot', family: 'copilot-dictation-cleanup-luna' }),
+      model({ id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', vendor: 'copilot', family: 'gpt-5.6-luna' }),
+      model({}),
+      model({ id: 'c', name: 'C', vendor: 'copilot', family: 'fc', maxInputTokens: 200 }),
+    ];
     const catalog = await loadLmCatalog([{ ...ENTRY, id: 'mine', selector: { family: 'fc' } }, { ...ENTRY, id: 'lost', selector: { family: 'none' } }, { ...ENTRY, id: 'auto', selector: { id: 'auto' } }]);
     expect(catalog.live.map((info) => [info.selectionId, info.name, info.maxInputTokens])).toEqual([['lm:other/a', 'A', 100], ['lm:copilot/c', 'C', 200]]);
     expect(catalog.resolved.get('mine')?.id).toBe('c');

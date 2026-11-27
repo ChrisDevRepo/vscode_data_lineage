@@ -28,6 +28,8 @@ export interface ChatState {
   turnId: string | undefined;
   /** True once the host has sent its first `chat.state`; before it the model list is unknown, not empty. */
   ready: boolean;
+  /** Active AI transport (`vscode-lm` vs `api-key`). */
+  provider: 'vscode-lm' | 'api-key';
   models: ChatModelOption[];
   selectedModelId: string;
   effort: string | undefined;
@@ -41,7 +43,7 @@ export type ChatAction =
   | { type: 'send'; text: string }
   | { type: 'clear-followups' }
   | { type: 'host-event'; turnId: string; event: TurnEvent; replacesAnalysis?: boolean }
-  | { type: 'host-state'; models: ChatModelOption[]; selectedModelId: string; effort?: string; turnId?: string; followups: ChatFollowup[]; acceptedFollowup?: string }
+  | { type: 'host-state'; provider?: 'vscode-lm' | 'api-key'; models: ChatModelOption[]; selectedModelId: string; effort?: string; turnId?: string; followups: ChatFollowup[]; acceptedFollowup?: string }
   | { type: 'host-history'; messages: ChatHistoryMessage[] }
   | { type: 'gate-decided'; turnId: string; gateId: string; decision: GateDecision };
 
@@ -49,6 +51,7 @@ export const initialChatState: ChatState = {
   messages: [],
   turnId: undefined,
   ready: false,
+  provider: 'vscode-lm',
   models: [],
   selectedModelId: '',
   effort: undefined,
@@ -122,6 +125,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'host-state':
       return {
         ...(action.acceptedFollowup === undefined ? state : appendUserMessage(state, action.acceptedFollowup)),
+        provider: action.provider ?? (action.selectedModelId.startsWith('lm:') ? 'vscode-lm' : state.provider),
         models: action.models,
         selectedModelId: action.selectedModelId,
         effort: action.effort,

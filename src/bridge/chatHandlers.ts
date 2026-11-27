@@ -13,8 +13,8 @@ import { renderFullPlanMd, renderScopeCardMd } from '../ai/prompting/scopeSummar
 import { NEXT_QUESTIONS_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER } from '../ai/prompting/prompts';
 import type { ProviderModelPortOptions } from '../ai/model/providerModelPort';
 import type { AiTraceWriter } from '../ai/observability/aiTraceWriter';
-import { parseModelEntries, type OpenAiModelEntry, type VscodeLmModelEntry } from '../ai/providers/modelEntries';
-import { createConfiguredModelPort, type ModelPortSources } from '../ai/providers/modelPortFactory';
+import { LIVE_MODEL_ID_PREFIX, parseAiProviderMode, parseModelEntries, type AiProviderMode, type OpenAiModelEntry, type VscodeLmModelEntry } from '../ai/providers/modelEntries';
+import { activeRawModels, createConfiguredModelPort, type ModelPortSources } from '../ai/providers/modelPortFactory';
 import { preferredStartModel, type LmCatalog } from '../ai/providers/vscodeLmTransport';
 import type { LineageRuntime, LineageRuntimeRunInput } from '../ai/runtime/lineageRuntime';
 import { TurnEventSink } from '../ai/runtime/turnEventSink';
@@ -349,14 +349,18 @@ export class ChatController {
   }
 
   /**
-   * What the picker offers: the valid API entries, the `vscode-lm` entries that resolved to a model,
-   * then the live VS Code models; `ai.defaultModel` only decides the start model. An entry that is
-   * invalid or matches no model is named in one warning and not offered.
+   * What the picker offers: in `vscode-lm` mode only `vscode-lm` entries and live VS Code models;
+   * in `api-key` mode only OpenAI-compatible API entries; when unset, both. Duplicate live-model
+   * display names get bracketed disambiguation (`Name [id]`). An entry that is invalid or matches
+   * no model is named in one warning and not offered.
    */
   private choices(): ModelChoice[] {
-    const { entries, invalid } = parseModelEntries(this.deps.modelSources().models);
-    const catalog = this.deps.lmCatalog();
-    const lmEntries = entries.filter((entry): entry is VscodeLmModelEntry => entry.apiType === 'vscode-lm');
+    const sources = this.deps.modelSources();
+    const mode = parseAiProviderMode(sources.provider);
+    const { entries, invalid } = parseModelEntries(activeRawModels(sources));
+    const catalog = mode === 'api-key' ? undefined : this.deps.lmCatalog();
+    const apiEntries = mode === 'vscode-lm' ? [] : entries.filter((entry): entry is OpenAiModelEntry => entry.apiType !== 'vscode-lm');
+    const lmEntries = mode === 'api-key' ? [] : entries.filter((entry): entry is VscodeLmModelEntry => entry.apiType === 'vscode-lm');
     const unmatched = catalog ? lmEntries.filter((entry) => !catalog.resolved.has(entry.id)).map((entry) => entry.id) : [];
     const notOffered = [...invalid.map((entry) => entry.name), ...unmatched];
     if (notOffered.length > 0) {
@@ -368,13 +372,20 @@ export class ChatController {
         this.deps.showWarningMessage,
       );
     }
+    const live = catalog?.live ?? [];
+    const liveNameCounts = new Map<string, number>();
+    for (const info of live) liveNameCounts.set(info.name, (liveNameCounts.get(info.name) ?? 0) + 1);
     return [
-      ...entries.filter((entry): entry is OpenAiModelEntry => entry.apiType !== 'vscode-lm'),
+      ...apiEntries,
       ...lmEntries.flatMap(({ id, name }) => {
         const info = catalog?.resolved.get(id);
         return info ? [{ id, name, maxInputTokens: info.maxInputTokens }] : [];
       }),
-      ...(catalog?.live ?? []).map(({ selectionId, name, maxInputTokens }) => ({ id: selectionId, name, maxInputTokens })),
+      ...live.map(({ selectionId, id, name, maxInputTokens }) => ({
+        id: selectionId,
+        name: (liveNameCounts.get(name) ?? 0) > 1 ? `${name} [${id}]` : name,
+        maxInputTokens,
+      })),
     ];
   }
 
@@ -384,9 +395,21 @@ export class ChatController {
    */
   private selectedChoice(choices: readonly ModelChoice[] = this.choices()): ModelChoice | undefined {
     const byId = (id: string | undefined) => choices.find((choice) => choice.id === id);
-    const start = preferredStartModel(this.deps.lmCatalog()?.live ?? []);
+    const mode = parseAiProviderMode(this.deps.modelSources().provider);
+    const start = mode === 'api-key' ? undefined : preferredStartModel(this.deps.lmCatalog()?.live ?? []);
     return byId(this.selectedModelId) ?? byId(this.deps.modelSources().defaultModel) ?? byId(this.deps.lastPick.get())
       ?? byId(start?.selectionId) ?? choices[0];
+  }
+
+  /** Active transport mode for the chat footer (`vscode-lm` vs `api-key`). */
+  private activeProvider(selected: ModelChoice | undefined): AiProviderMode {
+    const explicit = parseAiProviderMode(this.deps.modelSources().provider);
+    if (explicit) return explicit;
+    if (selected?.id.startsWith(LIVE_MODEL_ID_PREFIX)) return 'vscode-lm';
+    const { entries } = parseModelEntries(activeRawModels(this.deps.modelSources()));
+    const matched = entries.find((entry) => entry.id === selected?.id);
+    if (matched) return matched.apiType === 'vscode-lm' ? 'vscode-lm' : 'api-key';
+    return (this.deps.lmCatalog()?.live.length ?? 0) > 0 ? 'vscode-lm' : 'api-key';
   }
 
   /** The user's effort pick while the selected entry still offers it. */
@@ -404,6 +427,7 @@ export class ChatController {
     const selected = this.selectedChoice(choices);
     return {
       type: 'chat.state',
+      provider: this.activeProvider(selected),
       models: choices.map(({ id, name, supportsReasoningEffort, reasoningEffort }) => (
         { id, name, supportsReasoningEffort, reasoningEffort }
       )),

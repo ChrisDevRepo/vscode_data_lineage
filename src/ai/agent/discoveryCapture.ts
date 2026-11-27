@@ -32,8 +32,8 @@ const NodeCountsView = z.object({ nodes: z.number() }).loose();
 
 /**
  * The over-budget refusal as any catalog tool serves it: the rejection (`detail.counts`,
- * `detail.scope_proposal`) or `lineage_search_ddl`'s partial reply (top-level `counts`); both carry
- * the budget `code`.
+ * `detail.scope_proposal`) or `lineage_search_ddl`'s partial reply (top-level `counts`), plus a
+ * `result_too_large` stand-in on `lineage_get_scope_bundle`.
  */
 const OverBudgetResultView = z.object({
   code: z.literal(REJECTION_CODES.overDiscoveryBudget),
@@ -43,6 +43,10 @@ const OverBudgetResultView = z.object({
     counts: NodeCountsView.optional(),
     scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
   }).loose().optional(),
+}).loose();
+
+const ScopeRerouteResultView = z.object({
+  code: z.enum([REJECTION_CODES.overDiscoveryBudget, REJECTION_CODES.resultTooLarge]),
 }).loose();
 
 const ObjectDetailIdView = z.object({ id: z.string().trim().min(1) }).loose();
@@ -86,7 +90,7 @@ export function captureDiscoveryWalkFromObservations(
 export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
   if (toolName !== SCOPE_BUNDLE_TOOL) return false;
   try {
-    return OverBudgetResultView.safeParse(JSON.parse(resultText)).success;
+    return ScopeRerouteResultView.safeParse(JSON.parse(resultText)).success;
   } catch {
     return false;
   }

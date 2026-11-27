@@ -5,20 +5,34 @@
  */
 import { ModelPortError } from '../model/modelPort';
 import { ProviderModelPort, type ProviderModelPortOptions } from '../model/providerModelPort';
-import { apiKeySecretName, LIVE_MODEL_ID_PREFIX, parseModelEntries, type VscodeLmModelEntry } from './modelEntries';
+import { apiKeySecretName, LIVE_MODEL_ID_PREFIX, parseAiProviderMode, parseModelEntries, type AiProviderMode, type VscodeLmModelEntry } from './modelEntries';
 import { createProviderModelPort } from './openAiTransport';
 import { createVscodeLmChat, type LmModelInfo } from './vscodeLmTransport';
 import { NO_MODEL_MESSAGE } from '../../engine/shared/chatContract';
 
 /** Where the entry list, the default entry and the keys live; the VS Code API fits it. */
 export interface ModelPortSources {
-  /** The raw `dataLineageViz.ai.models` value. */
+  /** Active transport mode (`vscode-lm` vs `api-key`); `undefined` allows either entry kind. */
+  readonly provider?: AiProviderMode;
+  /** The raw `dataLineageViz.ai.models` value (or `vscodeLmModels` when combined). */
   readonly models: unknown;
+  /** Optional separate `dataLineageViz.ai.vscodeLmModels` list. */
+  readonly vscodeLmModels?: unknown;
   /** The `dataLineageViz.ai.defaultModel` value. */
   readonly defaultModel: string | undefined;
   readonly secrets: { get(key: string): PromiseLike<string | undefined> };
   /** The language model a `vscode-lm` entry id or a live selection id resolves to right now. */
   readonly lmModel: (id: string) => LmModelInfo | undefined;
+}
+
+/** Combined raw model entries for the active transport mode. */
+export function activeRawModels(sources: Pick<ModelPortSources, 'provider' | 'models' | 'vscodeLmModels'>): unknown {
+  const mode = parseAiProviderMode(sources.provider);
+  const apiList = Array.isArray(sources.models) ? sources.models : undefined;
+  const lmList = Array.isArray(sources.vscodeLmModels) ? sources.vscodeLmModels : undefined;
+  if (mode === 'vscode-lm') return [...(lmList ?? []), ...(apiList ?? [])];
+  if (mode === 'api-key') return sources.models;
+  return lmList ? [...(apiList ?? []), ...lmList] : sources.models;
 }
 
 /**
@@ -36,13 +50,17 @@ export async function createConfiguredModelPort(
   sources: ModelPortSources,
   options: ProviderModelPortOptions & { readonly entryId?: string; readonly effort?: string } = {},
 ): Promise<ProviderModelPort> {
+  const mode = parseAiProviderMode(sources.provider);
   const { entryId = sources.defaultModel, ...portOptions } = options;
   if (entryId?.startsWith(LIVE_MODEL_ID_PREFIX)) {
+    if (mode === 'api-key') throw new ModelPortError('invalid_request', NO_MODEL_MESSAGE);
     const info = sources.lmModel(entryId);
     return lmPort(info, { id: entryId, name: info?.name ?? entryId, apiType: 'vscode-lm', selector: {}, forcedToolChoice: true }, portOptions);
   }
-  const { entries, invalid } = parseModelEntries(sources.models);
-  const entry = entries.find((candidate) => candidate.id === entryId);
+  const { entries, invalid } = parseModelEntries(activeRawModels(sources));
+  const entry = entries.find((candidate) => candidate.id === entryId && (
+    mode === undefined || (mode === 'vscode-lm' ? candidate.apiType === 'vscode-lm' : candidate.apiType !== 'vscode-lm')
+  ));
   if (!entry) {
     const named = invalid.find((candidate) => candidate.name === entryId);
     throw new ModelPortError('invalid_request', named

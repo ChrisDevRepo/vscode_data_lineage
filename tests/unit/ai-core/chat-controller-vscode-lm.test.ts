@@ -21,7 +21,7 @@ const info = (vendor: string, id: string, maxInputTokens = 8_000): LmModelInfo =
 });
 const LIVE = [info('other', 'a'), info('copilot', 'c', 64_000), info('copilot', 'd')];
 
-function setup(options: { models?: unknown[]; defaultModel?: string; live?: readonly LmModelInfo[]; resolved?: Record<string, LmModelInfo>; lastPick?: string; loaded?: boolean } = {}) {
+function setup(options: { provider?: 'vscode-lm' | 'api-key'; models?: unknown[]; vscodeLmModels?: unknown[]; defaultModel?: string; live?: readonly LmModelInfo[]; resolved?: Record<string, LmModelInfo>; lastPick?: string; loaded?: boolean } = {}) {
   const frames: ChatToWebviewMsg[] = [];
   const created: Array<{ entryId?: string; budget?: unknown }> = [];
   const lastPick = { value: options.lastPick, get: vi.fn(() => lastPick.value), update: vi.fn(async (id: string) => { lastPick.value = id; }) };
@@ -30,7 +30,7 @@ function setup(options: { models?: unknown[]; defaultModel?: string; live?: read
   const controller = new ChatController({
     runtime: { run: vi.fn(async ({ sink }) => { sink.result('ok'); return { outcome: 'ok' as const, modelCalls: 1 }; }), runSuggestions: vi.fn(), resumeGate: vi.fn() },
     getSession: () => new AiSession(),
-    modelSources: () => ({ models: options.models, defaultModel: options.defaultModel, secrets: { get: async () => undefined }, lmModel: () => undefined }),
+    modelSources: () => ({ provider: options.provider, models: options.models, vscodeLmModels: options.vscodeLmModels, defaultModel: options.defaultModel, secrets: { get: async () => undefined }, lmModel: () => undefined }),
     turnSettings: () => SETTINGS,
     lmCatalog: () => catalog,
     lastPick,
@@ -143,5 +143,28 @@ describe('chat vscode-lm entries', () => {
     await entry.state();
     await entry.turn();
     expect(entry.created[0]).toMatchObject({ entryId: 'mine', budget: calibrateTurnBudget(12_000, SETTINGS) });
+  });
+
+  it('disambiguates duplicate live model display names with bracketed ids', async () => {
+    const dupA = { ...info('copilot', 'gpt-4o-mini'), name: 'GPT-4o' };
+    const dupB = { ...info('copilot', 'gpt-4o-2024'), name: 'GPT-4o' };
+    const { state } = setup({ live: [dupA, dupB] });
+    const shown = await state();
+    expect(shown.models.map((m) => [m.id, m.name])).toEqual([
+      ['lm:copilot/gpt-4o-mini', 'GPT-4o [gpt-4o-mini]'],
+      ['lm:copilot/gpt-4o-2024', 'GPT-4o [gpt-4o-2024]'],
+    ]);
+  });
+
+  it('isolates vscode-lm mode and api-key mode via the provider hard switch', async () => {
+    const lmMode = setup({ provider: 'vscode-lm', models: [API], vscodeLmModels: [LM_ENTRY], resolved: { mine: LIVE[0] } });
+    const lmState = await lmMode.state();
+    expect(lmState.provider).toBe('vscode-lm');
+    expect(lmState.models.map((m) => m.id)).toEqual(['mine', 'lm:other/a', 'lm:copilot/c', 'lm:copilot/d']);
+
+    const apiMode = setup({ provider: 'api-key', models: [API], vscodeLmModels: [LM_ENTRY], resolved: { mine: LIVE[0] } });
+    const apiState = await apiMode.state();
+    expect(apiState.provider).toBe('api-key');
+    expect(apiState.models.map((m) => m.id)).toEqual(['api']);
   });
 });
