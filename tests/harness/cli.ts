@@ -34,7 +34,7 @@ const HELP = `Optional testing toolset (no scoring):
 AI runs one model entry on the product provider port: AI_TEST_ENDPOINT (the entry url),
 AI_TEST_API_KEY, AI_TEST_MODEL, AI_TEST_API_TYPE (chat-completions|responses),
 AI_TEST_MAX_INPUT_TOKENS, AI_TEST_MAX_OUTPUT_TOKENS, optional AI_TEST_REASONING_EFFORT,
-AI_TEST_FORCED_TOOL_CHOICE (false sends auto) and AI_TEST_REQUEST_BODY (JSON).
+AI_TEST_FORCED_TOOL_CHOICE (false sends auto), AI_TEST_STRICT_TOOLS (true serves the strict tool schema projection) and AI_TEST_REQUEST_BODY (JSON).
 A VS Code language model instead (only inside an extension host that lists it; the shim has no vscode.lm):
 AI_TEST_VSCODE_LM_ENTRY, one \`vscode-lm\` ai.models entry as JSON; no endpoint, key or input window (the model reports it).
 DB uses DB_TEST_SERVER, DB_TEST_DATABASE, DB_TEST_USER, DB_TEST_PASSWORD, optional
@@ -131,6 +131,8 @@ export function aiTestEntry(env: NodeJS.ProcessEnv): OpenAiModelEntry {
   if (!text('AI_TEST_API_KEY')) throw new Error('Set AI_TEST_API_KEY for the headless AI run (npm run test:ai:headless).');
   const forced = text('AI_TEST_FORCED_TOOL_CHOICE');
   if (forced !== undefined && forced !== 'true' && forced !== 'false') throw new Error('AI_TEST_FORCED_TOOL_CHOICE must be true or false.');
+  const strictTools = text('AI_TEST_STRICT_TOOLS');
+  if (strictTools !== undefined && strictTools !== 'true' && strictTools !== 'false') throw new Error('AI_TEST_STRICT_TOOLS must be true or false.');
   let requestBody: unknown;
   try {
     requestBody = text('AI_TEST_REQUEST_BODY') === undefined ? undefined : JSON.parse(text('AI_TEST_REQUEST_BODY')!);
@@ -142,6 +144,7 @@ export function aiTestEntry(env: NodeJS.ProcessEnv): OpenAiModelEntry {
     maxInputTokens: Number(text('AI_TEST_MAX_INPUT_TOKENS')), maxOutputTokens: Number(text('AI_TEST_MAX_OUTPUT_TOKENS')),
     ...(text('AI_TEST_REASONING_EFFORT') ? { reasoningEffort: text('AI_TEST_REASONING_EFFORT') } : {}),
     ...(forced === undefined ? {} : { forcedToolChoice: forced === 'true' }),
+    ...(strictTools === undefined ? {} : { strictTools: strictTools === 'true' }),
     ...(requestBody === undefined ? {} : { requestBody }),
   }]);
   const entry = entries.find((e): e is OpenAiModelEntry => e.apiType !== 'vscode-lm');
