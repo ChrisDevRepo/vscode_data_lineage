@@ -29,11 +29,17 @@ describe('vscode-lm entry parsing', () => {
   it('defaults forcedToolChoice to true and accepts false on a vscode-lm entry', () => {
     const defaulted = parseModelEntries([LM]);
     expect(defaulted.invalid).toEqual([]);
-    expect(defaulted.entries[0]).toMatchObject({ forcedToolChoice: true });
+    expect(defaulted.entries[0]).toMatchObject({ forcedToolChoice: true, strictTools: false });
 
     const optedOut = parseModelEntries([{ ...LM, forcedToolChoice: false }]);
     expect(optedOut.invalid).toEqual([]);
     expect(optedOut.entries[0]).toMatchObject({ forcedToolChoice: false });
+  });
+
+  it('defaults strictTools to false and accepts true on a vscode-lm entry', () => {
+    const optedIn = parseModelEntries([{ ...LM, strictTools: true }]);
+    expect(optedIn.invalid).toEqual([]);
+    expect(optedIn.entries[0]).toMatchObject({ strictTools: true });
   });
 
   it('rejects url, key, model and maxInputTokens on a vscode-lm entry', () => {

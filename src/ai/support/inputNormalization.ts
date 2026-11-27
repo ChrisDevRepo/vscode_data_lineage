@@ -5,7 +5,7 @@
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { isRecord } from '../../utils/isRecord';
-import { schemaBranches, type JsonSchemaShape } from '../tools/jsonSchema';
+import { schemaAcceptsNull, schemaBranches, type JsonSchemaShape } from '../tools/jsonSchema';
 import type { SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 /**
@@ -368,4 +368,51 @@ export function coerceStringifiedArguments(input: unknown, jsonSchema: unknown):
   const paths: string[] = [];
   const value = coerce(input, jsonSchema as JsonSchemaShape, '', paths);
   return { value: paths.length > 0 ? value : input, paths };
+}
+
+/**
+ * Reads `null` as absent on a key the parse schema does not require and does not accept as
+ * `null`. A nullish / nullable key (for example `writes_to: null`) is left unchanged. Used when
+ * the served schema is the strict projection, which requires every key and encodes optional
+ * fields as `anyOf` with `null`.
+ */
+export function absentOptionalNulls(input: unknown, jsonSchema: unknown): unknown {
+  return omitOptionalNulls(input, jsonSchema as JsonSchemaShape | undefined);
+}
+
+function requiredKeys(schema: JsonSchemaShape | undefined): Set<string> {
+  return new Set(schemaBranches(schema).flatMap((node) => node.required ?? []));
+}
+
+function propertySchemas(schema: JsonSchemaShape | undefined): Map<string, JsonSchemaShape> {
+  const declared = new Map<string, JsonSchemaShape>();
+  for (const node of schemaBranches(schema)) {
+    for (const [key, child] of Object.entries(node.properties ?? {})) {
+      if (!declared.has(key)) declared.set(key, child);
+    }
+  }
+  return declared;
+}
+
+function omitOptionalNulls(value: unknown, schema: JsonSchemaShape | undefined): unknown {
+  if (Array.isArray(value)) {
+    const items = schemaBranches(schema).find((node) => node.items)?.items;
+    return items ? value.map((item) => omitOptionalNulls(item, items)) : value;
+  }
+  if (!isRecord(value)) return value;
+  const required = requiredKeys(schema);
+  const properties = propertySchemas(schema);
+  const next: Record<string, unknown> = {};
+  let changed = false;
+  for (const [key, child] of Object.entries(value)) {
+    const property = properties.get(key);
+    if (child === null && property && !required.has(key) && !schemaAcceptsNull(property)) {
+      changed = true;
+      continue;
+    }
+    const omitted = property ? omitOptionalNulls(child, property) : child;
+    if (omitted !== child) changed = true;
+    next[key] = omitted;
+  }
+  return changed ? next : value;
 }
