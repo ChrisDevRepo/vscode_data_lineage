@@ -88,8 +88,6 @@ const OpenAiEntrySchema = z.strictObject({
   reasoningEffort: z.string().min(1).optional(),
   /** False for an endpoint that rejects a forced tool choice; the port then sends `auto`. */
   forcedToolChoice: z.boolean().default(true),
-  /** When on, tool schemas are served as the strict Structured Outputs projection. Off keeps today's wire. */
-  strictTools: z.boolean().default(false),
   /** Extra request parameters, sent unchanged. */
   requestBody: z.record(z.string().min(1), z.unknown()).optional(),
   /** Extra request headers; never a credential. */
@@ -125,8 +123,6 @@ const VscodeLmEntrySchema = z.strictObject({
   maxOutputTokens: z.number().int().positive().optional(),
   /** False for a model that rejects a forced tool choice; the port then sends `auto`. */
   forcedToolChoice: z.boolean().default(true),
-  /** When on, tool schemas are served as the strict Structured Outputs projection. Off keeps today's wire. */
-  strictTools: z.boolean().default(false),
   requestBody: z.record(z.string().min(1), z.unknown()).optional(),
 }).superRefine(checkRequestBody);
 

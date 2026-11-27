@@ -26,8 +26,7 @@ import {
   type WirePart,
   type WireRecord,
 } from '../observability/wireLog';
-import { toModelJsonSchema, toStrictJsonSchema } from '../tools/jsonSchema';
-import { absentOptionalNulls } from '../support/inputNormalization';
+import { toModelJsonSchema } from '../tools/jsonSchema';
 import {
   formatProviderErrorDiagnostic,
   sanitizeProviderError,
@@ -38,7 +37,6 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { coerceStringifiedArguments, parseJson } from '../support/inputNormalization';
 import { toolCallNotationFault } from '../support/toolCallNotation';
-import type { ZodType } from 'zod';
 import { isRecord } from '../../utils/isRecord';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
@@ -54,10 +52,8 @@ export interface ChatTool {
   readonly function: {
     readonly name: string;
     readonly description: string;
-    /** JSON Schema object of the tool input ({@link toModelJsonSchema} or its strict projection). */
+    /** JSON Schema object of the tool input ({@link toModelJsonSchema}). */
     readonly parameters: Record<string, unknown>;
-    /** Present when the entry's `strictTools` is on: whether this tool's parameters were projected. */
-    readonly strict?: boolean;
   };
 }
 
@@ -121,11 +117,6 @@ export interface ProviderModelPortOptions {
    * and ceilings in force.
    */
   readonly budget?: TurnTokenBudget;
-  /**
-   * When on, each tool is served as {@link toStrictJsonSchema} and `null` on an optional
-   * non-nullable key is read as absent. Off (default) keeps today's non-strict wire.
-   */
-  readonly strictTools?: boolean;
 }
 
 /**
@@ -190,7 +181,7 @@ export class ProviderModelPort implements ModelPort {
       const { message, toolCalls: emittedCalls, finishReason, usage } = await this.collectGeneration(
         input.messages,
         input.system,
-        definitions.map((definition) => offeredTool(definition.name, definition.description, definition.inputSchema, this.options.strictTools === true)),
+        definitions.map((definition) => toChatTool(definition.name, definition.description, toModelJsonSchema(definition.inputSchema))),
         input.toolChoice,
         input.signal,
         input.onTextDelta,
@@ -227,10 +218,8 @@ export class ProviderModelPort implements ModelPort {
             reason: 'Tool is not available in this phase.',
           };
         } else {
-          const parseSchema = toModelJsonSchema(definition.inputSchema);
-          const decodedArgs = this.decodeStringifiedArguments(toolName, args, parseSchema);
-          const input = this.options.strictTools === true ? absentOptionalNulls(decodedArgs, parseSchema) : decodedArgs;
-          call = { valid: true, callId, toolName, input };
+          const decodedArgs = this.decodeStringifiedArguments(toolName, args, toModelJsonSchema(definition.inputSchema));
+          call = { valid: true, callId, toolName, input: decodedArgs };
         }
         toolCalls.push(call);
         content.push({ type: 'tool-call', call });
@@ -280,19 +269,16 @@ export class ProviderModelPort implements ModelPort {
     const { toolCalls } = await this.collectGeneration(
       input.messages,
       input.system,
-      [offeredTool(STRUCTURED_OUTPUT_TOOL, STRUCTURED_OUTPUT_TOOL_DESCRIPTION, input.schema, this.options.strictTools === true)],
+      [toChatTool(STRUCTURED_OUTPUT_TOOL, STRUCTURED_OUTPUT_TOOL_DESCRIPTION, outputSchema)],
       { type: 'tool', toolName: STRUCTURED_OUTPUT_TOOL },
       input.signal,
       undefined,
       input.phase,
     );
     const calls = toolCalls.filter((call) => call.name === STRUCTURED_OUTPUT_TOOL);
-    const decodedRaw = calls.length === 1
+    const decoded = calls.length === 1
       ? this.decodeStringifiedArguments(STRUCTURED_OUTPUT_TOOL, calls[0].args, outputSchema)
       : undefined;
-    const decoded = decodedRaw !== undefined && this.options.strictTools === true
-      ? absentOptionalNulls(decodedRaw, outputSchema)
-      : decodedRaw;
     const notation = toolCallNotationFault(decoded);
     if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
     const parsed = calls.length === 1 ? input.schema.safeParse(decoded) : undefined;
@@ -540,23 +526,8 @@ function toUsage(usage: AIMessageChunk['usage_metadata']): TokenUsage | undefine
 }
 
 /** One tool in the form a chat model takes. */
-function toChatTool(
-  name: string,
-  description: string,
-  parameters: Record<string, unknown>,
-  strict?: boolean,
-): ChatTool {
-  return {
-    type: 'function',
-    function: { name, description, parameters, ...(strict !== undefined ? { strict } : {}) },
-  };
-}
-
-/** The offered tool: today's schema, or the strict projection when `strictTools` is on. */
-function offeredTool(name: string, description: string, schema: ZodType, strictTools: boolean): ChatTool {
-  if (!strictTools) return toChatTool(name, description, toModelJsonSchema(schema));
-  const projection = toStrictJsonSchema(schema);
-  return toChatTool(name, description, projection.schema, projection.strict);
+function toChatTool(name: string, description: string, parameters: Record<string, unknown>): ChatTool {
+  return { type: 'function', function: { name, description, parameters } };
 }
 
 /**

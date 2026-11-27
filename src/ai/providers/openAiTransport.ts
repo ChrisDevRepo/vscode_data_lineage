@@ -55,9 +55,8 @@ function createChatModel(entry: OpenAiModelEntry, apiKey: string, effort: string
     useResponsesApi: entry.apiType === 'responses',
     streaming: true,
     maxRetries: 0,
-    // The Responses wire carries the output cap. Off (default) sends non-strict tools; `strictTools`
-    // leaves per-tool `strict` flags in place so a projected schema can be marked strict.
-    ...(entry.apiType === 'responses' && !entry.strictTools ? { supportsStrictToolCalling: false } : {}),
+    // The Responses wire carries the output cap and a non-strict tool schema.
+    ...(entry.apiType === 'responses' ? { supportsStrictToolCalling: false } : {}),
     maxTokens: entry.maxOutputTokens,
     modelKwargs: { ...entryBody(entry, effort), ...requestBody },
   });
@@ -154,12 +153,8 @@ export function createOpenAiChat(entry: OpenAiModelEntry, apiKey: string, effort
       const forced = toolChoice !== undefined && toolChoice !== 'auto' && toolChoice !== 'none';
       const sentChoice = forced && !entry.forcedToolChoice ? 'auto' : wireToolChoice(entry, toolChoice, tools);
       const request = projectMessages(messages, entry);
-      // Responses copies `strict` from the tool's top-level key (`fields.strict ?? null` otherwise).
-      const bound = entry.apiType === 'responses'
-        ? tools.map((tool) => (tool.function.strict === undefined ? tool : { ...tool, strict: tool.function.strict }))
-        : tools;
       return {
-        model: bound.length > 0 ? chat.bindTools([...bound], { tool_choice: sentChoice }) : chat,
+        model: tools.length > 0 ? chat.bindTools([...tools], { tool_choice: sentChoice }) : chat,
         messages: request.messages,
         options: {
           ...(verbosity ? { verbosity } : {}),
@@ -185,5 +180,5 @@ export function createProviderModelPort(
   options: ProviderModelPortOptions & { readonly effort?: string } = {},
 ): ProviderModelPort {
   const { effort, ...portOptions } = options;
-  return new ProviderModelPort(createOpenAiChat(entry, apiKey, effort), { ...portOptions, strictTools: entry.strictTools });
+  return new ProviderModelPort(createOpenAiChat(entry, apiKey, effort), portOptions);
 }

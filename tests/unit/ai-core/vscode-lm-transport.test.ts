@@ -15,8 +15,8 @@ import { createVscodeLmChat, loadLmCatalog, onLmModelsChanged, preferredStartMod
  * structured-output round trip through the port's forced synthetic tool. No real language model is
  * called.
  */
-const ENTRY: VscodeLmModelEntry = { id: 'e', name: 'Entry', apiType: 'vscode-lm', selector: { vendor: 'v' }, forcedToolChoice: true, strictTools: false, requestBody: { temperature: 0.1, top_p: 1 }, maxOutputTokens: 500 };
-const LIVE_ENTRY: VscodeLmModelEntry = { id: 'lm:v/m', name: 'M', apiType: 'vscode-lm', selector: {}, forcedToolChoice: true, strictTools: false };
+const ENTRY: VscodeLmModelEntry = { id: 'e', name: 'Entry', apiType: 'vscode-lm', selector: { vendor: 'v' }, forcedToolChoice: true, requestBody: { temperature: 0.1, top_p: 1 }, maxOutputTokens: 500 };
+const LIVE_ENTRY: VscodeLmModelEntry = { id: 'lm:v/m', name: 'M', apiType: 'vscode-lm', selector: {}, forcedToolChoice: true };
 const tools: Array<{ name: string; description: string; inputSchema: z.ZodType }> = [{ name: 'lineage_search', description: 'd', inputSchema: z.object({ q: z.string() }) }];
 
 type Part = vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart | { mimeType: string; data: Uint8Array } | { value: string };

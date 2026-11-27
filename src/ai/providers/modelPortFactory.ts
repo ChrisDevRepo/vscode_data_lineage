@@ -55,7 +55,7 @@ export async function createConfiguredModelPort(
   if (entryId?.startsWith(LIVE_MODEL_ID_PREFIX)) {
     if (mode === 'api-key') throw new ModelPortError('invalid_request', NO_MODEL_MESSAGE);
     const info = sources.lmModel(entryId);
-    return lmPort(info, { id: entryId, name: info?.name ?? entryId, apiType: 'vscode-lm', selector: {}, forcedToolChoice: true, strictTools: false }, portOptions);
+    return lmPort(info, { id: entryId, name: info?.name ?? entryId, apiType: 'vscode-lm', selector: {}, forcedToolChoice: true }, portOptions);
   }
   const { entries, invalid } = parseModelEntries(activeRawModels(sources));
   const entry = entries.find((candidate) => candidate.id === entryId && (
@@ -80,5 +80,5 @@ export async function createConfiguredModelPort(
 
 function lmPort(info: LmModelInfo | undefined, entry: VscodeLmModelEntry, options: ProviderModelPortOptions): ProviderModelPort {
   if (!info) throw new ModelPortError('model_not_found', `No VS Code language model matches model entry "${entry.id}".`);
-  return new ProviderModelPort(createVscodeLmChat(entry, info.model), { ...options, strictTools: entry.strictTools });
+  return new ProviderModelPort(createVscodeLmChat(entry, info.model), options);
 }
