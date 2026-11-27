@@ -8,7 +8,7 @@ Open an [issue](https://github.com/ChrisDevRepo/vscode_data_lineage/issues) with
 
 ## Fork, build and run
 
-You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 20 or newer with npm 10 or newer, and [VS Code](https://code.visualstudio.com/) 1.101 or newer.
+You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) matching `engines.node` in package.json (`^22.22.2 || ^24.15.0 || >=26.0.0`; Node 20, 21, 23 and 25 are out of range) with npm 10 or newer, and [VS Code](https://code.visualstudio.com/) 1.101 or newer.
 
 1. Fork and clone the repository, then run `npm ci`.
 2. Open the folder in VS Code and press `F5` (**Run Extension**). It builds the extension and opens the Extension Development Host.

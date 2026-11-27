@@ -12,7 +12,7 @@ Files you can edit without touching TypeScript:
 | Tool | Requirement | Declared in |
 |------|-------------|-------------|
 | [Git](https://git-scm.com/) | any recent version | |
-| [Node.js](https://nodejs.org/) | `>=20` | `engines.node` in [`package.json`](../package.json) |
+| [Node.js](https://nodejs.org/) | `^22.22.2 || ^24.15.0 || >=26.0.0` | `engines.node` in [`package.json`](../package.json) |
 | npm | `>=10` | `engines.npm` in [`package.json`](../package.json) |
 | [VS Code](https://code.visualstudio.com/) | `^1.101.0` | `engines.vscode` in [`package.json`](../package.json) |
 
