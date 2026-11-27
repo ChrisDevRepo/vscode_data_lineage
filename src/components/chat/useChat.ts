@@ -6,6 +6,7 @@ import { chatReducer, initialChatState, type ChatState, type GateDecision } from
 /** What a chat view does with the transcript: every action posts to the host and updates local state. */
 export interface ChatActions {
   send: (text: string) => void;
+  followup: (offerId: string) => void;
   cancel: () => void;
   decideGate: (turnId: string, gateId: string, decision: GateDecision, text?: string) => void;
   newChat: () => void;
@@ -38,7 +39,7 @@ export function useChat(): { state: ChatState; actions: ChatActions } {
           dispatch({ type: 'host-event', turnId: msg.turnId, event: msg.event, replacesAnalysis: msg.replacesAnalysis });
           break;
         case 'chat.state':
-          dispatch({ type: 'host-state', models: msg.models, selectedModelId: msg.selectedModelId, effort: msg.effort, turnId: msg.turnId, followups: msg.followups });
+          dispatch({ ...msg, type: 'host-state' });
           break;
         case 'chat.history':
           dispatch({ type: 'host-history', messages: msg.messages });
@@ -58,6 +59,7 @@ export function useChat(): { state: ChatState; actions: ChatActions } {
       dispatch({ type: 'send', text });
       vscodeApi.postMessage({ type: 'chat.send', text });
     }, [vscodeApi]),
+    followup: useCallback((offerId: string) => vscodeApi.postMessage({ type: 'chat.followup', offerId }), [vscodeApi]),
     cancel: useCallback(() => {
       // Stop is offered only while the host reports a turn, so `turnId` is set here.
       if (turnId !== undefined) vscodeApi.postMessage({ type: 'chat.cancel', turnId });
@@ -66,7 +68,10 @@ export function useChat(): { state: ChatState; actions: ChatActions } {
       dispatch({ type: 'gate-decided', turnId: gateTurnId, gateId, decision });
       vscodeApi.postMessage({ type: 'chat.gate', turnId: gateTurnId, gateId, decision, ...(text ? { text } : {}) });
     }, [vscodeApi]),
-    newChat: useCallback(() => vscodeApi.postMessage({ type: 'chat.newChat' }), [vscodeApi]),
+    newChat: useCallback(() => {
+      dispatch({ type: 'clear-followups' });
+      vscodeApi.postMessage({ type: 'chat.newChat' });
+    }, [vscodeApi]),
     modelCommand: useCallback((command: 'add' | 'manage') => vscodeApi.postMessage({ type: 'chat.modelCommand', command }), [vscodeApi]),
     selectModel: useCallback((modelId: string) => vscodeApi.postMessage({ type: 'chat.selectModel', modelId }), [vscodeApi]),
     selectEffort: useCallback((effort: string) => vscodeApi.postMessage({ type: 'chat.selectEffort', effort }), [vscodeApi]),

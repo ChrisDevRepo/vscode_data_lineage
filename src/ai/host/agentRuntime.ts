@@ -31,7 +31,6 @@ import type { AiSession } from '../session/session';
 import { PendingGateSchema, type PendingGate } from '../session/sessionPhase';
 import { buildAgentGraph, turnRecursionLimit } from '../agent/graph';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
-import { TRACE_REQUEST_MARKER } from '../prompting/prompts';
 import type { AgentStateUpdate, AgentErrorCode, GateDecision } from '../agent/state';
 
 export { type GateDecision } from '../agent/state';
@@ -163,14 +162,14 @@ export class AgentRuntime {
   }
 
   /** Runs one user prompt through the graph, handling each LangGraph consent interrupt. */
-  public async run(prompt: string): Promise<TurnOutcome> {
+  public async run(prompt: string, executionTrigger: 'free_text' | 'run_trace' = 'free_text'): Promise<TurnOutcome> {
     const session = this.getSession();
     session.currentRoundId += 1;
-    session.currentTurnPrompt = prompt.startsWith(TRACE_REQUEST_MARKER) ? null : prompt;
+    session.currentTurnPrompt = executionTrigger === 'run_trace' ? null : prompt;
     try {
       let input: AgentStateUpdate | Command = this.priorMessages.length > 0
-        ? { prompt, messages: [...this.priorMessages, modelUserMessage(prompt)] }
-        : { prompt };
+        ? { prompt, executionTrigger, messages: [...this.priorMessages, modelUserMessage(prompt)] }
+        : { prompt, executionTrigger };
       const config = {
         configurable: { thread_id: this.threadId },
         callbacks: [],

@@ -68,8 +68,11 @@ const ChatEventMsgSchema = z.object({
   replacesAnalysis: z.boolean().optional(),
 });
 
-/** One suggested next prompt: `label` is the button text, `prompt` is what a click sends. */
-const ChatFollowupSchema = z.object({ label: z.string(), prompt: z.string() });
+const ChatIdSchema = z.string().min(1).max(256);
+
+/** One suggested next prompt; a host-owned action carries the identity of its current offer. */
+const ChatFollowupSchema = z.object({ label: z.string(), prompt: z.string(), offerId: ChatIdSchema.optional() });
+export type ChatFollowup = z.infer<typeof ChatFollowupSchema>;
 
 /** Composer state: the picker lists, the selection, whether a turn runs, and the follow-ups. */
 const ChatStateMsgSchema = z.object({
@@ -79,6 +82,8 @@ const ChatStateMsgSchema = z.object({
   effort: z.string().optional(),
   busy: z.boolean(),
   turnId: z.string().optional(),
+  /** User message to display when the host starts a turn for a follow-up action. */
+  acceptedFollowup: z.string().optional(),
   /** Follow-up buttons for the session; empty while a turn runs or a gate is pending. */
   followups: z.array(ChatFollowupSchema),
 });
@@ -92,12 +97,11 @@ const ChatHistoryMsgSchema = z.object({
 /** Host→webview chat frames, joined into `ExtensionToWebviewMsgSchema`. */
 export const ChatToWebviewMsgSchemas = [ChatEventMsgSchema, ChatStateMsgSchema, ChatHistoryMsgSchema] as const;
 
-const ChatIdSchema = z.string().min(1).max(256);
-
 /** Webview→host chat frames, joined into `MainPanelToExtensionMsgSchema`; a refine decision
  * carries the change as `text`. */
 export const ChatToExtensionMsgSchemas = [
   z.object({ type: z.literal('chat.send'), text: z.string().min(1).max(CHAT_TEXT_MAX_CHARS) }),
+  z.object({ type: z.literal('chat.followup'), offerId: ChatIdSchema }),
   z.object({ type: z.literal('chat.cancel'), turnId: ChatIdSchema }),
   z.object({
     type: z.literal('chat.gate'),

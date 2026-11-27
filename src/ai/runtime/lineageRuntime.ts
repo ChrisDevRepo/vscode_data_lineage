@@ -16,12 +16,14 @@ import { readToolErrorText, isConsentGateRejection } from '../support/toolErrorE
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { describeTurnStop } from '../support/text';
 
-/** Immutable request identity and prompt for one lineage turn. */
+/** Immutable request identity and input for one lineage turn. */
 interface LineageRuntimeRequest {
   /** Request identifier; must be unique among this session's currently active turns. */
   readonly id: string;
-  /** Verbatim user prompt for this turn. */
+  /** Prompt sent to the model for this turn. */
   readonly prompt: string;
+  /** Explicit post-discovery action supplied by the host. */
+  readonly executionTrigger?: 'run_trace';
 }
 
 /** Request-scoped dependencies required to execute one lineage turn. */
@@ -201,7 +203,7 @@ export class LineageRuntime {
     });
 
     try {
-      const outcome = await runtime.run(input.request.prompt);
+      const outcome = await runtime.run(input.request.prompt, input.request.executionTrigger);
       const failure = runtime.lastFailureDetail;
       // The append chain is serial: awaiting the terminal record makes every earlier record durable
       // before the turn settles, so a host that exits right after the turn keeps the trace tail.
@@ -319,4 +321,3 @@ function instrumentRegistry(
     },
   };
 }
-

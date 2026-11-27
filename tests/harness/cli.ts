@@ -10,10 +10,9 @@ import { parseModelEntries, type OpenAiModelEntry, type VscodeLmModelEntry } fro
 import { createConfiguredModelPort } from '../../src/ai/providers/modelPortFactory';
 import { createProviderModelPort } from '../../src/ai/providers/openAiTransport';
 import { findLmModel, loadLmCatalog } from '../../src/ai/providers/vscodeLmTransport';
-import { RUN_TRACE_TRIGGER, expandRunTracePrompt } from '../../src/ai/prompting/prompts';
 import type { ProviderModelPortOptions } from '../../src/ai/model/providerModelPort';
 import type { AiSession } from '../../src/ai/session/session';
-import { followupButtons } from '../../src/bridge/followupButtons';
+import { followupButtons, runTraceRequest } from '../../src/bridge/followupButtons';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
 import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
 import { loadDmvQueries } from '../../src/host/dbHost';
@@ -22,7 +21,7 @@ import { executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/c
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
 import { GateRoundSchema, type GateRoundPolicy } from './gatePolicy';
-import { runHarnessTurn } from './runTurn';
+import { runHarnessTurn, type HarnessTurnOptions } from './runTurn';
 import { createHarnessSession, repoPath } from './sessionFactory';
 import { setShimLogSink, Uri } from './vscodeHostShim';
 
@@ -51,8 +50,8 @@ card is approved and the miss recorded. Others: {"kind":"deny"} and
 stoppedAfterTurn, stopReason unanswered_card); --cards open continues with it.
 --followup click:LABEL is the user's click on the chat panel's follow-up button LABEL: the session must
 offer that button after the previous turn (else the run fails as a harness error naming the label), and
-the button's prompt is sent as the panel does. Only the Run trace button ("Start deeper hop-by-hop
-analysis") is supported; the other buttons take panel paths this runner does not run.
+the request is resolved as the panel resolves it. Only "Start deeper hop-by-hop analysis" is
+supported; the other buttons take panel paths this runner does not run.
 This runner does not test interactive VS Code consent.`;
 
 /** Parses bounded runner options; rejects unknown flags before any service call. */
@@ -91,14 +90,16 @@ export function parseOptions(kind: string, args: readonly string[]) {
   return { dacpac, prompt, followups, gate, cards, timeoutMs, verbose };
 }
 
-/** The text a follow-up step sends: the step itself, or for `click:LABEL` the prompt of the panel button LABEL that the session offers (followupButtons), expanded as the panel's turn expands it. */
-export function followupPrompt(step: string, session: AiSession): string {
-  if (!step.startsWith('click:')) return step;
+/** Resolves a typed follow-up or the request for an offered `click:LABEL` action. */
+export function followupRequest(step: string, session: AiSession): Pick<HarnessTurnOptions, 'prompt' | 'executionTrigger'> {
+  if (!step.startsWith('click:')) return { prompt: step };
   const label = step.slice('click:'.length).trim();
   const button = followupButtons(session).find(candidate => candidate.label === label);
   if (!button) throw new Error(`Harness error: follow-up click "${label}" is not offered by the session.`);
-  if (button.prompt !== RUN_TRACE_TRIGGER) throw new Error(`Harness error: follow-up click "${label}" is not supported by this runner.`);
-  return expandRunTracePrompt(button.prompt, session);
+  if (!button.offerId) throw new Error(`Harness error: follow-up click "${label}" is not supported by this runner.`);
+  const offer = runTraceRequest(session, button.offerId);
+  if (!offer) throw new Error(`Harness error: follow-up click "${label}" is not offered by the session.`);
+  return offer.request;
 }
 
 /** Resolves SQL-login configuration without provisioning a database or persisting credentials. */
@@ -251,13 +252,13 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       const turns: Array<{ outcome: string; modelCalls: number; gates: unknown; unansweredCard?: true }> = [];
       let answeredCards = 0;
       for (const [index, step] of [options.prompt, ...options.followups].entries()) {
-        const prompt = index === 0 ? step : followupPrompt(step, session);
+        const request = index === 0 ? { prompt: step } : followupRequest(step, session);
         const requestId = randomUUID();
         const portOptions: ProviderModelPortOptions = { requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } };
         const port = lmEntry
           ? await createConfiguredModelPort({ models: [lmEntry], defaultModel: lmEntry.id, secrets: { get: async () => undefined }, lmModel: id => findLmModel(lm, id) }, portOptions)
           : createProviderModelPort(entry as OpenAiModelEntry, process.env.AI_TEST_API_KEY!.trim(), portOptions);
-        const turn = await runHarnessTurn({ session, model: port, requestId, prompt, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter, ...(options.gate ? { gate: options.gate, gateOffset: answeredCards } : {}) });
+        const turn = await runHarnessTurn({ session, model: port, requestId, ...request, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter, ...(options.gate ? { gate: options.gate, gateOffset: answeredCards } : {}) });
         answeredCards += turn.gates.length;
         turns.push({ outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls, gates: turn.gates, ...(turn.unansweredCard ? { unansweredCard: true as const } : {}) });
         if (turn.outcome.outcome !== 'ok') break;

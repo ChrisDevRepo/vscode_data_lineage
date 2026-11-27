@@ -5,25 +5,25 @@
  * memory is the session's own transcript.
  */
 import { randomUUID } from 'node:crypto';
-import { NO_MODEL_MESSAGE, type ChatToExtensionMsg, type ChatToWebviewMsg, type TurnEvent } from '../engine/shared/chatContract';
+import { NO_MODEL_MESSAGE, type ChatFollowup, type ChatToExtensionMsg, type ChatToWebviewMsg, type TurnEvent } from '../engine/shared/chatContract';
 import { ModelPortError, type ModelPort } from '../ai/model/modelPort';
 import { isClearCommand } from '../ai/agent/slashCommands';
 import { expandNextQuestionSuggestions } from '../ai/prompting/followupSuggestions';
 import { renderFullPlanMd, renderScopeCardMd } from '../ai/prompting/scopeSummaryRenderer';
-import { NEXT_QUESTIONS_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER, expandRunTracePrompt } from '../ai/prompting/prompts';
+import { NEXT_QUESTIONS_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER } from '../ai/prompting/prompts';
 import type { ProviderModelPortOptions } from '../ai/model/providerModelPort';
 import type { AiTraceWriter } from '../ai/observability/aiTraceWriter';
 import { parseModelEntries, type OpenAiModelEntry, type VscodeLmModelEntry } from '../ai/providers/modelEntries';
 import { createConfiguredModelPort, type ModelPortSources } from '../ai/providers/modelPortFactory';
 import { preferredStartModel, type LmCatalog } from '../ai/providers/vscodeLmTransport';
-import type { LineageRuntime } from '../ai/runtime/lineageRuntime';
+import type { LineageRuntime, LineageRuntimeRunInput } from '../ai/runtime/lineageRuntime';
 import { TurnEventSink } from '../ai/runtime/turnEventSink';
 import type { AiSession } from '../ai/session/session';
 import { formatProviderErrorDiagnostic, sanitizeDescriptionForChat, turnStopLogFields, type TurnStop } from '../ai/support/text';
 import { calibrateTurnBudget } from '../ai/support/tokenBudget';
 import { Logger, OUTPUT_POINTER } from '../utils/log';
 import { notifyError, notifyWarningOnce } from '../utils/notifications';
-import { followupButtons, type FollowupButton } from './followupButtons';
+import { followupButtons, runTraceRequest } from './followupButtons';
 
 /** Window in which streamed text deltas are merged into one frame. */
 const TEXT_BATCH_MS = 75;
@@ -135,8 +135,8 @@ export class ChatController {
     switch (msg.type) {
       case 'chat.ready':
         this.ready = true;
-        this.post(this.stateMsg());
         this.post({ type: 'chat.history', messages: this.deps.getSession().getDiscoveryTranscript() });
+        this.post(this.stateMsg());
         return;
       case 'chat.send':
         if (!this.ready) {
@@ -147,9 +147,15 @@ export class ChatController {
         } else if (this.turn) {
           logger.debug('[Chat] send rejected — a turn is already running');
         } else {
-          void this.runTurn(msg.text);
+          void this.runTurn({ prompt: msg.text });
         }
         return;
+      case 'chat.followup': {
+        const offer = this.ready && !this.turn && runTraceRequest(this.deps.getSession(), msg.offerId);
+        if (offer) void this.runTurn(offer.request, offer.text);
+        else logger.debug('[Chat] deeper analysis rejected — no matching idle discovery offer');
+        return;
+      }
       case 'chat.cancel':
         if (this.turn?.turnId !== msg.turnId) {
           logger.debug(`[Chat] cancel rejected — no running turn ${msg.turnId}`);
@@ -223,7 +229,7 @@ export class ChatController {
     this.post(this.stateMsg());
   }
 
-  private async runTurn(prompt: string): Promise<void> {
+  private async runTurn(request: Omit<LineageRuntimeRunInput['request'], 'id'>, acceptedFollowup?: string): Promise<void> {
     const { logger, getSession } = this.deps;
     const requestId = randomUUID();
     let finish!: () => void;
@@ -235,11 +241,11 @@ export class ChatController {
       done: new Promise<void>((resolve) => { finish = resolve; }),
     };
     this.turn = turn;
-    this.post(this.stateMsg());
+    this.post(this.stateMsg(acceptedFollowup));
     const sink = new TurnEventSink((event) => this.onEvent(turn, event));
     const entry = this.selectedChoice();
     const session = getSession();
-    const trigger = normalizeTrigger(prompt);
+    const trigger = normalizeTrigger(request.prompt);
     let failure: unknown;
     let stop: TurnStop | undefined;
     try {
@@ -261,12 +267,11 @@ export class ChatController {
         traceVerbose: trace?.isVerbose(),
         budget: calibrateTurnBudget(entry.maxInputTokens, this.deps.turnSettings()),
       });
-      // Next questions read compact facts on the tool-free suggestion path; the Run-trace sentinel
-      // becomes the seeded envelope the graph routes to the hop-by-hop analysis.
+      // Next questions read compact facts on the tool-free suggestion path.
       const suggestions = trigger === normalizeTrigger(NEXT_QUESTIONS_TRIGGER) && session.phase.kind === 'completed';
       const result = await (suggestions ? this.deps.runtime.runSuggestions : this.deps.runtime.run).call(this.deps.runtime, {
         model: port,
-        request: { id: requestId, prompt: suggestions ? expandNextQuestionSuggestions(session) : expandRunTracePrompt(prompt, session) },
+        request: { id: requestId, ...request, ...(suggestions ? { prompt: expandNextQuestionSuggestions(session) } : {}) },
         sink,
         signal: turn.abort.signal,
       });
@@ -390,11 +395,11 @@ export class ChatController {
   }
 
   /** The follow-up buttons for the session as it stands; none while a turn runs. */
-  private followups(): FollowupButton[] {
+  private followups(): ChatFollowup[] {
     return this.turn ? [] : followupButtons(this.deps.getSession());
   }
 
-  private stateMsg(): ChatToWebviewMsg {
+  private stateMsg(acceptedFollowup?: string): ChatToWebviewMsg {
     const choices = this.choices();
     const selected = this.selectedChoice(choices);
     return {
@@ -406,6 +411,7 @@ export class ChatController {
       effort: this.explicitEffort(selected) ?? selected?.reasoningEffort,
       busy: this.turn !== undefined,
       turnId: this.turn?.turnId,
+      ...(acceptedFollowup !== undefined ? { acceptedFollowup } : {}),
       followups: this.followups(),
     };
   }

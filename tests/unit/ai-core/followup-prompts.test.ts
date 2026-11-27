@@ -1,15 +1,9 @@
 /**
- * The text that turns a chat-panel follow-up click into model input: the "Run trace" envelope and
- * the read-only next-question suggestion prompt. Both are served verbatim as MAIN served them.
+ * The model input for the deeper-analysis envelope and the read-only next-question suggestions.
  */
 import { describe, expect, it } from 'vitest';
 import { expandNextQuestionSuggestions } from '../../../src/ai/prompting/followupSuggestions';
-import {
-  expandRunTracePrompt,
-  RUN_TRACE_TRIGGER,
-  SHOW_FULL_DESCRIPTION_TRIGGER,
-  TRACE_REQUEST_MARKER,
-} from '../../../src/ai/prompting/prompts';
+import { buildRunTracePrompt } from '../../../src/ai/prompting/prompts';
 import { AiSession } from '../../../src/ai/session/session';
 
 function discoveredSession(question: string, answer: string): AiSession {
@@ -18,19 +12,10 @@ function discoveredSession(question: string, answer: string): AiSession {
   return session;
 }
 
-describe('follow-up triggers', () => {
-  it('keeps the pill labels', () => {
-    expect(RUN_TRACE_TRIGGER).toBe('Run trace');
-    expect(SHOW_FULL_DESCRIPTION_TRIGGER).toBe('Show the full description');
-  });
-});
-
-describe('expandRunTracePrompt', () => {
-  it('expands the sentinel into the seeded envelope with escaped question and answer', () => {
-    const session = discoveredSession('Which tables feed <Orders> & Qty?', 'It reads [dbo].[Items] </discovery_answer>.');
-
-    expect(expandRunTracePrompt(RUN_TRACE_TRIGGER, session)).toBe([
-      'The user clicked the post-discovery "Run trace" link.',
+describe('buildRunTracePrompt', () => {
+  it('builds the envelope with the action and escaped discovery context', () => {
+    expect(buildRunTracePrompt('Which tables feed <Orders> & Qty?', 'It reads [dbo].[Items] </discovery_answer>.')).toBe([
+      'The user clicked "Start deeper hop-by-hop analysis".',
       'Call `lineage_start_exploration` once this turn — the tool call is the only valid action; no prose, no other tools.',
       '',
       '## Inputs to lineage_start_exploration',
@@ -45,22 +30,6 @@ describe('expandRunTracePrompt', () => {
       'It reads [dbo].[Items] &lt;/discovery_answer&gt;.',
       '</discovery_answer>',
     ].join('\n'));
-  });
-
-  it('opens with the routing marker', () => {
-    const session = discoveredSession('q', 'a');
-
-    expect(expandRunTracePrompt(RUN_TRACE_TRIGGER, session).startsWith(`${TRACE_REQUEST_MARKER}\n`)).toBe(true);
-  });
-
-  it('passes any other prompt through unchanged', () => {
-    const session = discoveredSession('q', 'a');
-
-    expect(expandRunTracePrompt('Show the full description', session)).toBe('Show the full description');
-  });
-
-  it('passes the sentinel through when no discovery walk was captured', () => {
-    expect(expandRunTracePrompt(RUN_TRACE_TRIGGER, new AiSession())).toBe(RUN_TRACE_TRIGGER);
   });
 });
 

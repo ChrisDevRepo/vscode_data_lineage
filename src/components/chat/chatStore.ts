@@ -39,8 +39,9 @@ export interface ChatState {
 
 export type ChatAction =
   | { type: 'send'; text: string }
+  | { type: 'clear-followups' }
   | { type: 'host-event'; turnId: string; event: TurnEvent; replacesAnalysis?: boolean }
-  | { type: 'host-state'; models: ChatModelOption[]; selectedModelId: string; effort?: string; turnId?: string; followups: ChatFollowup[] }
+  | { type: 'host-state'; models: ChatModelOption[]; selectedModelId: string; effort?: string; turnId?: string; followups: ChatFollowup[]; acceptedFollowup?: string }
   | { type: 'host-history'; messages: ChatHistoryMessage[] }
   | { type: 'gate-decided'; turnId: string; gateId: string; decision: GateDecision };
 
@@ -101,20 +102,26 @@ function applyEvent(state: ChatState, turnId: string, event: TurnEvent, replaces
   }
 }
 
+function appendUserMessage(state: ChatState, text: string): ChatState {
+  return {
+    ...state,
+    nextLocalId: state.nextLocalId + 1,
+    messages: [...state.messages, { id: `local-${state.nextLocalId}`, role: 'user', parts: [{ type: 'text', text }] }],
+  };
+}
+
 /** Folds host chat messages and local actions into the transcript the Thread renders. */
 export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'send':
-      return {
-        ...state,
-        nextLocalId: state.nextLocalId + 1,
-        messages: [...state.messages, { id: `local-${state.nextLocalId}`, role: 'user', parts: [{ type: 'text', text: action.text }] }],
-      };
+      return appendUserMessage(state, action.text);
+    case 'clear-followups':
+      return { ...state, followups: [] };
     case 'host-event':
       return applyEvent(state, action.turnId, action.event, action.replacesAnalysis);
     case 'host-state':
       return {
-        ...state,
+        ...(action.acceptedFollowup === undefined ? state : appendUserMessage(state, action.acceptedFollowup)),
         models: action.models,
         selectedModelId: action.selectedModelId,
         effort: action.effort,
@@ -125,6 +132,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'host-history':
       return {
         ...state,
+        followups: [],
         nextLocalId: state.nextLocalId + action.messages.length,
         messages: action.messages.map((m, i) => ({
           id: `local-${state.nextLocalId + i}`,

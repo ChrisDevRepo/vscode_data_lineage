@@ -7,7 +7,6 @@ import {
   useExternalStoreRuntime,
   type AppendMessage,
   type DirectiveFormatter,
-  type ThreadSuggestion,
   type ThreadMessageLike,
   type Toolkit,
   type TriggerAdapter,
@@ -82,15 +81,6 @@ export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
     content: toContent(message.parts, message.id),
     ...(error?.type === 'error' ? { status: { type: 'incomplete', reason: 'error', error: error.message } } : {}),
   };
-}
-
-/**
- * The library's follow-up suggestions for the host's buttons: the label is the button text, a click
- * sends the prompt through `onNew`.
- * @internal
- */
-export function toSuggestions(followups: ChatState['followups']): ThreadSuggestion[] {
-  return followups.map(({ label, prompt }) => ({ title: label, prompt }));
 }
 
 function textOf(message: AppendMessage): string {
@@ -236,7 +226,6 @@ export default function ChatPane() {
   const runtime = useExternalStoreRuntime<ChatMessage>({
     messages: state.messages,
     isRunning: state.turnId !== undefined,
-    suggestions: useMemo(() => toSuggestions(state.followups), [state.followups]),
     // The library's own disabled composer; the notice above tells the user why.
     isDisabled: modelsMissing(state),
     convertMessage: toThreadMessage,

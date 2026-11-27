@@ -9,7 +9,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../../../src/components/chat/ChatContext';
-import ChatPane, { ComposerControls, modelsMissing, toContent, toSuggestions, toThreadMessage } from '../../../src/components/chat/ChatPane';
+import ChatPane, { ComposerControls, modelsMissing, toContent, toThreadMessage } from '../../../src/components/chat/ChatPane';
 import { initialChatState, type ChatMessage, type ChatState } from '../../../src/components/chat/chatStore';
 import type { ChatActions } from '../../../src/components/chat/useChat';
 import { BRIDGE_PROTOCOL_VERSION } from '../../../src/engine/shared/bridgeContract';
@@ -91,12 +91,6 @@ describe('no configured model', () => {
 });
 
 describe('follow-up suggestions', () => {
-  it('maps a host follow-up to a library suggestion titled by its label and sending its prompt', () => {
-    expect(toSuggestions([{ label: 'Show full description', prompt: 'Show the full description' }])).toEqual([
-      { title: 'Show full description', prompt: 'Show the full description' },
-    ]);
-  });
-
   describe('in the mounted pane', () => {
     let root: Root | undefined;
     let host: HTMLElement | undefined;
@@ -105,7 +99,7 @@ describe('follow-up suggestions', () => {
       host?.remove();
     });
 
-    it('shows the host follow-ups as buttons and a click posts the follow-up prompt', async () => {
+    it.each([true, false])('posts the deeper-analysis action when clicked (transcript present: %s)', async (hasHistory) => {
       (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
       const postMessage = vi.fn();
       const api = { postMessage, getState: () => undefined, setState: () => undefined } as unknown as VsCodeAPI;
@@ -114,15 +108,17 @@ describe('follow-up suggestions', () => {
       root = createRoot(host);
       act(() => root?.render(<VsCodeProvider api={api}><ChatPane /></VsCodeProvider>));
       const post = (data: unknown) => act(() => { window.dispatchEvent(new MessageEvent('message', { data: { protocolVersion: BRIDGE_PROTOCOL_VERSION, ...(data as object) } })); });
-      post({ type: 'chat.history', messages: [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }] });
+      post({ type: 'chat.history', messages: hasHistory ? [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }] : [] });
       post({
         type: 'chat.state', models: [{ id: 'm', name: 'M' }], selectedModelId: 'm', busy: false,
-        followups: [{ label: 'Start deeper hop-by-hop analysis', prompt: 'Run trace' }],
+        followups: [{ label: 'Start deeper hop-by-hop analysis', prompt: 'Run trace', offerId: 's:1' }],
       });
       const button = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Start deeper hop-by-hop analysis');
       expect(button).toBeDefined();
       await act(async () => { button?.click(); });
-      expect(postMessage).toHaveBeenCalledWith({ type: 'chat.send', text: 'Run trace' });
+      expect(postMessage.mock.calls.map(([frame]) => frame).filter((frame) => frame.type === 'chat.send' || frame.type === 'chat.followup')).toEqual([
+        { type: 'chat.followup', offerId: 's:1' },
+      ]);
     });
 
     it('offers Stop only once the host reports the running turn, and Stop posts that turn id', async () => {

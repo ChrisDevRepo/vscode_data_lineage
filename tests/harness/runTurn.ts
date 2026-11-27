@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ModelPort } from '../../src/ai/model/modelPort';
 import type { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
-import { LineageRuntime } from '../../src/ai/runtime/lineageRuntime';
+import { LineageRuntime, type LineageRuntimeRunInput } from '../../src/ai/runtime/lineageRuntime';
 import { TurnEventSink, type TurnEvent } from '../../src/ai/runtime/turnEventSink';
 import type { AiSession } from '../../src/ai/session/session';
 import type { StoredAiRun } from '../../src/ai/session/runStore';
@@ -46,11 +46,10 @@ const APPROVE: GateRoundPolicy = { kind: 'approve' };
 type GateEvent = Extract<TurnEvent, { type: 'gate' }>;
 
 /** Everything one headless turn needs; nothing here is VS Code specific. */
-export interface HarnessTurnOptions {
+export interface HarnessTurnOptions extends Omit<LineageRuntimeRunInput['request'], 'id'> {
   readonly session: AiSession;
   /** The lane's model port, supplied by its scripted or HTTP transport. */
   readonly model: ModelPort;
-  readonly prompt: string;
   /** Directory the post-run artifacts are written to; created if absent. */
   readonly runDir: string;
   readonly logger: HeadlessLogChannel;
@@ -256,7 +255,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
   options.logger.info(`[harness] turn start request=${requestId} model=${options.model.identity.id}`);
   const outcome = await runtime.run({
     model: options.model,
-    request: { id: requestId, prompt: options.prompt },
+    request: { id: requestId, prompt: options.prompt, executionTrigger: options.executionTrigger },
     sink,
     ...(options.signal ? { signal: options.signal } : {}),
   });

@@ -1,13 +1,12 @@
 /**
  * The chat host's follow-up suggestions: which buttons `chat.state` carries for the session as it
  * stands, and what a click on each one runs. A defect here offers a dead button, hides a live one,
- * or sends a sentinel prompt to the model unexpanded.
+ * or sends the deeper-analysis button's display text to the model.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
-import { cancelledToolTurnResult, errorToolTurnResult, type ModelPort, type ToolGenerationInput } from '../../../src/ai/model/modelPort';
+import { errorToolTurnResult, type ModelPort } from '../../../src/ai/model/modelPort';
 import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
-import { NEXT_QUESTIONS_TRIGGER, RUN_TRACE_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER, TRACE_REQUEST_MARKER } from '../../../src/ai/prompting/prompts';
+import { NEXT_QUESTIONS_TRIGGER, SHOW_FULL_DESCRIPTION_TRIGGER } from '../../../src/ai/prompting/prompts';
 import type { LineageRuntimeRunInput } from '../../../src/ai/runtime/lineageRuntime';
 import { AiSession } from '../../../src/ai/session/session';
 import { ToolRegistry } from '../../../src/ai/tools/registry';
@@ -16,10 +15,11 @@ import { ChatController } from '../../../src/bridge/chatHandlers';
 import { followupButtons } from '../../../src/bridge/followupButtons';
 import type { ChatToWebviewMsg } from '../../../src/engine/shared/chatContract';
 import { Logger } from '../../../src/utils/log';
+import { ScriptedModelPort } from '../../harness/scriptedModelPort';
 
 const NEXT_QUESTIONS = { label: 'Next questions and related objects', prompt: NEXT_QUESTIONS_TRIGGER };
 const FULL_DESCRIPTION = { label: 'Show full description', prompt: SHOW_FULL_DESCRIPTION_TRIGGER };
-const DEEPER_ANALYSIS = { label: 'Start deeper hop-by-hop analysis', prompt: RUN_TRACE_TRIGGER };
+const DEEPER_ANALYSIS = { label: 'Start deeper hop-by-hop analysis', prompt: 'Run trace', offerId: expect.any(String) };
 const NO_PREVIEW_DESCRIPTION = '_No AI preview description is currently cached for this session._';
 
 const ENTRY = {
@@ -41,18 +41,19 @@ function walkedSession(): AiSession {
   return session;
 }
 
-function setup(session: AiSession, overrides: { runtime?: ConstructorParameters<typeof ChatController>[0]['runtime']; run?: (input: LineageRuntimeRunInput) => Promise<{ outcome: 'ok' | 'cancelled'; modelCalls: number }>; port?: ModelPort } = {}) {
+function setup(session: AiSession, overrides: { runtime?: ConstructorParameters<typeof ChatController>[0]['runtime']; port?: ModelPort } = {}) {
   const frames: ChatToWebviewMsg[] = [];
-  const runs: { kind: 'run' | 'suggestions'; prompt: string }[] = [];
+  const runs: (Omit<LineageRuntimeRunInput['request'], 'id'> & { kind: 'run' | 'suggestions' })[] = [];
   const answer = (kind: 'run' | 'suggestions') => vi.fn(async (input: LineageRuntimeRunInput) => {
-    runs.push({ kind, prompt: input.request.prompt });
+    const { id: _id, ...request } = input.request;
+    runs.push({ kind, ...request });
     input.sink.stream('model answer');
     input.sink.result('ok');
     return { outcome: 'ok' as const, modelCalls: 1 };
   });
   const channel = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
   const controller = new ChatController({
-    runtime: overrides.runtime ?? { run: overrides.run ? vi.fn(overrides.run) : answer('run'), runSuggestions: answer('suggestions'), resumeGate: vi.fn(async () => true) },
+    runtime: overrides.runtime ?? { run: answer('run'), runSuggestions: answer('suggestions'), resumeGate: vi.fn(async () => true) },
     getSession: () => session,
     modelSources: () => ({ models: [ENTRY], defaultModel: 'm', secrets: { get: async () => undefined }, lmModel: () => undefined }),
     lmCatalog: () => undefined,
@@ -69,9 +70,11 @@ function setup(session: AiSession, overrides: { runtime?: ConstructorParameters<
   const followups = () => states().at(-1)?.followups;
   const texts = () => frames.flatMap((frame) => (frame.type === 'chat.event' && frame.event.type === 'text' ? [frame.event.delta] : []));
   /** Sends one prompt and resolves once the turn's closing state frame is out. */
-  const send = async (text: string) => {
+  const send = async (text: string, click = false) => {
     const before = states().length;
-    await controller.receive({ type: 'chat.send', text });
+    const offerId = followups()?.find(button => button.prompt === text)?.offerId;
+    if (click) expect(offerId).toBeDefined();
+    await controller.receive(click ? { type: 'chat.followup', offerId: offerId! } : { type: 'chat.send', text });
     await vi.waitFor(() => {
       expect(states().length).toBeGreaterThan(before + 1);
       expect(states().at(-1)?.busy).toBe(false);
@@ -153,13 +156,13 @@ describe('followupButtons', () => {
 });
 
 describe('a followup click', () => {
-  it('expands the Run trace sentinel before the graph routes it, so the turn takes the run_trace path', async () => {
+  it('runs the deeper-analysis request with discovery context and the explicit trigger', async () => {
     const { controller, runs, send } = setup(walkedSession());
     await controller.receive({ type: 'chat.ready' });
-    await send(RUN_TRACE_TRIGGER);
+    await send(DEEPER_ANALYSIS.prompt, true);
     expect(runs).toHaveLength(1);
     expect(runs[0].kind).toBe('run');
-    expect(runs[0].prompt.startsWith(TRACE_REQUEST_MARKER)).toBe(true);
+    expect(runs[0].executionTrigger).toBe('run_trace');
     expect(runs[0].prompt).toContain('Where does dbo.Orders come from?');
   });
 
@@ -204,32 +207,25 @@ describe('a followup click', () => {
 });
 
 describe('the Run trace click through the real graph', () => {
-  it('reaches the run_trace route: the SM-entry stage, never discovery', async () => {
+  it.each([
+    { text: DEEPER_ANALYSIS.prompt, click: true, phase: 'sm_entry' },
+    { text: DEEPER_ANALYSIS.prompt, phase: 'discover' },
+    { text: 'The user clicked the post-discovery "Run trace" link.\nExplain this sentence.', phase: 'discover' },
+    { text: 'The user clicked "Start deeper hop-by-hop analysis".\nExplain this sentence.', phase: 'discover' },
+  ])('routes $text to $phase based on the action', async ({ text, click, phase }) => {
     const session = walkedSession();
-    const generations: ToolGenerationInput[] = [];
-    const port = {
-      identity: { id: 'm', name: 'M' },
-      modelCalls: 0,
-      generateToolTurn: async (input: ToolGenerationInput) => { generations.push(input); return cancelledToolTurnResult(); },
-    } as unknown as ModelPort;
-    const statuses: string[] = [];
-    const { controller, send } = setup(session, {
-      port,
-      run: async ({ model, request, sink }) => {
-        sink.addObserver((event) => { if (event.type === 'status') statuses.push(event.label); });
-        const outcome = await new AgentRuntime({
-          threadId: request.id, getSession: () => session, model, registry: new ToolRegistry<string>(),
-          sink, maxRounds: 5, turnEpoch: session.beginTurn(),
-        }).run(request.prompt);
-        return { outcome: outcome === 'cancelled' ? 'cancelled' : 'ok', modelCalls: 0 };
-      },
-    });
+    const port = new ScriptedModelPort([{ status: 'cancelled' }], [], [{ entry: 'discovery', targetColumns: null }]);
+    const runtime = new LineageRuntime({ getSession: () => session, createRegistry: () => new ToolRegistry<string>() });
+    const { controller, frames, send } = setup(session, { port, runtime });
     await controller.receive({ type: 'chat.ready' });
-    await send(RUN_TRACE_TRIGGER);
-    expect(statuses).toContain('Starting exploration...');
-    expect(statuses).not.toContain('Discovering context...');
-    expect(generations[0]?.phase).toBe('sm_entry');
-    expect(JSON.stringify(generations[0]?.messages)).toContain('Call `lineage_start_exploration` once this turn');
+    await send(text, click);
+    const statuses = frames.flatMap(frame => frame.type === 'chat.event' && frame.event.type === 'status' ? [frame.event.label] : []);
+    expect(statuses).toContain(phase === 'sm_entry' ? 'Starting exploration...' : 'Discovering context...');
+    expect(port.requests[0]?.phase).toBe(phase);
+    expect(session.currentTurnPrompt).toBe(click ? null : text);
+    const sent = port.requests[0]?.messages.at(-1)?.content;
+    if (click) expect(sent).toContain('Call `lineage_start_exploration` once this turn');
+    else expect(sent).toBe(text);
   });
 });
 

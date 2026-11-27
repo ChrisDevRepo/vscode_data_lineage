@@ -608,15 +608,15 @@ export class AiSession {
   }
 
   /**
-   * Whether the post-discovery SM-offer may render (idle phase, multi-object walk with an origin).
-   * The single predicate for every surface rendering the offer; do not restate its conditions at a
-   * render site. An oversized scope never reaches it: the discovery budget guard routes that turn
-   * into SM entry and the consent gate.
+   * Whether an idle session has the discovery context needed to offer deeper analysis.
+   * An oversized scope goes straight to SM entry and the consent gate.
    */
-  public smOfferAvailable(): boolean {
+  public smOfferAvailable(): this is this & { lastDiscoveryQuestion: string; lastDiscoveryAnswer: string } {
     return this.phase.kind === 'idle'
       && Boolean(this.lastDiscoveryOrigin)
-      && this.lastDiscoveryWalkCount >= 2;
+      && this.lastDiscoveryWalkCount >= 2
+      && Boolean(this.lastDiscoveryQuestion)
+      && Boolean(this.lastDiscoveryAnswer);
   }
 
   /**

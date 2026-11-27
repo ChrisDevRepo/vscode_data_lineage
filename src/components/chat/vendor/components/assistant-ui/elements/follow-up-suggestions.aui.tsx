@@ -1,10 +1,12 @@
 "use client";
 
-import { AuiIf, useAuiState, ThreadPrimitive } from "@assistant-ui/react";
+import { AuiIf, ThreadPrimitive, useAui } from "@assistant-ui/react";
 import { useCallback, useEffect, useRef, useState, type FC } from "react";
+import { useChatContext } from "../../../../ChatContext";
 
 const FollowupSuggestionsRow: FC = () => {
-  const suggestions = useAuiState((s) => s.thread.suggestions);
+  const { state: { followups }, actions } = useChatContext();
+  const aui = useAui();
   const scrollRef = useRef<HTMLDivElement>(null);
   const rtlRef = useRef<boolean | null>(null);
   const [fades, setFades] = useState({ left: false, right: false });
@@ -49,19 +51,19 @@ const FollowupSuggestionsRow: FC = () => {
       style={{ maskImage, WebkitMaskImage: maskImage }}
     >
       <div className="mx-auto flex min-h-8 w-max items-center gap-2 px-0.5">
-        {suggestions.map((suggestion, idx) => (
+        {followups.map(({ label, prompt, offerId }) => (
           <ThreadPrimitive.Suggestion
-            key={idx}
+            key={label}
             className="aui-thread-followup-suggestion border-foreground/10 hover:bg-foreground/[0.03] hover:border-foreground/25 rounded-md border px-2.5 py-1 text-sm whitespace-nowrap transition-colors ease-in motion-reduce:transition-none"
-            prompt={suggestion.prompt}
+            prompt={prompt}
             send
+            onClick={offerId ? (event) => {
+              event.preventDefault();
+              actions.followup(offerId);
+              aui.composer.setText("");
+            } : undefined}
           >
-            {suggestion.title ?? suggestion.prompt}
-            {suggestion.label && (
-              <span className="aui-thread-followup-suggestion-label text-muted-foreground ms-1">
-                {suggestion.label}
-              </span>
-            )}
+            {label}
           </ThreadPrimitive.Suggestion>
         ))}
       </div>
@@ -69,14 +71,12 @@ const FollowupSuggestionsRow: FC = () => {
   );
 };
 
-export const ThreadFollowupSuggestions: FC = () => (
-  <AuiIf
-    condition={(s) =>
-      !s.thread.isEmpty &&
-      !s.thread.isRunning &&
-      s.thread.suggestions.length > 0
-    }
-  >
-    <FollowupSuggestionsRow />
-  </AuiIf>
-);
+export const ThreadFollowupSuggestions: FC = () => {
+  const { state } = useChatContext();
+  if (state.followups.length === 0) return null;
+  return (
+    <AuiIf condition={(s) => !s.thread.isRunning}>
+      <FollowupSuggestionsRow />
+    </AuiIf>
+  );
+};

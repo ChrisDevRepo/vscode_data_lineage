@@ -310,15 +310,6 @@ function buildFollowUpPrompt(): string {
   ].join('\n');
 }
 
-/**
- * Sentinel prompt carried by the post-discovery "deeper analysis" follow-up pill.
- *
- * @remarks Kept short because a chat surface shows it verbatim as the pill label. It never reaches
- *   the model: {@link expandRunTracePrompt} replaces it with the seeded envelope before the turn
- *   starts.
- */
-export const RUN_TRACE_TRIGGER = 'Run trace';
-
 const GATE_TRIGGER_PATTERN = /^(Approve|Cancel) exploration plan revision (\d+)$/;
 
 /** Reads a {@link gateTriggerPrompt} back; `null` for any other prompt. */
@@ -378,60 +369,10 @@ export const SHOW_FULL_DESCRIPTION_TRIGGER = 'Show the full description';
  */
 export const NEXT_QUESTIONS_TRIGGER = 'What could I explore next?';
 
-/**
- * Stable first line of the seeded trace envelope, matched by the graph to route straight to SM.
- *
- * @remarks Matches our own generated prefix, never user text, so the re-entry is deterministic and
- *   needs no entry-detector model call.
- */
-export const TRACE_REQUEST_MARKER = 'The user clicked the post-discovery "Run trace" link.';
-
-/**
- * The captured discovery context the pill expansion reads.
- *
- * @remarks
- * Structural on purpose — any object carrying the three captured fields satisfies it, which is what
- * lets `AiSession` be passed directly without this module importing it.
- */
-interface DiscoveryPillContext {
-  /** First node walked during the captured discovery turn; `null` when no walk was captured. */
-  readonly lastDiscoveryOrigin: string | null;
-  /** The user's verbatim discovery question; `null` when none captured. */
-  readonly lastDiscoveryQuestion: string | null;
-  /** The AI's discovery chat answer (Markdown); `null` when none captured. */
-  readonly lastDiscoveryAnswer: string | null;
-}
-
-/**
- * Expands the SM-offer pill sentinel into the seeded trace prompt from captured discovery context.
- * Living here keeps the pill label and routing marker from drifting. Any other prompt passes
- * through unchanged, and so does the sentinel when the walk was never captured, so the graph routes
- * that turn normally rather than seeding a half-built envelope.
- *
- * @returns The seeded trace prompt when the sentinel and full context are present; else `prompt`.
- */
-export function expandRunTracePrompt(prompt: string, ctx: DiscoveryPillContext): string {
-  if (prompt !== RUN_TRACE_TRIGGER) return prompt;
-  if (ctx.lastDiscoveryOrigin && ctx.lastDiscoveryQuestion && ctx.lastDiscoveryAnswer) {
-    return buildRunTraceTriggerPrompt(ctx.lastDiscoveryQuestion, ctx.lastDiscoveryAnswer);
-  }
-  return prompt;
-}
-
-/**
- * Builds the User-message envelope that asks the SM-entry turn for a `lineage_start_exploration`
- * call.
- *
- * @param question - The user's verbatim discovery question.
- * @param answer - The AI's discovery chat answer (Markdown).
- * @returns Effective-prompt text fed into the next LM round.
- */
-function buildRunTraceTriggerPrompt(
-  question: string,
-  answer: string,
-): string {
+/** Asks SM entry to propose an exploration seeded by the preceding discovery exchange. */
+export function buildRunTracePrompt(question: string, answer: string): string {
   return [
-    TRACE_REQUEST_MARKER,
+    'The user clicked "Start deeper hop-by-hop analysis".',
     'Call `lineage_start_exploration` once this turn — the tool call is the only valid action; no prose, no other tools.',
     '',
     '## Inputs to lineage_start_exploration',

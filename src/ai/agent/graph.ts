@@ -33,7 +33,7 @@ import {
   deriveStagePromptContext,
   type StagePromptContext,
 } from '../prompting/hostPrompts';
-import { STALE_GATE_TRIGGER_REPLY, TRACE_REQUEST_MARKER, buildGateReplySystemPrompt, buildGateReplyUserPrompt, parseGateTrigger } from '../prompting/prompts';
+import { STALE_GATE_TRIGGER_REPLY, buildGateReplySystemPrompt, buildGateReplyUserPrompt, parseGateTrigger } from '../prompting/prompts';
 import { renderScopeSummaryMd, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
 import { buildChatAnswer } from '../support/chatAnswer';
 import { extractShortTermMemory } from '../support/smMemoryCore';
@@ -570,18 +570,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ? []
       : [modelUserMessage(state.prompt)];
 
-    const slash = detectSlashRoute(state.prompt);
+    const runTrace = state.executionTrigger === 'run_trace';
+    const slash = runTrace ? null : detectSlashRoute(state.prompt);
     const held = sess.phase.kind === 'awaiting_gate' && sess.pendingExploration
       ? { gate: sess.phase.gate, revision: sess.pendingExploration.revision }
       : null;
-    const marker = state.prompt.startsWith(TRACE_REQUEST_MARKER);
-    if (held && (slash || marker)) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
+    if (held && (slash || runTrace)) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
+    if (runTrace) {
+      return { ctx, messages, entry: 'discovery', targetColumns: null, resolvedOrigin: null, phase: 'detect_entry' };
+    }
     if (slash) {
       const resolvedOrigin = resolveTraceOrigin(slash.origins, sess.model);
       return { ctx, messages, entry: slash.entry, executionTrigger: slash.trigger, targetColumns: slash.targetColumns, resolvedOrigin, phase: 'detect_entry' };
-    }
-    if (marker) {
-      return { ctx, messages, entry: 'discovery', executionTrigger: 'run_trace', targetColumns: null, resolvedOrigin: null, phase: 'detect_entry' };
     }
 
     const trigger = parseGateTrigger(state.prompt);

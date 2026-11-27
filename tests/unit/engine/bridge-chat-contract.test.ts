@@ -8,6 +8,7 @@ import {
 describe('chat frames from the webview', () => {
   it.each([
     { type: 'chat.send', text: '/search orders' },
+    { type: 'chat.followup', offerId: 's:1' },
     { type: 'chat.cancel', turnId: 's:r' },
     { type: 'chat.gate', turnId: 's:r', gateId: 'g', decision: 'approve' },
     { type: 'chat.gate', turnId: 's:r', gateId: 'g', decision: 'refine', text: 'exclude staging' },
@@ -25,6 +26,7 @@ describe('chat frames from the webview', () => {
     ['an unknown chat type', { type: 'chat.delete' }],
     ['an empty prompt', { type: 'chat.send', text: '' }],
     ['an oversized prompt', { type: 'chat.send', text: 'x'.repeat(50_001) }],
+    ['a follow-up without an offer id', { type: 'chat.followup' }],
     ['a gate without gateId', { type: 'chat.gate', turnId: 't', decision: 'approve' }],
     ['a gate with an unknown decision', { type: 'chat.gate', turnId: 't', gateId: 'g', decision: 'hold' }],
     ['a refine without text', { type: 'chat.gate', turnId: 't', gateId: 'g', decision: 'refine' }],
@@ -51,7 +53,7 @@ describe('chat frames to the webview', () => {
   it('requires the state followups and keeps the ones sent', () => {
     const state = { type: 'chat.state', models: [], selectedModelId: '', busy: false };
     expect(ExtensionToWebviewMsgSchema.safeParse(state).success).toBe(false);
-    const followups = [{ label: 'Show full description', prompt: 'Show the full description' }];
+    const followups = [{ label: 'Start deeper hop-by-hop analysis', prompt: 'Run trace', offerId: 's:1' }];
     expect(ExtensionToWebviewMsgSchema.parse({ ...state, followups })).toMatchObject({ followups });
     expect(ExtensionToWebviewMsgSchema.safeParse({ ...state, followups: [{ label: 'x' }] }).success).toBe(false);
   });

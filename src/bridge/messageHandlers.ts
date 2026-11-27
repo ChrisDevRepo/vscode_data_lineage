@@ -994,6 +994,7 @@ export function createMessageHandlers(
       }
     },
     'chat.send': chatFrame,
+    'chat.followup': chatFrame,
     'chat.cancel': chatFrame,
     'chat.gate': chatFrame,
     'chat.newChat': chatFrame,
