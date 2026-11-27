@@ -118,7 +118,6 @@ export const ISSUES = {
     category: 'stage',
     label: 'no stored run for the applied view',
   },
-  [REJECTION_CODES.staleTurn]: BACKEND_FAULT,
   [REJECTION_CODES.invalidInput]: {
     category: 'value',
     label: 'breaks the input contract of this tool',

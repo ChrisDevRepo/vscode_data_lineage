@@ -1,8 +1,8 @@
 /**
  * Capability seam supplied to mutating lineage-tool handlers. It keeps host dependencies explicit:
  * handlers receive only the session, graph/model accessors, logging, filter materialization and
- * result delivery they need. Session state stays owned by {@link AiSession}; turn-lease validation
- * and effect serialization stay registry concerns.
+ * result delivery they need. Session state stays owned by {@link AiSession}; cancellation and
+ * effect serialization stay registry concerns.
  */
 import type Graph from 'graphology';
 import type { AiSession } from '../../session/session';
@@ -38,16 +38,10 @@ export interface ToolServices {
   readonly logger: Logger;
   /** Turn-neutral text-completion capability; absent on a registry built without a model. */
   readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>;
-  /** Cooperative host cancellation, mirrored from the owning turn's lease. */
+  /** Cooperative cancellation of the owning turn. */
   readonly signal?: AbortSignal;
-  /**
-   * Token budget of the turn that owns this registry, fixed when the lease-bound registry was built
-   * so a superseded turn's still-running dispatch keeps measuring against the caps its own model
-   * was admitted under.
-   */
+  /** Token budget of the turn that owns this registry, fixed when the registry is built. */
   readonly budget: TurnTokenBudget;
-  /** Current turn epoch; the turn lease beats the session field, so stale writes are rejectable. */
-  turnEpoch(sess: AiSession): number;
   /** Returns the loaded database model, or throws the standard no-model error. */
   requireModel(): DatabaseModel;
   /** Returns the loaded graphology graph, or throws the standard no-model error. */

@@ -29,8 +29,6 @@ export const REJECTION_CODES = {
   duplicateRead: 'duplicate_read',
   /** `lineage_get_screen_state` recall query while no AI run is stored for the applied view. */
   noRunMemory: 'no_run_memory',
-  /** A session write arrived after the turn lease moved on, so nothing was stored or rendered. */
-  staleTurn: 'stale_turn',
   /** Tool input failed its schema or the engine's argument contract; the hint names the field. */
   invalidInput: 'invalid_input',
   /** A node id, origin or detail lookup resolved to nothing in the loaded model. */

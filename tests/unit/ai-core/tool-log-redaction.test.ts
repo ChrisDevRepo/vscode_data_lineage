@@ -36,16 +36,14 @@ function completedWorld() {
   expect(engine.getHopContext().done).toBe(true);
   const session = new AiSession();
   session.model = built.model; session.graph = built.graph;
-  const epoch = session.beginTurn();
-  engine.sessionId = session.id;
   session.stateMachine = engine;
-  session.enterCompleted(epoch);
+  session.enterCompleted();
   const lines = { info: [] as string[], debug: [] as string[] };
-  const { services } = stubToolServices({ session, model: built.model, graph: built.graph, turnEpoch: () => epoch });
+  const { services } = stubToolServices({ session, model: built.model, graph: built.graph });
   (services as { logger: unknown }).logger = {
     info: (line: string) => lines.info.push(line), debug: (line: string) => lines.debug.push(line), warn: () => {}, error: () => {},
   };
-  return { session, services, lines, epoch };
+  return { session, services, lines };
 }
 
 describe('tool handler info-log redaction', () => {

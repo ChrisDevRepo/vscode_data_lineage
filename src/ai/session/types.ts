@@ -4,11 +4,8 @@ import type { AIViewMetadata } from '../../engine/projectStore';
 
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
 export interface DiscoveryScopeArtifact {
-  /**
-   * Epoch of the host turn that captured this scope; discovery tells its own walk from an earlier
-   * one.
-   */
-  readonly turnEpoch: number;
+  /** `currentRoundId` of the turn that captured this scope; discovery tells its own walk from an earlier one. */
+  readonly roundId: number;
   /** Canonical id of the node the BFS walked from. */
   readonly origin: string;
   readonly direction: 'upstream' | 'downstream' | 'bidirectional';

@@ -5,10 +5,11 @@ import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 
 const graph = vi.hoisted(() => ({
   invoke: vi.fn(),
+  settled: vi.fn(),
 }));
 
 vi.mock('../../../src/ai/agent/graph', () => ({
-  buildAgentGraph: () => ({ invoke: graph.invoke }),
+  buildAgentGraph: () => ({ graph: { invoke: graph.invoke }, settleRunningNodes: graph.settled }),
   turnRecursionLimit: () => 50,
 }));
 
@@ -55,7 +56,6 @@ describe('AgentRuntime LangSmith egress boundary', () => {
       maxRounds: 10,
       registry: {} as never,
       sink,
-      turnEpoch: 1,
     });
 
     await expect(runtime.run('SECRET-PROMPT-MUST-STAY-LOCAL')).resolves.toBe('error');
@@ -74,6 +74,8 @@ describe('AgentRuntime LangSmith egress boundary', () => {
 describe('AgentRuntime cancellation truth', () => {
   beforeEach(() => {
     graph.invoke.mockReset();
+    graph.settled.mockReset();
+    graph.settled.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -90,7 +92,6 @@ describe('AgentRuntime cancellation truth', () => {
       maxRounds: 10,
       registry: {} as never,
       sink: new TurnEventSink(() => undefined),
-      turnEpoch: 1,
       signal,
     });
   }

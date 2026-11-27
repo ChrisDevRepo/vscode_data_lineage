@@ -2,7 +2,7 @@
  * Canonical AI tool registry and handlers; the Zod boundary between untrusted LM tool input and the
  * engine. The AI runtime dispatches through {@link buildAiToolRegistry}. Read-only tools wrap provider-neutral functions in
  * [`tools.ts`](./tools.ts); mutating tools live in `handlers/`; this module owns their shared host
- * services, registry binding, turn-lease checks and effect serialization.
+ * services, registry binding, cancellation checks and effect serialization.
  */
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
@@ -36,7 +36,6 @@ import { ToolRegistry, type ToolCallContext } from '../tools/registry';
 import { TOOL_DEFS, type ToolName } from '../tools/toolDefs';
 import { readToolError, isConsentGateRejection, makeRejection, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
-import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { type TurnTokenBudget } from '../support/tokenBudget';
 import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
@@ -98,7 +97,6 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.internalError]: 'backend_fault',
   [REJECTION_CODES.invalidStatus]: 'backend_fault',
   [REJECTION_CODES.noActiveSession]: 'backend_fault',
-  [REJECTION_CODES.staleTurn]: 'backend_fault',
   [REJECTION_CODES.toolExecutionError]: 'backend_fault',
 };
 
@@ -119,7 +117,6 @@ class ToolHandler implements ToolServices {
     outputChannel: LogChannel,
     private readonly getPanel: () => ResultPanel | undefined,
     private readonly analysisSettings: () => AnalysisSettings,
-    private readonly turnLease: TurnLease | undefined,
     public readonly getStoredRun: StoredRunReader | undefined,
     public readonly textModel: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'> | undefined,
     public readonly signal: AbortSignal | undefined,
@@ -127,10 +124,6 @@ class ToolHandler implements ToolServices {
     private readonly authorName: string,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
-  }
-
-  public turnEpoch(sess: AiSession): number {
-    return this.turnLease?.epoch ?? sess.turnEpoch;
   }
 
   /**
@@ -160,7 +153,6 @@ class ToolHandler implements ToolServices {
 
   public logAndReturn(toolName: ToolName, data: object, input?: unknown): string {
     const sess = this.getSession();
-    if (this.turnLease) assertActiveTurnLease(this.turnLease, sess.turnEpoch);
     const json = JSON.stringify(data);
     const chars = json.length;
     const preview = trunc(sanitizeForLog(json), LOG_TRUNC_JSON);
@@ -170,8 +162,8 @@ class ToolHandler implements ToolServices {
       this.logger.debug(`Invoking ${toolName} — input: ${inputJson}`);
     }
 
-    // The hop log is the chat turn's record; a call without a turn lease leaves the session as is.
-    if (this.turnLease) sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
+    // The hop log is the chat turn's record.
+    sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     const rejection = readToolError(data);
     if (rejection) {
       const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), LOG_TRUNC_REJECTION)}` : '';
@@ -208,7 +200,6 @@ class ToolHandler implements ToolServices {
     if (toolName === 'present_result') {
       const sess = this.getSession();
       sess.recordPresentResultFailure(
-        this.turnEpoch(sess),
         sanitizeForLog(`${noProject ? 'no_project_loaded' : 'internal_error'}: ${msg}`),
       );
     }
@@ -313,8 +304,7 @@ class ToolHandler implements ToolServices {
       const { query, types, schemas, mode, cursor } = parsed.data;
       return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), this.offeredTools(), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor, this.signal), input);
     } catch (err) {
-      if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
-      if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
+      if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.signal?.aborted) throw err;
       return this.toolError('search_objects', err);
     }
   }
@@ -386,16 +376,13 @@ class ToolHandler implements ToolServices {
       });
       const edges = bundle.edges.filter((edge): edge is [string, string, string] =>
         Array.isArray(edge) && edge.length === 3 && edge.every(value => typeof value === 'string'));
-      const stored = sess.storeDiscoveryScope({
-        turnEpoch: this.turnEpoch(sess),
+      sess.storeDiscoveryScope({
+        roundId: sess.currentRoundId,
         origin: bundle.origin,
         direction: (bundle.direction as 'upstream' | 'downstream' | 'bidirectional') ?? 'bidirectional',
         nodeIds,
         edges,
-      }, this.turnEpoch(sess));
-      if (stored.kind !== 'accepted') {
-        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the scope was not stored.' }), input);
-      }
+      });
       return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
     } catch (err) { return this.toolError('get_scope_bundle', err); }
   }
@@ -442,8 +429,7 @@ class ToolHandler implements ToolServices {
       const { query, types } = parsed.data;
       return this.logAndReturn('lineage_search_ddl', await searchDdl(this.requireModel(), this.offeredTools(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg), this.signal), input);
     } catch (err) {
-      if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
-      if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
+      if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.signal?.aborted) throw err;
       return this.toolError('search_ddl', err);
     }
   }
@@ -508,22 +494,19 @@ type ToolExecutor = (input: unknown, context?: ToolCallContext) => LineageToolOu
  * directly.
  *
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
- * @param turnLease - Optional host-turn ownership checked around every dispatch.
  * @param host - Host seam: `analysisSettings` reads the configured analysis thresholds,
  *   `getStoredRun` resolves the AI run behind an applied bookmark,
  *   `model`/`signal` supply the text completion `start_exploration` uses for the discovery-handoff
- *   memo on the approval card, and `budget` carries the owning turn's caps so a superseded turn's
- *   dispatch keeps measuring against its own model; `authorName` is the display name the graph
- *   preview credits (the chat's model).
+ *   memo on the approval card, `budget` carries the turn's caps and `signal` cancels a dispatch;
+ *   `authorName` is the display name the graph preview credits (the chat's model).
  */
 export function buildAiToolRegistry(
   getSession: () => AiSession,
   outputChannel: LogChannel,
   getPanel: () => ResultPanel | undefined,
-  turnLease: TurnLease | undefined,
   host: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget: TurnTokenBudget; analysisSettings: () => AnalysisSettings; authorName: string },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, turnLease, host.getStoredRun, host.model, host.signal ?? turnLease?.signal, host.budget, host.authorName);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, host.analysisSettings, host.getStoredRun, host.model, host.signal, host.budget, host.authorName);
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
@@ -550,11 +533,11 @@ export function buildAiToolRegistry(
       ...def,
       execute: async (input: unknown, context?: ToolCallContext) => {
         const invoke = async (): Promise<LineageToolOutput> => {
-          if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
+          host.signal?.throwIfAborted();
           const offPolicy = handler.authorizeTool(def.name, input);
           if (offPolicy) return offPolicy;
           const result = await execute(input, context);
-          if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
+          host.signal?.throwIfAborted();
           return result;
         };
         if (def.effect === 'read') return invoke();

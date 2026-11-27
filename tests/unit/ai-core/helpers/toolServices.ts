@@ -11,7 +11,6 @@ export interface StubToolServicesOptions {
   readonly model: unknown;
   readonly graph: unknown;
   readonly activeFilter?: SerializedFilterState | Record<string, never>;
-  readonly turnEpoch?: () => number;
   readonly budget?: TurnTokenBudget;
   readonly textModel?: unknown;
 }
@@ -27,7 +26,6 @@ export function stubToolServices(options: StubToolServicesOptions): {
     logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
     budget: options.budget ?? DEFAULT_TURN_TOKEN_BUDGET,
     textModel: options.textModel,
-    turnEpoch: options.turnEpoch ?? (() => 1),
     requireModel: () => options.model,
     requireGraph: () => options.graph,
     buildActiveFilter: () => options.activeFilter ?? {},

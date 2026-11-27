@@ -160,17 +160,16 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
 
   const runtime = new LineageRuntime({
     getSession: () => options.session,
-    createRegistry: (lease, model) => buildAiToolRegistry(
+    createRegistry: (model, signal) => buildAiToolRegistry(
       () => options.session,
       options.logger as unknown as import('vscode').LogOutputChannel,
       () => undefined,
-      lease,
       {
         analysisSettings: () => DEFAULT_CONFIG.analysis,
         model,
         budget: model.budget,
         authorName: model.identity.name,
-        signal: lease.signal,
+        signal,
         ...(storedRun ? { getStoredRun: (id: string) => (id === bookmarkId ? storedRun : undefined) } : {}),
       },
     ),

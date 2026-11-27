@@ -1,7 +1,7 @@
 /**
  * Executes the approval-gated `lineage_start_exploration` lifecycle. Proposal validation and
- * preview construction stay local; turn-lease validation and effect serialization stay in the
- * registry wrapper.
+ * preview construction stay local; cancellation and effect serialization stay in the registry
+ * wrapper.
  */
 import type { z } from 'zod';
 import { NavigationEngine } from '../../sm/smBase';
@@ -48,11 +48,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
       const isRefining = sess.pendingExploration !== null
         && sess.phase.kind === 'awaiting_gate';
       {
-        const alreadyStarted = evaluateAlreadyStartedRule(
-          preCheckLive,
-          preCheckPrior?.sessionId === sess.id,
-          isRefining,
-        );
+        const alreadyStarted = evaluateAlreadyStartedRule(preCheckLive, isRefining);
         if (alreadyStarted) {
           return s.logAndReturn('lineage_start_exploration', alreadyStarted, loggedInput);
         }
@@ -124,14 +120,13 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
           id => !res.skippedDetails.some(skip => identifierKey(skip.nodeId) === identifierKey(id)),
         );
         applyFollowUpContext();
-        sess.enterExploring(s.turnEpoch(sess));
+        sess.enterExploring();
         s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}`);
         const hopCtx = priorEngine.getHopContext();
         return s.logAndReturn('lineage_start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
       }
 
       const prior = sess.stateMachine as NavigationEngine | null;
-      const priorLive = !!prior && prior.status !== 'complete';
 
       if (data.proposalRevision !== undefined && !isRefining) {
         return s.logAndReturn('lineage_start_exploration', makeRejection({
@@ -157,26 +152,12 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
       if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
         s.logger.debug(`[AI] [Proposal] completed result preserved during replacement review origin=${sanitizeForLog(data.origin ?? '')}`);
       }
-      if (priorLive && prior.sessionId && prior.sessionId !== sess.id) {
-        sess.pendingUserNotice.add('A previous exploration was still running when you started this one. Its in-memory findings were discarded.');
-        sess.resetExploration();
-      } else if (priorLive) {
-        const alreadyStarted = evaluateAlreadyStartedRule(
-          priorLive,
-          prior.sessionId === sess.id,
-          isRefining,
-        );
-        if (alreadyStarted) return s.logAndReturn('lineage_start_exploration', alreadyStarted, loggedInput);
-      }
-
       const activeFilter = isRefining
         ? structuredClone(sess.pendingExploration!.activeFilter)
         : s.buildActiveFilter(sess);
 
       const engineLog = toEngineLog(s.logger);
       const engine = new NavigationEngine(m, g, engineLog, { activeFilter }, sess.columnStore);
-
-      engine.sessionId = sess.id;
 
       const pendingInit = sess.pendingExploration?.init;
       const listOr = (sent: readonly string[] | undefined, fallback: readonly string[] = []): string[] => [...(sent ?? fallback)];
@@ -282,10 +263,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
           hint: 'Apply at least one requested scope, mode, classification, column, or filter change; if the request needs no change to the plan, reply to the user in text instead.',
         }), loggedInput);
       }
-      const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
-      if (stored.kind !== 'accepted') {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the proposal was not stored.' }), loggedInput);
-      }
+      sess.storePendingExploration(nextProposal);
       sess.startExplorationRoundId = sess.currentRoundId;
       const proposalRevision = sess.pendingExploration!.revision;
       s.logger.debug(`[AI] [Proposal] revision=${proposalRevision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
@@ -305,8 +283,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices, s
             engine,
           );
           if (discoverySummary) {
-            const attached = sess.attachDiscoverySummary(proposalRevision, discoverySummary, s.turnEpoch(sess));
-            if (attached.kind !== 'accepted') discoverySummary = undefined;
+            sess.attachDiscoverySummary(proposalRevision, discoverySummary);
           }
         }
         const detail = discoverySummary ? `${baseDetail}\n\n${discoverySummary}` : baseDetail;

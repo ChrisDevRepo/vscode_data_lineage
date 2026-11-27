@@ -6,7 +6,6 @@ import { AgentRuntime } from '../host/agentRuntime';
 import type { ModelPort } from '../model/modelPort';
 import type { AiTraceWriter } from '../observability/aiTraceWriter';
 import type { AiSession } from '../session/session';
-import type { TurnLease } from '../session/turnLease';
 import type { IToolRegistry } from '../tools/registry';
 import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
@@ -33,7 +32,7 @@ export interface LineageRuntimeRunInput {
   readonly request: LineageRuntimeRequest;
   /** Event sink that receives this turn's events and its one terminal result. */
   readonly sink: TurnEventSink;
-  /** Optional abort signal cancelling the turn; rides the captured turn lease. */
+  /** Optional abort signal cancelling the turn. */
   readonly signal?: AbortSignal;
 }
 
@@ -51,8 +50,8 @@ export type LineageRuntimeResult = {
 export interface LineageRuntimeDeps {
   /** Session accessor for the {@link AiSession} singleton. */
   readonly getSession: () => AiSession;
-  /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
-  readonly createRegistry: (lease: TurnLease, model: ModelPort) => IToolRegistry<string>;
+  /** Builds the turn's direct-dispatch registry for its model and cancel signal. */
+  readonly createRegistry: (model: ModelPort, signal: AbortSignal | undefined) => IToolRegistry<string>;
   readonly logger?: Logger;
   /** Optional per-turn model-step cap forwarded to the agent runtime. */
   readonly maxRounds?: number;
@@ -67,10 +66,8 @@ export interface LineageRuntimeDeps {
  * interrupt/resume and the one terminal event.
  */
 export class LineageRuntime {
-  private readonly active = new Map<string, {
-    readonly runtime: AgentRuntime;
-    readonly completed: Promise<void>;
-  }>();
+  /** The turn in flight; the chat host runs one turn at a time. */
+  private activeRun: { readonly runtime: AgentRuntime; readonly completed: Promise<void> } | undefined;
 
   public constructor(private readonly deps: LineageRuntimeDeps) {}
 
@@ -114,26 +111,13 @@ export class LineageRuntime {
     return { outcome: 'error', modelCalls, failure: { message, turnStop: result.turnStop } };
   }
 
-  /**
-   * Executes one request against a captured session epoch and request-selected model.
-   *
-   * @throws When the same session/request identifier is already active.
-   */
+  /** Executes one request with its request-selected model. */
   public async run(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const requestKey = `${session.id}:${input.request.id}`;
-    if (this.active.has(requestKey)) {
-      throw new Error(`LineageRuntime: request ${input.request.id} is already active.`);
-    }
 
-    const turnEpoch = session.beginTurn();
     session.beginTurnState();
     session.modelName = input.model.identity.name;
-    const lease: TurnLease = Object.freeze({
-      sessionId: session.id,
-      epoch: turnEpoch,
-      signal: input.signal ?? new AbortController().signal,
-    });
     const startedAt = performance.now();
     const runFingerprint = fingerprint(requestKey);
     let phase = 'turn';
@@ -149,7 +133,7 @@ export class LineageRuntime {
         elapsedMs(startedAt),
       );
     });
-    const registry = this.deps.createRegistry(lease, input.model);
+    const registry = this.deps.createRegistry(input.model, input.signal);
     const traceWriter = this.deps.traceWriter;
     const instrumentedRegistry = traceWriter
       ? instrumentRegistry(registry, {
@@ -184,7 +168,6 @@ export class LineageRuntime {
       sink: input.sink,
       signal: input.signal,
       maxRounds: this.deps.maxRounds,
-      turnEpoch,
       priorMessages: session.getDiscoveryHistory(),
       logger: this.deps.logger,
       traceSyntheticRejection,
@@ -193,7 +176,7 @@ export class LineageRuntime {
     let completeRun!: () => void;
     const completed = new Promise<void>((resolve) => { completeRun = resolve; });
     const activeRun = { runtime, completed };
-    this.active.set(requestKey, activeRun);
+    this.activeRun = activeRun;
     void this.writeLifecycle({
       type: 'turn-start',
       requestId: input.request.id,
@@ -223,18 +206,15 @@ export class LineageRuntime {
     } finally {
       eventObserver.dispose();
       completeRun();
-      if (this.active.get(requestKey) === activeRun) this.active.delete(requestKey);
+      this.activeRun = undefined;
     }
   }
 
-  /** Routes a consent decision and resolves after its owning turn reaches terminal state. */
+  /** Delivers a consent decision to the running turn and resolves once that turn ends. */
   public async resumeGate(gateId: string, decision: GateDecision): Promise<boolean> {
-    const matchingRuns: Promise<void>[] = [];
-    for (const activeRun of this.active.values()) {
-      if (activeRun.runtime.resumeGate(gateId, decision)) matchingRuns.push(activeRun.completed);
-    }
-    if (matchingRuns.length === 0) return false;
-    await Promise.all(matchingRuns);
+    const active = this.activeRun;
+    if (!active || !active.runtime.resumeGate(gateId, decision)) return false;
+    await active.completed;
     return true;
   }
 

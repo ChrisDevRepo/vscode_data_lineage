@@ -8,7 +8,7 @@ import { AiSession } from '../../../src/ai/session/session';
 
 function discoveredSession(question: string, answer: string): AiSession {
   const session = new AiSession();
-  session.settleDiscoveryTurn(session.beginTurn(), question, answer, { origin: '[dbo].[Orders]', walkCount: 3 }, true);
+  session.settleDiscoveryTurn(question, answer, { origin: '[dbo].[Orders]', walkCount: 3 }, true);
   return session;
 }
 

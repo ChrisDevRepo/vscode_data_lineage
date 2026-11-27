@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { IToolRegistry } from '../tools/registry';
 
 import type { TurnEventSink, TurnStatusPhase } from '../runtime/turnEventSink';
-import type { AiSession, SessionWriteOutcome } from '../session/session';
+import type { AiSession } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
 import { PendingGateSchema } from '../session/sessionPhase';
 import { NavigationEngine } from '../sm/smBase';
@@ -206,14 +206,6 @@ export interface AgentGraphDeps {
   /** Cooperative cancellation signal from the host bridge. */
   readonly signal?: AbortSignal;
   /**
-   * Turn-ownership epoch captured by the runtime for this turn (from {@link AiSession.beginTurn}).
-   *
-   * @remarks
-   * Threaded into every guarded session write so a superseded "zombie" turn's late writes are
-   * dropped instead of corrupting the session a newer turn owns.
-   */
-  readonly turnEpoch: number;
-  /**
    * Optional logger for active-loop diagnostics (the host wires the AI channel); off if undefined.
    */
   readonly logger?: Logger;
@@ -238,12 +230,25 @@ function resolveTraceOrigin(origins: string[], model: ReturnType<AgentGraphDeps[
   return resolved.size === 1 ? [...resolved][0] : null;
 }
 
+/** One graph node: the state in, its update out. */
+type AgentGraphNode = (state: AgentStateType) => AgentStateUpdate | Promise<AgentStateUpdate>;
+
+/** The node functions of one built graph, keyed by {@link AGENT_NODES} entry. */
+type AgentGraphNodes = { readonly [K in keyof typeof AGENT_NODES]: AgentGraphNode };
+
+/** One chat turn's compiled LangGraph and the settle-await for its still-running nodes. */
+export interface AgentGraph {
+  readonly graph: ReturnType<typeof compileAgentGraph>;
+  /** Resolves once every node still running after an aborted `graph.invoke` has settled. */
+  readonly settleRunningNodes: () => Promise<void>;
+}
+
 /**
  * Builds the production LangGraph runtime for one chat turn. Runtime handles are captured in
  * node closures; checkpointed channels stay serializable so the host can pause at the consent
  * interrupt and resume through `Command({ resume })`.
  */
-export function buildAgentGraph(deps: AgentGraphDeps) {
+export function buildAgentGraph(deps: AgentGraphDeps): AgentGraph {
   const getCtx = (state: AgentStateType): StagePromptContext =>
     state.ctx ?? deriveStagePromptContext(deps.getSession().model, deps.getSession().filter, deps.getSession().uiState);
 
@@ -404,20 +409,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return null;
   };
 
-  const observeWrite = (outcome: SessionWriteOutcome): SessionWriteOutcome => {
-    if (outcome.kind === 'dropped_stale_turn') {
-      deps.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
-    }
-    return outcome;
-  };
-
   /** Makes the active LangGraph stage explicit at the dispatcher boundary for one model call. */
   const withLmStage = async <T>(stage: LmStage, run: () => Promise<T>): Promise<T> => {
-    observeWrite(deps.getSession().enterLmStage(stage, deps.turnEpoch));
+    deps.getSession().enterLmStage(stage);
     try {
       return await run();
     } finally {
-      observeWrite(deps.getSession().leaveLmStage(deps.turnEpoch));
+      deps.getSession().leaveLmStage();
     }
   };
 
@@ -581,7 +579,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const held = sess.phase.kind === 'awaiting_gate' && sess.pendingExploration
       ? { gate: sess.phase.gate, revision: sess.pendingExploration.revision }
       : null;
-    if (held && (slash || runTrace)) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
+    if (held && (slash || runTrace)) sess.cancelPendingExploration();
     if (runTrace) {
       return { ctx, messages, entry: 'discovery', targetColumns: null, resolvedOrigin: null, phase: 'detect_entry' };
     }
@@ -774,7 +772,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const sess = deps.getSession();
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
       deps.logger?.debug(`[AI] [Discovery] malformed canonical output tool=${toolName} callId=${trunc(sanitizeForLog(callId), 64)} — skipped for walk capture`));
-    observeWrite(sess.settleDiscoveryTurn(deps.turnEpoch, state.prompt, res.text, walk, nextAttempt.observations.length > 0, nextAttempt.observations));
+    sess.settleDiscoveryTurn(state.prompt, res.text, walk, nextAttempt.observations.length > 0, nextAttempt.observations);
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
       : [];
@@ -848,7 +846,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   const gateNode = (state: AgentStateType): AgentStateUpdate => {
     if (!state.gate) return fail('Consent gate missing from graph state.');
-    observeWrite(deps.getSession().enterGate(state.gate, deps.turnEpoch));
+    deps.getSession().enterGate(state.gate);
     const raw = interrupt(state.gate);
     const parsed = GateDecisionSchema.safeParse(raw);
     if (!parsed.success) {
@@ -949,7 +947,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (!sess.model || !sess.graph) return fail('Approved exploration cannot start without a loaded model and graph.');
     const cachedDiscoverySummary = sess.pendingExploration?.discoverySummary;
     const engineLog = toEngineLog(deps.logger);
-    const activation = sess.activatePendingExploration(expectedRevision, deps.turnEpoch, (proposal) => {
+    const activation = sess.activatePendingExploration(expectedRevision, (proposal) => {
       const candidate = new NavigationEngine(
         sess.model!,
         sess.graph!,
@@ -957,17 +955,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         { activeFilter: proposal.activeFilter },
         sess.columnStore,
       );
-      candidate.sessionId = sess.id;
       candidate.classification = proposal.classification;
       const initialized = candidate.init(proposal.init);
       if ('code' in initialized) return initialized;
       deps.logger?.debug(`[AI] [Proposal] approved revision=${proposal.revision} origin=${sanitizeForLog(proposal.init.origin)} depth=${sanitizeForLog(JSON.stringify(proposal.init.depthIntent))}`);
       return candidate;
     });
-    if (activation.kind === 'dropped_stale_turn') {
-      deps.logger?.debug(`[AI] stale-turn proposal activation dropped — expectedRevision=${expectedRevision}`);
-      return fail('Approved exploration belongs to a superseded turn.');
-    }
     if (activation.kind === 'rejected') {
       deps.logger?.debug(`[AI] approved proposal activation rejected — revision=${expectedRevision} reason=${sanitizeForLog(activation.reason)}`);
       return fail({ source: 'internal', code: 'activation_rejected', phase: 'gate_approve' });
@@ -991,13 +984,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   const holdGateNode = (_state: AgentStateType): AgentStateUpdate => ({ outcome: 'ok', phase: 'done' });
 
   const cancelGateNode = (_state: AgentStateType): AgentStateUpdate => {
-    observeWrite(deps.getSession().cancelPendingExploration(deps.turnEpoch));
+    deps.getSession().cancelPendingExploration();
     deps.sink.stream('Exploration cancelled.');
     return { outcome: 'ok', phase: 'done' };
   };
 
   const advanceToSynthesis = (sess: AiSession, engine: NavigationEngine): AgentStateUpdate => {
-    if (!sess.resultGraph) observeWrite(sess.storeSmResult(engine.getResult(), deps.turnEpoch));
+    if (!sess.resultGraph) sess.storeSmResult(engine.getResult());
     return { phase: 'synthesis' };
   };
 
@@ -1007,7 +1000,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (!engine) return fail('Active phase started without an exploration engine.');
 
     if (state.activeHopCount === 0) deps.sink.status('thinking', 'Analysing hop-by-hop...');
-    observeWrite(sess.setHopCount(deps.turnEpoch, engine.currentHop));
+    sess.setHopCount(engine.currentHop);
 
     if (engine.status === 'complete') {
       return advanceToSynthesis(sess, engine);
@@ -1136,14 +1129,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'committed');
     const hop = engine.currentHop;
-    observeWrite(sess.setHopCount(deps.turnEpoch, hop));
+    sess.setHopCount(hop);
     const wipeTrigger = 'submit_ok';
-    observeWrite(sess.recordMemoryWipeEvent(deps.turnEpoch, {
+    sess.recordMemoryWipeEvent({
       kind: 'sliding',
       trigger: wipeTrigger,
       hop,
       messagesBefore: state.messages.length,
-    }));
+    });
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
     if (committedFinding.value && committedFinding.value.summary.trim()) {
       // Escape only the display copy: formulas and identifiers are literal summary text.
@@ -1171,7 +1164,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const hopCount = engine.currentHop;
     const hopLog = sess.hopLog;
     sess.resetExploration();
-    observeWrite(sess.setHopCount(deps.turnEpoch, hopCount));
+    sess.setHopCount(hopCount);
     sess.hopLog = hopLog;
     deps.logger?.debug(`[AI] [Stop] phase=active reason=${stop} hop=${hopCount} source=${turnStop.source} code=${turnStop.code}`);
     return {
@@ -1258,7 +1251,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (sess.synthesisRenderDegradedReason) {
       deps.sink.stream(`\n\n${SYNTHESIS_RENDER_FAILED_NOTICE}`);
     }
-    observeWrite(sess.enterCompleted(deps.turnEpoch));
+    sess.enterCompleted();
     return { outcome: 'ok', toolAttempt: null, phase: 'done' };
   };
 
@@ -1328,19 +1321,58 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return { outcome: 'ok', messages: assistantMessage, toolAttempt: null, phase: 'done' };
   };
 
-  const graph = new StateGraph(AgentState)
-    .addNode(AGENT_NODES.detectEntry, detectEntryNode)
-    .addNode(AGENT_NODES.discovery, discoveryNode)
-    .addNode(AGENT_NODES.smEntry, smEntryNode)
-    .addNode(AGENT_NODES.gate, gateNode)
-    .addNode(AGENT_NODES.gateRefine, gateRefineNode)
-    .addNode(AGENT_NODES.approveGate, approveGateNode)
-    .addNode(AGENT_NODES.cancelGate, cancelGateNode)
-    .addNode(AGENT_NODES.holdGate, holdGateNode)
-    .addNode(AGENT_NODES.activeCoordinator, activeCoordinatorNode)
-    .addNode(AGENT_NODES.activeWorker, activeWorkerNode)
-    .addNode(AGENT_NODES.synthesis, synthesisNode)
-    .addNode(AGENT_NODES.followUp, followUpNode)
+  const runningNodes = new Set<Promise<unknown>>();
+  /**
+   * Wraps one node so its running promise is tracked: once an external `AbortSignal` rejects
+   * `graph.invoke`, LangGraph's runner no longer awaits the node's task, and its mutating tool's
+   * effect (session write, engine publish, panel render) must still finish before the turn ends
+   * ({@link AgentGraph.settleRunningNodes}).
+   */
+  function trackNode(node: AgentGraphNode): AgentGraphNode {
+    return (state) => {
+      const task = Promise.resolve(node(state));
+      runningNodes.add(task);
+      void task.catch(() => undefined).finally(() => runningNodes.delete(task));
+      return task;
+    };
+  }
+
+  const graph = compileAgentGraph({
+    detectEntry: trackNode(detectEntryNode),
+    discovery: trackNode(discoveryNode),
+    smEntry: trackNode(smEntryNode),
+    gate: trackNode(gateNode),
+    gateRefine: trackNode(gateRefineNode),
+    approveGate: trackNode(approveGateNode),
+    cancelGate: trackNode(cancelGateNode),
+    holdGate: trackNode(holdGateNode),
+    activeCoordinator: trackNode(activeCoordinatorNode),
+    activeWorker: trackNode(activeWorkerNode),
+    synthesis: trackNode(synthesisNode),
+    followUp: trackNode(followUpNode),
+  });
+
+  return {
+    graph,
+    settleRunningNodes: async () => { await Promise.allSettled([...runningNodes]); },
+  };
+}
+
+/** Compiles the chat-turn nodes with an in-process checkpointer: enough to pause at the consent gate and resume. */
+function compileAgentGraph(nodes: AgentGraphNodes) {
+  return new StateGraph(AgentState)
+    .addNode(AGENT_NODES.detectEntry, nodes.detectEntry)
+    .addNode(AGENT_NODES.discovery, nodes.discovery)
+    .addNode(AGENT_NODES.smEntry, nodes.smEntry)
+    .addNode(AGENT_NODES.gate, nodes.gate)
+    .addNode(AGENT_NODES.gateRefine, nodes.gateRefine)
+    .addNode(AGENT_NODES.approveGate, nodes.approveGate)
+    .addNode(AGENT_NODES.cancelGate, nodes.cancelGate)
+    .addNode(AGENT_NODES.holdGate, nodes.holdGate)
+    .addNode(AGENT_NODES.activeCoordinator, nodes.activeCoordinator)
+    .addNode(AGENT_NODES.activeWorker, nodes.activeWorker)
+    .addNode(AGENT_NODES.synthesis, nodes.synthesis)
+    .addNode(AGENT_NODES.followUp, nodes.followUp)
     .addEdge(START, AGENT_NODES.detectEntry)
     .addConditionalEdges(AGENT_NODES.detectEntry, routeAfterDetectEntry, [
       AGENT_NODES.detectEntry,
@@ -1400,9 +1432,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     .addConditionalEdges(AGENT_NODES.synthesis, routeAfterSynthesis, [
       AGENT_NODES.synthesis,
       END,
-    ]);
-
-  return graph.compile({ checkpointer: new MemorySaver() });
+    ])
+    .compile({ checkpointer: new MemorySaver() });
 }
 
 /**
@@ -1508,7 +1539,12 @@ function routeAfterSynthesis(state: AgentStateType): string {
     : END;
 }
 
-function detectGateFromToolResult(toolName: string, resultText: string): unknown | null {
+/**
+ * The consent gate a `lineage_start_exploration` result paused on, or `null` when it did not.
+ *
+ * @internal
+ */
+export function detectGateFromToolResult(toolName: string, resultText: string): unknown | null {
   if (toolName !== 'lineage_start_exploration') return null;
   try {
     const envelopeSchema = z.object({ code: z.literal(REJECTION_CODES.actionRequired), detail: PendingGateSchema });

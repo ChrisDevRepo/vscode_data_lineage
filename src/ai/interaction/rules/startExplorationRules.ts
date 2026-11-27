@@ -37,15 +37,11 @@ export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | u
 }
 
 /**
- * Duplicate-start guard for live engines in the same session when no refine loop is active; an
- * error when already started without refining, else null.
+ * Duplicate-start guard for a live engine when no refine loop is active; an error when already
+ * started without refining, else null.
  */
-export function evaluateAlreadyStartedRule(
-  hasLiveEngine: boolean,
-  sameSession: boolean,
-  isRefining: boolean,
-): InteractionRuleResult {
-  if (!(hasLiveEngine && sameSession && !isRefining)) return null;
+export function evaluateAlreadyStartedRule(hasLiveEngine: boolean, isRefining: boolean): InteractionRuleResult {
+  if (!(hasLiveEngine && !isRefining)) return null;
   return makeRejection({
     code: REJECTION_CODES.alreadyStarted,
     reason: 'An exploration is already running in this turn.',

@@ -243,8 +243,6 @@ export class NavigationEngine {
   protected readonly nodeMap: Map<string, LineageNode>;
   protected memory: AiMemoryManager;
 
-  /** Optional session identifier for tracking logs across rounds. */
-  public sessionId?: string;
   /**
    * Gate-locked mission-type classification (`business`|`technical`|`both`), declared on the
    * `start_exploration` proposal. Set by the caller after construction (not a constructor param)

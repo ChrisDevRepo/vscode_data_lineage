@@ -3,7 +3,7 @@ import type { AiSession } from '../ai/session/session';
 import type { ChatFollowup } from '../engine/shared/chatContract';
 
 const RUN_TRACE_BUTTON = { label: 'Start deeper hop-by-hop analysis', prompt: 'Run trace' };
-const runTraceOfferId = (session: AiSession): string => `${session.id}:${session.turnEpoch}`;
+const runTraceOfferId = (session: AiSession): string => `${session.id}:${session.currentRoundId}`;
 
 /** The follow-up buttons the session offers as it stands; none while a gate is pending. The chat controller adds the running-turn case. */
 export function followupButtons(session: AiSession): ChatFollowup[] {

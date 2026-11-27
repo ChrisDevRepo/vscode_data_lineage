@@ -23,7 +23,7 @@ import {
 } from '../model/modelPort';
 import { isCancellationOutcome } from '../support/cancellation';
 import { describeTurnStop, sanitizeProviderErrorDiagnostic, type TurnStop } from '../support/text';
-import { trackInFlightDispatch, type IToolRegistry } from '../tools/registry';
+import type { IToolRegistry } from '../tools/registry';
 import type { Logger } from '../../utils/log';
 import type { TurnEventSink } from '../runtime/turnEventSink';
 import type { TurnOutcome } from '../core/agentCore';
@@ -62,12 +62,6 @@ export interface AgentRuntimeDeps {
   readonly signal?: AbortSignal;
   /** Hop limit for the turn; defaults to the turn budget's `ai.maxRounds` value. */
   readonly maxRounds?: number;
-  /**
-   * Turn-ownership epoch captured for this turn (from {@link AiSession.beginTurn}), threaded to the
-   * graph and {@link AgentRuntime.close}'s `enterIdle` so a superseded "zombie" turn cannot
-   * force-idle the session a newer turn owns.
-   */
-  readonly turnEpoch: number;
   /**
    * Prior-turn discovery conversation, oldest first, for cross-turn chat memory. Seeded ahead of
    * the current prompt and carried in `messages` (after the cached `system` prefix) so prompt
@@ -120,21 +114,17 @@ export class AgentRuntime {
   /** Diagnostic detail behind the most recent non-`ok` {@link close}. */
   public lastFailureDetail: AgentFailureDetail | undefined;
   private readonly priorMessages: readonly ModelMessage[];
-  /** This turn's ownership epoch, carried into guarded session writes so a zombie turn no-ops. */
-  private readonly turnEpoch: number;
   private readonly logger: Logger | undefined;
   /** The turn's model; its display name labels a quoted provider message. */
   private readonly model: ModelPort;
-  private readonly graph: ReturnType<typeof buildAgentGraph>;
-  private readonly pendingGates = new Map<string, (d: GateDecision) => void>();
+  private readonly graph: ReturnType<typeof buildAgentGraph>['graph'];
   /**
-   * Settle-await for every tool dispatch in flight through this turn's registry. Awaited before
-   * {@link close} on every cancellation path, so a mutating tool's effect (session write, engine
-   * publish, panel render) finishes before the turn releases the lease, even when LangGraph's abort
-   * race already rejected `graph.invoke` while the dispatching node still ran. See
-   * {@link trackInFlightDispatch}.
+   * Awaited before {@link close} on every cancellation path: LangGraph's abort race rejects
+   * `graph.invoke` while the running node still executes, and a mutating tool's effect (session
+   * write, engine publish, panel render) must finish before the turn ends.
    */
-  private readonly dispatchSettled: () => Promise<void>;
+  private readonly settleRunningNodes: () => Promise<void>;
+  private readonly pendingGates = new Map<string, (d: GateDecision) => void>();
 
   constructor(deps: AgentRuntimeDeps) {
     this.threadId = deps.threadId;
@@ -143,22 +133,20 @@ export class AgentRuntime {
     this.signal = deps.signal;
     this.maxRounds = deps.maxRounds ?? deps.model.budget.exploration.maxRounds;
     this.priorMessages = deps.priorMessages ?? [];
-    this.turnEpoch = deps.turnEpoch;
     this.logger = deps.logger;
     this.model = deps.model;
-    const tracked = trackInFlightDispatch(deps.registry);
-    this.dispatchSettled = tracked.settled;
-    this.graph = buildAgentGraph({
+    const { graph, settleRunningNodes } = buildAgentGraph({
       getSession: deps.getSession,
       model: deps.model,
-      registry: tracked.registry,
+      registry: deps.registry,
       sink: deps.sink,
       signal: deps.signal,
-      turnEpoch: deps.turnEpoch,
       logger: deps.logger,
       traceSyntheticRejection: deps.traceSyntheticRejection,
       clearPreview: deps.clearPreview,
     });
+    this.graph = graph;
+    this.settleRunningNodes = settleRunningNodes;
   }
 
   /** Runs one user prompt through the graph, handling each LangGraph consent interrupt. */
@@ -192,7 +180,7 @@ export class AgentRuntime {
           continue;
         }
         if (this.signal?.aborted) {
-          await this.dispatchSettled();
+          await this.settleRunningNodes();
           return this.close('cancelled');
         }
 
@@ -211,7 +199,7 @@ export class AgentRuntime {
     } catch (err) {
       if (isCancellationOutcome(err, this.signal) || isPortCancellation(err)) {
         this.logger?.debug('[AI] turn aborted — closed as cancelled');
-        await this.dispatchSettled();
+        await this.settleRunningNodes();
         return this.close('cancelled');
       }
       // The error line is the chat host's; a thrown text or stack can echo content: debug only.
@@ -275,12 +263,7 @@ export class AgentRuntime {
       : undefined;
     if (status === 'cancelled' || status === 'error') {
       const sess = this.getSession();
-      if (sess.phase.kind === 'exploring') {
-        const outcome = sess.cancelPendingExploration(this.turnEpoch);
-        if (outcome.kind === 'dropped_stale_turn') {
-          this.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
-        }
-      }
+      if (sess.phase.kind === 'exploring') sess.cancelPendingExploration();
     }
     if (sinkFailure) throw sinkFailure.cause;
     return status;

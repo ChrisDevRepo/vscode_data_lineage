@@ -2,7 +2,7 @@
  * Executes active-hop submissions for the `lineage_submit_findings` tool. Raw arguments are parsed
  * once against the current hop's served contract, before id resolution and internal conversion; the
  * `column_flow` ids and column names first canonicalize to the served spelling they denote.
- * Turn-lease validation and effect serialization stay in the registry.
+ * Cancellation and effect serialization stay in the registry.
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
@@ -111,7 +111,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const nextHop = engine.getHopContext();
       if (nextHop.done) {
         const finalResult = engine.getResult();
-        sess.storeSmResult(finalResult, s.turnEpoch(sess));
+        sess.storeSmResult(finalResult);
         if (!sess.classification) throw new Error('classification missing at synthesis handoff — start_exploration contract violated');
         const envelope = buildSmCompletionEnvelope(
           finalResult,

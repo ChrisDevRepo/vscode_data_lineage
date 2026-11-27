@@ -56,16 +56,6 @@ export function sameExplorationProposal(
   return canonicalJson(left) === canonicalJson(rightRest);
 }
 
-/**
- * Result of a turn-guarded session write ({@link AiSession.enterExploring} and siblings).
- * `accepted`: committed. `dropped_stale_turn`: the epoch belonged to a superseded turn (a "zombie"
- * that outlived its awaited promise); the caller must not treat the write as applied and should
- * surface the drop at DEBUG.
- */
-export type SessionWriteOutcome =
-  | { kind: 'accepted' }
-  | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number };
-
 /** One recorded sliding-memory wipe: what fired it, at which hop, how much history it dropped. */
 interface MemoryWipeEvent {
   /**
@@ -81,7 +71,6 @@ interface MemoryWipeEvent {
 /** Outcome of attempting to start or resume a navigation engine session. */
 export type ExplorationActivationOutcome =
   | { kind: 'accepted'; engine: NavigationEngine }
-  | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number }
   | { kind: 'rejected'; reason: string };
 
 /**
@@ -407,13 +396,10 @@ export class AiSession {
    * truth; never branch control flow on this field.
    */
   public hopCount = 0;
-  /** Monotonic round id incremented by the host runtime for same-round serial-tool guards. */
+  /** Monotonic round id incremented by the host runtime at the start of every turn; identifies the current turn. */
   public currentRoundId = 0;
   /** Round id in which start_exploration last succeeded (or was attempted). null when reset. */
   public startExplorationRoundId: number | null = null;
-
-  /** Set-keyed notice queue to deduplicate messages across parallel tool calls. */
-  public pendingUserNotice: Set<string> = new Set();
 
   /**
    * Current finite-state-machine phase, persisted across chat turns. LangGraph routes discovery,
@@ -422,43 +408,6 @@ export class AiSession {
    * assign directly.
    */
   public phase: SessionPhase = { kind: 'idle' };
-
-  /**
-   * Monotonic turn-ownership epoch. Bumped once per turn by {@link beginTurn} and captured by that
-   * turn's runtime; every guarded phase/result write carries the captured value so a superseded
-   * "zombie" turn cannot mutate the session a newer turn now owns.
-   */
-  private _turnEpoch = 0;
-
-  /** The live turn-ownership epoch (see {@link beginTurn}); valid for the current turn's writes. */
-  public get turnEpoch(): number {
-    return this._turnEpoch;
-  }
-
-  /**
-   * Opens a new turn: bumps and returns the turn-ownership epoch the caller threads into this
-   * turn's guarded session writes. The only site that bumps {@link turnEpoch};
-   * {@link resetExploration} deliberately does not, since a bump there would strand a running
-   * turn's epoch and turn its later writes into dropped-stale no-ops.
-   */
-  public beginTurn(): number {
-    this._turnEpoch += 1;
-    return this._turnEpoch;
-  }
-
-  /**
-   * Guards a turn-scoped write: accepts only while {@link token} still matches the live
-   * {@link turnEpoch}, otherwise reports the write as a dropped stale-turn no-op.
-   *
-   * @param token - The epoch captured by the calling turn.
-   * @param op - The write's name, echoed in the drop outcome for the caller's DEBUG line.
-   */
-  private guardTurnWrite(token: number, op: string): SessionWriteOutcome {
-    if (token !== this._turnEpoch) {
-      return { kind: 'dropped_stale_turn', op, captured: token, current: this._turnEpoch };
-    }
-    return { kind: 'accepted' };
-  }
 
   constructor(templates?: AiOutputTemplates, sections?: AiOutputSections) {
     this.id = this.generateId();
@@ -514,9 +463,8 @@ export class AiSession {
     this.hopCount = 0;
     this.hopLog = [];
     this.resetMemoryWipeDiagnostics();
-    this.pendingUserNotice.clear();
     this.startExplorationRoundId = null;
-    this.enterIdle(this._turnEpoch);
+    this.enterIdle();
     this.classification = undefined;
     this.lastDiscoveryOrigin = null;
     this.lastDiscoveryWalkCount = 0;
@@ -553,24 +501,18 @@ export class AiSession {
   }
 
   /** Enters the exact tool-policy stage for one model call. */
-  public enterLmStage(stage: LmStage, token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'enterLmStage');
-    if (guard.kind === 'accepted') this.activeLmStage = stage;
-    return guard;
+  public enterLmStage(stage: LmStage): void {
+    this.activeLmStage = stage;
   }
 
   /** Clears the tool-policy stage after the owning model call settles. */
-  public leaveLmStage(token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'leaveLmStage');
-    if (guard.kind === 'accepted') this.activeLmStage = null;
-    return guard;
+  public leaveLmStage(): void {
+    this.activeLmStage = null;
   }
 
-  /** Stores one canonical scope artifact if the producing turn still owns the session. */
-  public storeDiscoveryScope(artifact: DiscoveryScopeArtifact, token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'storeDiscoveryScope');
-    if (guard.kind === 'accepted') this.discoveryScopeArtifact = artifact;
-    return guard;
+  /** Stores one canonical scope artifact captured by the current turn. */
+  public storeDiscoveryScope(artifact: DiscoveryScopeArtifact): void {
+    this.discoveryScopeArtifact = artifact;
   }
 
   /**
@@ -585,20 +527,17 @@ export class AiSession {
    * @param readCatalog - Whether the turn accepted any tool observation.
    */
   public settleDiscoveryTurn(
-    token: number,
     question: string,
     answer: string,
     detailWalk: { readonly origin: string; readonly walkCount: number } | null,
     readCatalog: boolean,
     observations: readonly DiscoveryEvidenceObservation[] = [],
-  ): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'settleDiscoveryTurn');
-    if (guard.kind !== 'accepted') return guard;
+  ): void {
     const readObservation = observations.some((observation) => {
       if ('refused' in observation && (observation as { refused?: boolean }).refused) return false;
       try { return !readToolError(JSON.parse(observation.result)); } catch { return false; }
     });
-    const scope = readObservation && this.discoveryScopeArtifact?.turnEpoch === token ? this.discoveryScopeArtifact : null;
+    const scope = readObservation && this.discoveryScopeArtifact?.roundId === this.currentRoundId ? this.discoveryScopeArtifact : null;
     const walk = scope && scope.nodeIds.length >= 2
       ? { origin: scope.origin, walkCount: scope.nodeIds.length }
       : detailWalk;
@@ -609,7 +548,6 @@ export class AiSession {
       this.lastDiscoveryAnswer = answer;
     }
     if (readCatalog && !(scope && scope.nodeIds.length >= 2)) this.discoveryScopeArtifact = null;
-    return guard;
   }
 
   /**
@@ -824,28 +762,19 @@ export class AiSession {
    * Transitions into `awaiting_gate`: the engine paused on a consent gate and the next user turn
    * must resolve it (yes / no / redirect). Discovery context (`lastDiscoveryOrigin` and siblings)
    * is left intact because the post-approval summary composition reads it; on cancel
-   * {@link resetExploration} clears it. A stale `token` (see {@link beginTurn}) drops the write
-   * ({@link SessionWriteOutcome}).
    */
-  public enterGate(gate: PendingGate, token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'enterGate');
-    if (guard.kind !== 'accepted') return guard;
+  public enterGate(gate: PendingGate): void {
     this.phase = { kind: 'awaiting_gate', gate };
-    return guard;
   }
 
   /** Replaces the reviewable proposal without creating or publishing an exploration engine. */
   public storePendingExploration(
     proposal: Omit<PendingExplorationProposal, 'revision'>,
-    token: number,
-  ): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'storePendingExploration');
-    if (guard.kind !== 'accepted') return guard;
+  ): void {
     this.pendingExploration = {
       ...proposal,
       revision: (this.pendingExploration?.revision ?? 0) + 1,
     };
-    return guard;
   }
 
   /**
@@ -853,36 +782,27 @@ export class AiSession {
    * {@link storePendingExploration}. A no-op when the proposal has moved past `revision`
    * (superseded by a refine mid-composition); the caller omits the memo rather than failing.
    */
-  public attachDiscoverySummary(revision: number, text: string, token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'attachDiscoverySummary');
-    if (guard.kind !== 'accepted') return guard;
+  public attachDiscoverySummary(revision: number, text: string): void {
     if (this.pendingExploration && this.pendingExploration.revision === revision) {
       this.pendingExploration = { ...this.pendingExploration, discoverySummary: text };
     }
-    return guard;
   }
 
   /** Cancels proposal review without discarding a completed engine/result on the session. */
-  public cancelPendingExploration(token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'cancelPendingExploration');
-    if (guard.kind !== 'accepted') return guard;
+  public cancelPendingExploration(): void {
     this.pendingExploration = null;
-    if (this.stateMachine?.status === 'complete' && this.resultGraph) this.enterCompleted(token);
-    else this.enterIdle(token);
-    return guard;
+    if (this.stateMachine?.status === 'complete' && this.resultGraph) this.enterCompleted();
+    else this.enterIdle();
   }
 
   /**
    * Atomically validates, constructs, and publishes the exact proposal reviewed at the gate.
-   * The factory runs synchronously only after epoch and revision checks pass.
+   * The factory runs synchronously only after the revision check passes.
    */
   public activatePendingExploration(
     expectedRevision: number,
-    token: number,
     factory: (proposal: PendingExplorationProposal) => NavigationEngine | ToolRejection,
   ): ExplorationActivationOutcome {
-    const guard = this.guardTurnWrite(token, 'activatePendingExploration');
-    if (guard.kind !== 'accepted') return guard;
     const proposal = this.pendingExploration;
     if (!proposal) return { kind: 'rejected', reason: 'missing_pending_proposal' };
     if (proposal.revision !== expectedRevision) {
@@ -902,7 +822,7 @@ export class AiSession {
       this.explorationRunId = `${this.id}:e${this.explorationCounter}`;
       this.classification = classification;
       this.pendingExploration = null;
-      this.enterExploring(token);
+      this.enterExploring();
       return { kind: 'accepted', engine: built };
     } catch (err) {
       this.memory.restoreFromJSON(priorMemory);
@@ -914,42 +834,28 @@ export class AiSession {
    * Transitions the session into `exploring` — the engine is ready to produce the
    * next hop. Called on fresh SM start (post-confirm) and on gate-approved resume.
    *
-   * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
-   * @returns Whether the transition committed or was dropped as a stale-turn no-op.
    */
-  public enterExploring(token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'enterExploring');
-    if (guard.kind !== 'accepted') return guard;
+  public enterExploring(): void {
     this.phase = { kind: 'exploring' };
     this._presentResultCalledThisTurn = false;
     this._presentResultAutoDispatched = false;
     this.presentResultRepairDraft.clear();
-    return guard;
   }
 
   /**
    * Transitions into `idle`: no exploration active, the next turn enters discovery. Use
-   * {@link resetExploration} when exploration state also needs clearing. A stale `token` drops the
-   * write ({@link SessionWriteOutcome}).
    */
-  public enterIdle(token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'enterIdle');
-    if (guard.kind !== 'accepted') return guard;
+  public enterIdle(): void {
     this.phase = { kind: 'idle' };
-    return guard;
   }
 
   /**
    * Transitions into `completed`: synthesis finished, the archive survives on the session
    * singleton, and the next user turn routes through follow-up refinement. Call only when
-   * `stateMachine?.status === 'complete'`. A stale `token` drops the write
-   * ({@link SessionWriteOutcome}).
+   * `stateMachine?.status === 'complete'`.
    */
-  public enterCompleted(token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'enterCompleted');
-    if (guard.kind !== 'accepted') return guard;
+  public enterCompleted(): void {
     this.phase = { kind: 'completed' };
-    return guard;
   }
 
   /** Rotates the session identifier and resets the start timer. */
@@ -982,22 +888,16 @@ export class AiSession {
   }
 
   /** Counts one `present_result` call at handler entry, if the calling turn owns the session. */
-  public beginPresentResultAttempt(token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'beginPresentResultAttempt');
-    if (guard.kind !== 'accepted') return guard;
+  public beginPresentResultAttempt(): void {
     this._presentResultAttemptCountThisTurn += 1;
-    return guard;
   }
 
   /**
    * Records one failed `present_result` call and its reason, if the calling turn owns the session.
    */
-  public recordPresentResultFailure(token: number, reason: string): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'recordPresentResultFailure');
-    if (guard.kind !== 'accepted') return guard;
+  public recordPresentResultFailure(reason: string): void {
     this._presentResultFailureCountThisTurn += 1;
     this._presentResultLastFailureReasonThisTurn = reason;
-    return guard;
   }
 
   /**
@@ -1005,29 +905,22 @@ export class AiSession {
    * session.
    */
   public commitPresentResultSuccess(
-    token: number,
     artifact: PresentationArtifact,
     autoDispatched = false,
-  ): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'commitPresentResultSuccess');
-    if (guard.kind !== 'accepted') return guard;
+  ): void {
     this.presentationArtifact = artifact;
     this._presentResultCalledThisTurn = true;
     this._presentResultAutoDispatched = autoDispatched;
     this.presentResultRepairDraft.clear();
-    return guard;
   }
 
   /**
    * Maps state-machine output to the `ResultGraph` contract consumed by `present_result` and the
    * webview; `source` reflects the engine's `columnAspect` flag at call time. Body fields
    * (`description`/`summary`/`title`) carry forward from the prior `resultGraph` until a new
-   * `present_result` overwrites them, so a supplement round never blanks a rendered result. A stale
-   * `token` drops the write ({@link SessionWriteOutcome}).
+   * `present_result` overwrites them, so a supplement round never blanks a rendered result.
    */
-  public storeSmResult(fullResult: SmResult, token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'storeSmResult');
-    if (guard.kind !== 'accepted') return guard;
+  public storeSmResult(fullResult: SmResult): void {
     const sourceMode = this.stateMachine?.columnAspect ? 'column_trace' : 'blackboard';
 
     const prior = this.resultGraph;
@@ -1052,7 +945,6 @@ export class AiSession {
           },
       } : {}),
     };
-    return guard;
   }
 
   /**
@@ -1069,30 +961,20 @@ export class AiSession {
   }
 
   /**
-   * Mirrors the engine-derived hop count into {@link hopCount} for UI/telemetry. Epoch-guarded: a
-   * superseded "zombie" turn must not clobber diagnostics a newer turn owns, so the write lands
-   * only while `token` matches the live {@link turnEpoch} ({@link SessionWriteOutcome}).
+   * Mirrors the engine-derived hop count into {@link hopCount} for UI/telemetry.
    */
-  public setHopCount(token: number, count: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'setHopCount');
-    if (guard.kind !== 'accepted') return guard;
+  public setHopCount(count: number): void {
     this.hopCount = count;
-    return guard;
   }
 
   /**
    * Records one per-turn memory wipe and updates its aggregate counter, feeding the analytics
-   * per-wipe waste basis ({@link memoryWipeEventsThisTurn}). Epoch-guarded like
-   * {@link setHopCount}: a superseded "zombie" turn must not append to the log a newer turn owns.
+   * per-wipe waste basis ({@link memoryWipeEventsThisTurn}).
    */
   public recordMemoryWipeEvent(
-    token: number,
     event: MemoryWipeEvent,
-  ): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'recordMemoryWipeEvent');
-    if (guard.kind !== 'accepted') return guard;
+  ): void {
     this._memoryWipeEventsThisTurn.push(event);
-    return guard;
   }
 }
 

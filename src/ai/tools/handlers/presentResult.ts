@@ -3,7 +3,7 @@
  * validation and assembly helpers stay in the sibling `presentResult.ts`; this handler owns session
  * persistence and the validated webview effect. Raw arguments are admitted once against the same
  * live stage/repair schema the provider sees, before normalization or held-content merge.
- * Turn-lease validation and effect serialization stay in the registry wrapper.
+ * Cancellation and effect serialization stay in the registry wrapper.
  */
 import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
@@ -205,19 +205,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
     try {
       const sess = s.getSession();
       const rawInput = input;
-      const turnEpoch = s.turnEpoch(sess);
-      const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
-      if (attemptWrite.kind !== 'accepted') {
-        return s.logAndReturn('lineage_present_result', makeRejection({
-          code: REJECTION_CODES.staleTurn,
-          reason: 'The turn no longer owns this session; the result was not rendered.',
-        }), rawInput);
-      }
+      sess.beginPresentResultAttempt();
       const model = s.requireModel();
 
       const reject = (rejection: ToolRejection): string => {
         sess.recordPresentResultFailure(
-          turnEpoch,
           sanitizeForLog(rejection.hint ? `${rejection.reason} (${rejection.hint})` : rejection.reason),
         );
         return s.logAndReturn('lineage_present_result', rejection, rawInput);
@@ -685,15 +677,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       const repeatedSuccess = sess.presentResultCalledThisTurn;
-      const successWrite = sess.commitPresentResultSuccess(turnEpoch, artifact, autoDispatched);
-      if (successWrite.kind !== 'accepted') {
-        return s.logAndReturn('lineage_present_result', makeRejection({
-          code: REJECTION_CODES.staleTurn,
-          reason: 'The turn no longer owns this session; the result was not committed.',
-        }), rawInput);
-      }
-      // The delivery outcome is recorded only once the turn still owns the session, and the latest
-      // present decides it.
+      sess.commitPresentResultSuccess(artifact, autoDispatched);
+      // The latest present decides the recorded delivery outcome.
       if (previewFailure) sess.markSynthesisRenderDegraded(previewFailure);
       else sess.clearPreviewDeliveryDegraded();
       if (isAmendment || graphEdited) {

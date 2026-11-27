@@ -48,26 +48,9 @@ type RuntimeLifecycleRecord =
       readonly runFingerprint: string;
       readonly seq: number;
       readonly phase: string;
-      /** Consent-card identifier; the join key to the matching `gate-resolution` row. */
+      /** Consent-card identifier. */
       readonly gateId?: string;
       readonly elapsedMs: number;
-    }
-  | {
-      /**
-       * Outcome of one consent-card action, written by the chat host because the command
-       * handler runs outside the turn's event stream. Enumerated values only; no run scope, so no
-       * `runFingerprint`.
-       */
-      readonly type: 'gate-resolution';
-      readonly requestId: string;
-      readonly gateId: string;
-      readonly gate: string;
-      readonly action: 'approve' | 'change' | 'cancel' | 'hold';
-      readonly outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed';
-      /** Enumerated cause when `outcome` is `refused`; never free text. */
-      readonly refusedBy?: 'gate_id_mismatch' | 'no_pending_gate';
-      /** When the action was received; an accepted approval's `at` follows the released turn. */
-      readonly decidedAt?: string;
     }
   | {
       readonly type: 'phase';

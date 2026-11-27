@@ -51,9 +51,8 @@ interface ExplorationLimits {
 
 /**
  * Every token budget one turn runs under, fixed when the turn starts. Immutable and carried by the
- * turn's own objects (the request-scoped model port and the lease-bound tool services), so two
- * turns in flight on different models read their own window and caps. Nothing here is process
- * state.
+ * turn's own objects (the request-scoped model port and the turn's tool services). Nothing here
+ * is process state.
  */
 export interface TurnTokenBudget {
   /** Input window of the model the turn selected; `Infinity` when the provider reports none. */
