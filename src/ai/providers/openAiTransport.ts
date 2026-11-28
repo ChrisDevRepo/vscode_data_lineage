@@ -145,7 +145,13 @@ export function createOpenAiChat(entry: OpenAiModelEntry, apiKey: string, effort
     identity: { id: entry.id, name: entry.name, vendor: 'openai-compatible', family: entry.model, version: entry.apiType },
     request(messages, tools, toolChoice) {
       const forced = toolChoice !== undefined && toolChoice !== 'auto' && toolChoice !== 'none';
-      const sentChoice = forced && !entry.forcedToolChoice ? 'auto' : wireToolChoice(entry, toolChoice, tools);
+      // Chat Completions has no forced form every endpoint takes: the string `required`, `any` and a
+      // named function are all rejected by Anthropic's compatible endpoint. A forced request goes as
+      // `auto` there and the graph's feedback handles a turn that returns no call. Responses keeps its
+      // `allowed_tools` form, and an entry that opts out of forcing sends `auto` on either API.
+      const sentChoice = forced && (entry.apiType === 'chat-completions' || !entry.forcedToolChoice)
+        ? 'auto'
+        : wireToolChoice(entry, toolChoice, tools);
       const request = projectMessages(messages, entry);
       return {
         model: tools.length > 0 ? chat.bindTools([...tools], { tool_choice: sentChoice }) : chat,

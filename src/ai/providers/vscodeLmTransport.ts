@@ -2,7 +2,7 @@
  * The VS Code language-model kind: a model another extension (Copilot Chat, a provider extension)
  * publishes through `vscode.lm`, spoken to as a LangChain chat model beside the OpenAI one. The one
  * file that touches `vscode.lm` and its `LanguageModel*` types. Structured output stays the port's
- * forced synthetic tool (`toolMode: Required`); the platform has no system role, so the system
+ * synthetic tool, offered with `toolMode: Auto`; the platform has no system role, so the system
  * prompt goes as the first User message, and no JSON-schema or strict mode exists.
  */
 import * as vscode from 'vscode';
@@ -143,11 +143,6 @@ const FAILURE_CODES: Readonly<Record<string, ModelPortErrorCode>> = {
   NotFound: 'model_not_found',
 };
 
-/** Whether a provider tool choice forces the model to call a tool rather than leaving it optional or off. */
-function isForcedToolChoice(choice: unknown): boolean {
-  return choice !== undefined && choice !== 'auto' && choice !== 'none';
-}
-
 /** The call options: the OpenAI-form tools and the choice the port binds with {@link VscodeLmChatModel.bindTools}. */
 interface VscodeLmCallOptions extends BaseChatModelCallOptions {
   tools?: ChatTool[];
@@ -190,7 +185,7 @@ export class VscodeLmChatModel extends BaseChatModel<VscodeLmCallOptions> {
     options: this['ParsedCallOptions'],
     _runManager?: CallbackManagerForLLMRun,
   ): AsyncGenerator<ChatGenerationChunk> {
-    const { signal, tools = [], tool_choice: toolChoice } = options;
+    const { signal, tools = [] } = options;
     const cancellation = new vscode.CancellationTokenSource();
     // LangChain drops a stream on abort without closing it; the host's stream is closed here, with its token.
     let host: AsyncIterator<unknown> | undefined;
@@ -202,9 +197,9 @@ export class VscodeLmChatModel extends BaseChatModel<VscodeLmCallOptions> {
     const chunk = (message: AIMessageChunk) => new ChatGenerationChunk({ message, text: typeof message.content === 'string' ? message.content : '' });
     try {
       if (signal?.aborted) throw cancelledError();
-      const toolMode = isForcedToolChoice(toolChoice)
-        ? vscode.LanguageModelChatToolMode.Required
-        : vscode.LanguageModelChatToolMode.Auto;
+      // The host's Required mode reaches a provider as a forced form (a named function or `any`) that
+      // Anthropic rejects; Auto is the only choice every provider takes, so a forced request goes as Auto.
+      const toolMode = vscode.LanguageModelChatToolMode.Auto;
       const response = await this.model.sendRequest(messages.map(toVscodeMessage), {
         ...(tools.length > 0 ? { tools: tools.map(({ function: { name, description, parameters } }) => ({ name, description, inputSchema: parameters })), toolMode } : {}),
         ...(Object.keys(this.modelOptions).length > 0 ? { modelOptions: this.modelOptions } : {}),
@@ -248,14 +243,9 @@ export function createVscodeLmChat(entry: VscodeLmModelEntry, model: vscode.Lang
   return {
     id: `provider:${entry.id}`,
     identity: { id: entry.id, name: entry.name, vendor: model.vendor, family: model.family, version: model.version },
-    request: (messages, tools, toolChoice) => {
-      const sentChoice = isForcedToolChoice(toolChoice) && !entry.forcedToolChoice
-        ? 'auto'
-        : toolChoice;
-      return {
-        model: tools.length > 0 ? chat.bindTools([...tools], { tool_choice: sentChoice }) : chat,
-        messages: [...messages],
-      };
-    },
+    request: (messages, tools) => ({
+      model: tools.length > 0 ? chat.bindTools([...tools], { tool_choice: 'auto' }) : chat,
+      messages: [...messages],
+    }),
   };
 }

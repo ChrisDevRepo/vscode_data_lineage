@@ -120,10 +120,10 @@ describe('VscodeLmChatModel tool mode', () => {
     return sent[0].options;
   };
 
-  it('forces Required for one named tool and for a required choice, Auto otherwise, regardless of model family', async () => {
+  it('sends Auto for a named tool and for a required choice, whatever the model family', async () => {
     const two = [...tools, { name: 'other', description: 'd', inputSchema: z.object({}) }];
-    expect(await modeOf({ type: 'tool', toolName: 'lineage_search' }, two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [{ name: 'lineage_search' }] });
-    expect(await modeOf('required', two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required });
+    expect(await modeOf({ type: 'tool', toolName: 'lineage_search' }, two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto, tools: [{ name: 'lineage_search' }] });
+    expect(await modeOf('required', two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
     expect((await modeOf('required', two)).tools).toHaveLength(2);
     expect(await modeOf(undefined, two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
 
@@ -131,12 +131,12 @@ describe('VscodeLmChatModel tool mode', () => {
     claude.raw.family = 'claude-sonnet-4';
     const claudePort = new ProviderModelPort(createVscodeLmChat(LIVE_ENTRY, claude.model), {});
     await claudePort.generateToolTurn({ messages: [new HumanMessage('go')], tools: two, toolChoice: 'required', phase: 't' });
-    expect(claude.sent[0].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required });
+    expect(claude.sent[0].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
     await claudePort.generateToolTurn({ messages: [new HumanMessage('go')], tools: two, toolChoice: { type: 'tool', toolName: 'lineage_search' }, phase: 't' });
-    expect(claude.sent[1].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [{ name: 'lineage_search' }] });
+    expect(claude.sent[1].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto, tools: [{ name: 'lineage_search' }] });
   });
 
-  it('sends Auto and records toolMode 1 when forcedToolChoice is false, keeping Required and toolMode 2 when true', async () => {
+  it('sends Auto and records toolMode 1 for a forced choice whatever forcedToolChoice says', async () => {
     const two = [...tools, { name: 'other', description: 'd', inputSchema: z.object({}) }];
     const runWith = async (forcedToolChoice: boolean, choice: Parameters<ProviderModelPort['generateToolTurn']>[0]['toolChoice']) => {
       const wires: WireRecord[] = [];
@@ -150,13 +150,11 @@ describe('VscodeLmChatModel tool mode', () => {
     };
 
     for (const choice of ['required', { type: 'tool', toolName: 'lineage_search' }] as const) {
-      const optedOut = await runWith(false, choice);
-      expect(optedOut.options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
-      expect(optedOut.wireRequest).toMatchObject({ toolMode: 1 });
-
-      const forced = await runWith(true, choice);
-      expect(forced.options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required });
-      expect(forced.wireRequest).toMatchObject({ toolMode: 2 });
+      for (const forcedToolChoice of [false, true]) {
+        const run = await runWith(forcedToolChoice, choice);
+        expect(run.options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
+        expect(run.wireRequest).toMatchObject({ toolMode: 1 });
+      }
     }
   });
 
@@ -172,10 +170,10 @@ describe('VscodeLmChatModel structured output', () => {
   const schema = z.object({ answer: z.string() });
   const structured = (...parts: Part[]) => portOver(replying(...parts)).port.generateStructured({ messages: [new HumanMessage('go')], schema, phase: 't' });
 
-  it('round-trips through the forced synthetic tool', async () => {
+  it('round-trips through the synthetic tool offered with Auto', async () => {
     const { port, sent } = portOver(replying(new vscode.LanguageModelToolCallPart('s1', 'structured_output', { answer: 'yes' })));
     expect(await port.generateStructured({ messages: [new HumanMessage('go')], schema, phase: 't' })).toEqual({ answer: 'yes' });
-    expect(sent[0].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [{ name: 'structured_output' }] });
+    expect(sent[0].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto, tools: [{ name: 'structured_output' }] });
   });
 
   it('rejects an invalid and an empty payload with a located error', async () => {
@@ -343,7 +341,7 @@ describe('VscodeLmChatModel as a chat model', () => {
       { tool_choice: 'lineage_search' },
     );
     await bound.invoke([new HumanMessage('go')]);
-    expect(sent[0].options).toEqual({ tools: [{ name: 'lineage_search', description: 'd', inputSchema: { type: 'object' } }], toolMode: vscode.LanguageModelChatToolMode.Required });
+    expect(sent[0].options).toEqual({ tools: [{ name: 'lineage_search', description: 'd', inputSchema: { type: 'object' } }], toolMode: vscode.LanguageModelChatToolMode.Auto });
   });
 
   it('sends a system message as a User message', async () => {
