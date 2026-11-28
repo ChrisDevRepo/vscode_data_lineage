@@ -2,7 +2,8 @@
  * Canonical tool-by-stage policy shared by provider projection and runtime authorization (tool
  * names without the `lineage_` prefix):
  * - `discover`: get_context, get_screen_state, search_objects, get_scope_bundle, search_ddl,
- *   get_object_detail, detect_graph_patterns, get_trace, get_path, and create_graph_preview.
+ *   get_object_detail, detect_graph_patterns, get_trace, and get_path. Preview is available for
+ *   visual requests, follow-ups and routes that bypass entry detection.
  * - `sm_entry`: get_screen_state, search_objects, get_object_detail (resolves all columns for a CT
  *   start), start_exploration (resolves the origin and opens the consent gate).
  * - `active` (sm_bb): submit_findings. `active` (sm_ct): submit_findings, get_neighbor_columns.
@@ -20,7 +21,7 @@ export type ActiveMode = 'sm_bb' | 'sm_ct';
 /** Stage descriptor for {@link getAllowedLmToolNames}; `active` requires `mode` at compile time. */
 export type LmStage =
   /** Idle / ad-hoc question answering. No state machine active. */
-  | { kind: 'discover' }
+  | { kind: 'discover'; preview?: boolean }
   /**
    * SM entry: resolve the origin and open the consent gate (`get_screen_state`, `search_objects`,
    * `get_object_detail`, `start_exploration`).
@@ -88,7 +89,7 @@ function assertNever(x: never): never {
 export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
   switch (stage.kind) {
     case 'discover':
-      return new Set([...DISCOVERY_TOOLS, 'lineage_create_graph_preview']);
+      return new Set(stage.preview === false ? DISCOVERY_TOOLS : [...DISCOVERY_TOOLS, 'lineage_create_graph_preview']);
     case 'sm_entry':
       return new Set(SM_ENTRY_TOOLS);
     case 'synthesis':

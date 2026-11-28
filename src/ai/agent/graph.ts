@@ -727,6 +727,7 @@ export function buildAgentGraph(deps: AgentGraphDeps): AgentGraph {
       ctx,
       messages,
       entry: entry.entry,
+      discoveryPreview: entry.entry !== 'discovery' || state.messages.length > 1,
       executionTrigger: 'free_text',
       targetColumns: entry.targetColumns ?? null,
       resolvedOrigin: null,
@@ -741,7 +742,7 @@ export function buildAgentGraph(deps: AgentGraphDeps): AgentGraph {
     const priorAttempt = attemptStateFor(state, 'discover');
     const messages = state.messages;
     const draft: StandardPhaseDraft = {
-      stage: { kind: 'discover' },
+      stage: { kind: 'discover', preview: state.discoveryPreview },
       facts: { templateKeys: discoveryInstruction.templateKeys, memorySections: [...discoveryInstruction.memorySections, 'conversation_history'] },
       messages,
       system: discoveryInstruction.system,

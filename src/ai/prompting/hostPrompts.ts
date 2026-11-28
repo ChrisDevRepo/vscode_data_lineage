@@ -88,7 +88,7 @@ export function buildHostStageSystemPrompt(
 
 /**
  * System prompt for the code-driven **entry detector** (one structured pre-loop call). Classifies
- * semantic intent only: `visual_render` enters discovery like any free-text request.
+ * semantic intent for discovery, including whether to offer the preview tool.
  */
 export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string {
   return [

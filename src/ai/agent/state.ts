@@ -99,6 +99,8 @@ export const AgentState = Annotation.Root({
   ctx: Annotation<StagePromptContext | null>({ reducer: lastValue, default: () => null }),
   messages: Annotation<ModelMessage[]>({ reducer: messagesStateReducer, default: () => [] }),
   entry: Annotation<AgentEntryRoute | null>({ reducer: lastValue, default: () => null }),
+  /** Preview remains available unless fresh entry detection identifies ordinary discovery. */
+  discoveryPreview: Annotation<boolean>({ reducer: lastValue, default: () => true }),
   executionTrigger: Annotation<AgentExecutionTrigger>({ reducer: lastValue, default: () => 'free_text' }),
   targetColumns: Annotation<string[] | null>({ reducer: lastValue, default: () => null }),
   /** Canonical node id of the one object a `/trace` command names; `null` when none or several resolve. */
