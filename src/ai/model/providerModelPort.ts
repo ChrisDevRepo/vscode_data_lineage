@@ -378,7 +378,7 @@ export class ProviderModelPort implements ModelPort {
       const request = this.chat.request(
         sentMessages,
         tools,
-        tools.length > 0 || requiresTool ? toToolChoice(choice, tools) : undefined,
+        tools.length > 0 || requiresTool ? toToolChoice(choice) : undefined,
       );
       const stream = await request.model.stream(request.messages, {
         ...request.options,
@@ -577,15 +577,12 @@ function isEmptyRecord(value: unknown): value is Record<string, never> {
 }
 
 /**
- * The provider's choice. A required call with exactly one tool names that tool: the one form
- * every wire carries (MAIN does the same). With several tools it stays `'any'` and the provider
- * writes the form its API takes.
+ * A required call is `'any'` at every tool count. Chat Completions writes `'any'` as the
+ * string `required`; a tool name would go out as a function object. A caller that names
+ * a tool still sends that name.
  */
-function toToolChoice(
-  choice: ModelToolChoice | undefined,
-  tools: readonly ChatTool[],
-): 'auto' | 'any' | 'none' | string {
-  if (choice === 'required') return tools.length === 1 ? tools[0].function.name : 'any';
+function toToolChoice(choice: ModelToolChoice | undefined): 'auto' | 'any' | 'none' | string {
+  if (choice === 'required') return 'any';
   if (choice === 'none') return 'none';
   if (typeof choice === 'object') return choice.toolName;
   return 'auto';
