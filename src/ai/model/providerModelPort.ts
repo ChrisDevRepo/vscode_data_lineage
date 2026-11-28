@@ -577,9 +577,8 @@ function isEmptyRecord(value: unknown): value is Record<string, never> {
 }
 
 /**
- * A required call is `'any'` at every tool count. Chat Completions writes `'any'` as the
- * string `required`; a tool name would go out as a function object. A caller that names
- * a tool still sends that name.
+ * A required call is `'any'` at every tool count. The transport writes the form that API
+ * takes. A caller that names a tool still sends that name.
  */
 function toToolChoice(choice: ModelToolChoice | undefined): 'auto' | 'any' | 'none' | string {
   if (choice === 'required') return 'any';

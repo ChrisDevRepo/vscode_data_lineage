@@ -117,16 +117,19 @@ type WireToolChoice = NonNullable<Parameters<ChatOpenAI['bindTools']>[1]>['tool_
 
 /**
  * The choice as the entry's API takes it. The Responses client drops a string choice, so a
- * required call over several tools goes as the API's flat `allowed_tools` object (`mode`, `tools`
- * beside `type`); Chat Completions takes `'any'`.
+ * required call goes as `allowed_tools` with mode `required`. Chat Completions writes `'any'`
+ * as the string `required`, a forced call; the shared chat value is `'auto'`.
  */
 function wireToolChoice(entry: OpenAiModelEntry, choice: string | undefined, tools: readonly ChatTool[]): WireToolChoice {
-  if (choice !== 'any' || entry.apiType !== 'responses') return choice;
-  return {
-    type: 'allowed_tools',
-    mode: 'required',
-    tools: tools.map((tool) => ({ type: 'function', name: tool.function.name })),
-  } as unknown as WireToolChoice;
+  if (choice !== 'any') return choice;
+  if (entry.apiType === 'responses') {
+    return {
+      type: 'allowed_tools',
+      mode: 'required',
+      tools: tools.map((tool) => ({ type: 'function', name: tool.function.name })),
+    } as unknown as WireToolChoice;
+  }
+  return 'auto';
 }
 
 /**
