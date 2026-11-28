@@ -19,18 +19,6 @@ import {
 import { ModelPortError } from '../model/modelPort';
 import { isRecord } from '../../utils/isRecord';
 
-/** Request fields the entry's own settings produce, below `requestBody`. */
-function entryBody(entry: OpenAiModelEntry, effort: string | undefined): Record<string, unknown> {
-  if (entry.apiType === 'responses') {
-    return {
-      store: true,
-      include: ['reasoning.encrypted_content'],
-      ...(effort ? { reasoning: { effort } } : {}),
-    };
-  }
-  return effort ? { reasoning_effort: effort } : {};
-}
-
 /**
  * The client for one entry. Its retry is the OpenAI SDK's own (`configuration.maxRetries`, the SDK
  * default of 2): connection errors, timeouts and 408/409/429/5xx, with backoff, `retry-after`, and
@@ -41,7 +29,7 @@ function entryBody(entry: OpenAiModelEntry, effort: string | undefined): Record<
  * `max_completion_tokens` for a reasoning model name, `max_output_tokens` on Responses) after
  * `requestBody`, which therefore names no cap.
  */
-function createChatModel(entry: OpenAiModelEntry, apiKey: string, effort: string | undefined, requestBody: Record<string, unknown>): ChatOpenAI {
+function createChatModel(entry: OpenAiModelEntry, apiKey: string, requestBody: Record<string, unknown>): ChatOpenAI {
   return new ChatOpenAI({
     model: entry.model,
     apiKey,
@@ -58,7 +46,10 @@ function createChatModel(entry: OpenAiModelEntry, apiKey: string, effort: string
     // The Responses wire carries the output cap and a non-strict tool schema.
     ...(entry.apiType === 'responses' ? { supportsStrictToolCalling: false } : {}),
     maxTokens: entry.maxOutputTokens,
-    modelKwargs: { ...entryBody(entry, effort), ...requestBody },
+    modelKwargs: {
+      ...(entry.apiType === 'responses' ? { store: true, include: ['reasoning.encrypted_content'] } : {}),
+      ...requestBody,
+    },
   });
 }
 
@@ -145,7 +136,7 @@ function wireToolChoice(entry: OpenAiModelEntry, choice: string | undefined, too
  */
 export function createOpenAiChat(entry: OpenAiModelEntry, apiKey: string, effort = entry.reasoningEffort): ProviderChat {
   const { verbosity, body } = splitRequestBody(entry);
-  const chat = createChatModel(entry, apiKey, effort, body);
+  const chat = createChatModel(entry, apiKey, body);
   return {
     id: `provider:${entry.id}`,
     identity: { id: entry.id, name: entry.name, vendor: 'openai-compatible', family: entry.model, version: entry.apiType },
@@ -158,6 +149,7 @@ export function createOpenAiChat(entry: OpenAiModelEntry, apiKey: string, effort
         messages: request.messages,
         options: {
           ...(verbosity ? { verbosity } : {}),
+          ...(effort ? { reasoning: { effort } } : {}),
           ...(request.previousResponseId ? { previous_response_id: request.previousResponseId } : {}),
         },
       };

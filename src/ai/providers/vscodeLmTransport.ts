@@ -245,14 +245,11 @@ export class VscodeLmChatModel extends BaseChatModel<VscodeLmCallOptions> {
  */
 export function createVscodeLmChat(entry: VscodeLmModelEntry, model: vscode.LanguageModelChat): ProviderChat {
   const chat = new VscodeLmChatModel(model, { ...(entry.maxOutputTokens === undefined ? {} : { max_tokens: entry.maxOutputTokens }), ...entry.requestBody });
-  const anthropicFamily = /claude|sonnet|haiku|opus/i.test(`${model.id} ${model.family} ${model.name}`);
-  const allowMultiToolRequired = entry.forcedToolChoice && !anthropicFamily;
   return {
     id: `provider:${entry.id}`,
     identity: { id: entry.id, name: entry.name, vendor: model.vendor, family: model.family, version: model.version },
     request: (messages, tools, toolChoice) => {
-      const multiToolRequired = (toolChoice === 'any' || toolChoice === 'required') && tools.length > 1;
-      const sentChoice = isForcedToolChoice(toolChoice) && (!entry.forcedToolChoice || (multiToolRequired && !allowMultiToolRequired))
+      const sentChoice = isForcedToolChoice(toolChoice) && !entry.forcedToolChoice
         ? 'auto'
         : toolChoice;
       return {

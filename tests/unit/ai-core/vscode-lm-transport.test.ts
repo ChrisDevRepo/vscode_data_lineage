@@ -120,7 +120,7 @@ describe('VscodeLmChatModel tool mode', () => {
     return sent[0].options;
   };
 
-  it('forces Required for one named tool and for a required choice, Auto otherwise (and Auto for multi-tool required on Claude models)', async () => {
+  it('forces Required for one named tool and for a required choice, Auto otherwise, regardless of model family', async () => {
     const two = [...tools, { name: 'other', description: 'd', inputSchema: z.object({}) }];
     expect(await modeOf({ type: 'tool', toolName: 'lineage_search' }, two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [{ name: 'lineage_search' }] });
     expect(await modeOf('required', two)).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required });
@@ -131,7 +131,7 @@ describe('VscodeLmChatModel tool mode', () => {
     claude.raw.family = 'claude-sonnet-4';
     const claudePort = new ProviderModelPort(createVscodeLmChat(LIVE_ENTRY, claude.model), {});
     await claudePort.generateToolTurn({ messages: [new HumanMessage('go')], tools: two, toolChoice: 'required', phase: 't' });
-    expect(claude.sent[0].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Auto });
+    expect(claude.sent[0].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required });
     await claudePort.generateToolTurn({ messages: [new HumanMessage('go')], tools: two, toolChoice: { type: 'tool', toolName: 'lineage_search' }, phase: 't' });
     expect(claude.sent[1].options).toMatchObject({ toolMode: vscode.LanguageModelChatToolMode.Required, tools: [{ name: 'lineage_search' }] });
   });

@@ -143,8 +143,8 @@ export function ComposerControls() {
             <ManageModelsItem />
           </ModelSelector.Group>
         </ModelSelector.List>
-        <ModelSelector.Effort />
       </ModelSelector.Content>
+      <ModelSelector.Effort label="Reasoning effort" className="border-0 px-1 py-0" />
     </ModelSelector.Root>
   );
 }
